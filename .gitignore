@@ -267,3 +267,6 @@ data/chroma_data
 data/postgres_data
 \[nexus-ai
 \[nexus-ai]
+modules/nexus-nucleus.backup
+modules/nexus-nucleus.django_backup
+
