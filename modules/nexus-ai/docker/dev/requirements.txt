@@ -14,6 +14,7 @@ chromadb                # MUST ADD: The client to talk to your vector DB
 litellm
 instructor
 httpx
+fastembed
 
 # Elite Dev Tools (Python side)
 rich                    # Beautiful logging

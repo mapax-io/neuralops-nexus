@@ -1,14 +1,46 @@
-from fastapi import FastAPI, HTTPException
+import asyncio
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request
+from fastembed import TextEmbedding
+from .helpers import store_vectors
 from .schemas import (
     ModelVerificationRequest,
     ModelVerificationResponse,
     AgentVerificationRequest,
     AgentVerificationResponse,
+    EmbedMessagesRequest,
+    EmbedMessagesResponse,
     LLMProviders,
 )
 import litellm
 
-app = FastAPI(title="NeuralOps Nucleus")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    model_name = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+
+    model = TextEmbedding(model_name)
+
+    yield {"embedder": model}
+
+    model = None
+
+
+app = FastAPI(title="NeuralOps Nucleus", lifespan=lifespan)
+
+
+@app.post("/api/v1/internal/embeddings/messages", response_model=EmbedMessagesResponse)
+async def embeddings_messages(payload: EmbedMessagesRequest, request: Request):
+    embedder = request.state.embedder
+
+    embeddings = list(await asyncio.to_thread(embedder.embed, payload.messages))
+
+    vectors = [vec.tolist() for vec in embeddings]
+
+    await store_vectors(vectors)
+
+    return EmbedMessagesResponse()
 
 
 @app.post("/api/v1/internal/models/verify", response_model=ModelVerificationResponse)
