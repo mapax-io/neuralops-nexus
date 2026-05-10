@@ -1,0 +1,238 @@
+%% =========================================
+
+%% NeuralOPS Nexus ER Diagram
+
+%% Version: 1.0.0-alpha
+
+%% Status: MVP Architecture
+
+%% Database: PostgreSQL
+
+%% ORM: Django ORM
+
+%% Generated: 2026-05-09
+
+%% =========================================
+erDiagram
+    COMPANY ||--o{ COMPANY_ACCESS : has
+    USER ||--o{ COMPANY_ACCESS : joins
+    USER ||--o| HUMAN : has
+    USER ||--o| PERSONA : "identity"
+
+    COMPANY ||--o{ PROJECT : owns
+    PROJECT ||--o{ CHANNEL : has
+    CHANNEL ||--o{ CHAT_TOPIC : has
+    CHAT_TOPIC ||--o{ CHAT_MESSAGE : has
+
+    USER ||--o{ CHAT_MESSAGE : sends
+    CHAT_MESSAGE ||--o{ CHAT_REACTION : has
+    CHAT_MESSAGE ||--o{ CHAT_ATTACHMENT : has
+    USER ||--o{ CHAT_REACTION : reacts
+    USER ||--o{ CHAT_READ_MARKER : reads
+    CHAT_TOPIC ||--o{ CHAT_READ_MARKER : tracks
+
+    COMPANY ||--o{ AI_MODEL : owns
+    COMPANY ||--o{ MCP_SERVER : owns
+    COMPANY ||--o{ AI_AGENT : owns
+    COMPANY ||--o{ PERSONA : owns
+    COMPANY ||--o{ KNOWLEDGE_BASE : owns
+
+    AI_MODEL ||--o{ AI_AGENT : powers
+    MCP_SERVER ||--o{ AI_AGENT : equips
+
+    AI_MODEL ||--o{ PERSONA : wraps
+    AI_AGENT ||--o{ PERSONA : wraps
+
+    KNOWLEDGE_BASE ||--o{ KNOWLEDGE_FILE : contains
+
+    KNOWLEDGE_BASE }o--o{ PROJECT : attaches
+    KNOWLEDGE_BASE }o--o{ CHANNEL : attaches
+    KNOWLEDGE_BASE }o--o{ CHAT_TOPIC : attaches
+
+    COMPANY {
+        uuid id
+        string name
+        string slug
+        boolean is_personal
+        boolean is_active
+    }
+
+    USER {
+        uuid id
+        string username
+        string user_type
+        string google_sso_id
+        uuid current_company_id
+    }
+
+    HUMAN {
+        uuid id
+        uuid user_id
+        string full_name
+        string email
+        string timezone
+        string locale
+        string phone_number
+    }
+
+    COMPANY_ACCESS {
+        uuid id
+        uuid company_id
+        uuid user_id
+        string role
+        uuid invited_by_id
+        datetime joined_at
+    }
+
+    PROJECT {
+        uuid id
+        uuid company_id
+        string name
+        string slug
+        text description
+    }
+
+    CHANNEL {
+        uuid id
+        uuid company_id
+        uuid project_id
+        string name
+        string slug
+        text description
+    }
+
+    CHAT_TOPIC {
+        uuid id
+        uuid company_id
+        uuid project_id
+        uuid channel_id
+        string title
+        string slug
+    }
+
+    CHAT_MESSAGE {
+        uuid id
+        uuid company_id
+        uuid project_id
+        uuid topic_id
+        uuid sender_id
+        string message_type
+        text content
+        json content_json
+        string language
+        string status
+        uuid parent_id
+        json metadata
+    }
+
+    CHAT_REACTION {
+        uuid id
+        uuid message_id
+        uuid user_id
+        string emoji
+    }
+
+    CHAT_ATTACHMENT {
+        uuid id
+        uuid message_id
+        string attachment_type
+        string file
+        string original_filename
+        string mime_type
+        bigint file_size
+        json metadata
+    }
+
+    CHAT_READ_MARKER {
+        uuid id
+        uuid user_id
+        uuid topic_id
+        uuid last_read_message_id
+    }
+
+    AI_MODEL {
+        uuid id
+        uuid company_id
+        string name
+        string provider
+        string model_id
+        uuid created_by_id
+        text description
+        string api_base
+        string secret_ref
+        float temperature
+        int max_tokens
+        int context_window
+        boolean supports_tools
+        boolean supports_streaming
+        boolean supports_vision
+        boolean supports_audio
+        json config
+    }
+
+    MCP_SERVER {
+        uuid id
+        uuid company_id
+        string name
+        text description
+        string server_type
+        string transport
+        text command
+        string url
+        string docker_image
+        text docker_command
+        string kubernetes_service
+        json config
+        string secret_ref
+        int timeout_seconds
+        int max_retries
+    }
+
+    AI_AGENT {
+        uuid id
+        uuid company_id
+        string name
+        text description
+        string agent_type
+        uuid model_id
+        uuid mcp_server_id
+        string external_url
+        string secret_ref
+        text system_prompt
+        boolean safety_mode
+        int max_steps
+        boolean allow_parallel_tools
+    }
+
+    PERSONA {
+        uuid id
+        uuid company_id
+        uuid identity_user_id
+        uuid created_by_id
+        string name
+        text description
+        string source_type
+        uuid model_id
+        uuid agent_id
+        string avatar
+    }
+
+    KNOWLEDGE_BASE {
+        uuid id
+        uuid company_id
+        string name
+        text description
+    }
+
+    KNOWLEDGE_FILE {
+        uuid id
+        uuid knowledge_base_id
+        string file
+        string original_filename
+        string mime_type
+        bigint file_size
+        string chroma_collection
+        string embedding_status
+    }
+
+    

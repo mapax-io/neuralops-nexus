@@ -1,29 +1,49 @@
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import BaseModel
+from .base import BaseModel
 
 
 class Company(BaseModel):
-    name = models.CharField(max_length=255)
-    slug = models.SlugField(max_length=120, unique=True)
+    """
+    Tenant/company/workspace root.
+    """
 
-    is_personal = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True)
+    name = models.CharField(max_length=255)
+
+    slug = models.SlugField(
+        max_length=120,
+        unique=True,
+    )
+
+    is_personal = models.BooleanField(
+        default=False,
+        help_text="Whether this is a personal/private workspace.",
+    )
 
     members = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         through="CompanyAccess",
+        through_fields=("company", "user"),
         related_name="companies",
     )
 
     class Meta:
         db_table = "governance_company"
+        indexes = [
+            models.Index(fields=["slug"]),
+            models.Index(fields=["is_active"]),
+        ]
 
     def __str__(self):
         return self.name
 
+
 class CompanyAccess(BaseModel):
+    """
+    User membership and permissions inside a company.
+    """
+
     class Role(models.TextChoices):
         OWNER = "owner", "Owner"
         ADMIN = "admin", "Admin"
@@ -31,7 +51,7 @@ class CompanyAccess(BaseModel):
         VIEWER = "viewer", "Viewer"
 
     company = models.ForeignKey(
-        Company,
+        "nucleus.Company",
         on_delete=models.CASCADE,
         related_name="access_list",
     )
@@ -49,8 +69,6 @@ class CompanyAccess(BaseModel):
         db_index=True,
     )
 
-    is_active = models.BooleanField(default=True)
-
     invited_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -59,18 +77,24 @@ class CompanyAccess(BaseModel):
         related_name="company_invites_sent",
     )
 
+    joined_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
     class Meta:
         db_table = "governance_company_access"
+
         constraints = [
             models.UniqueConstraint(
                 fields=["company", "user"],
                 name="uniq_company_user_access",
             )
         ]
+
         indexes = [
             models.Index(fields=["company", "role"]),
             models.Index(fields=["user", "is_active"]),
         ]
 
     def __str__(self):
-        return f"{self.user} - {self.company} - {self.role}"
+        return f"{self.user} -> {self.company} ({self.role})"

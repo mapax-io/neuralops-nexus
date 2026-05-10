@@ -2,6 +2,9 @@ import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 
+from .base import BaseModel
+from django.conf import settings
+
 
 class User(AbstractUser):
     class UserType(models.TextChoices):
@@ -25,7 +28,7 @@ class User(AbstractUser):
     )
 
     current_company = models.ForeignKey(
-        "governance.Company",
+        "nucleus.Company",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

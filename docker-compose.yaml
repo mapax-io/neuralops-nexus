@@ -1,7 +1,7 @@
 services:
   # NUCLEUS: The Orchestrator
   nucleus:
-    image: nexus-nucleus:2.0
+    image: neuralops-backend:3.0
     container_name: nexus-nucleus
     build:
       context: ./modules/nexus-nucleus
@@ -11,7 +11,11 @@ services:
     volumes:
       - ./modules/nexus-nucleus:/nexus-nucleus
     environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_URL=${POSTGRES_URL}
+      - POSTGRES_HOST=${POSTGRES_HOST}
       - NEXUS_AI_URL=${NEXUS_AI_URL}
       - CENTRIFUGO_API_URL=${CENTRIFUGO_API_URL}
       - CENTRIFUGO_API_KEY=${CENTRIFUGO_API_KEY}
@@ -93,6 +97,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      
     ports:
       - "5433:5432"
     volumes:

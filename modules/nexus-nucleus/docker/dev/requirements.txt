@@ -1,0 +1,41 @@
+# =========================================================
+# NeuralOPS Nucleus — Django + Django Ninja
+# =========================================================
+
+# Core Framework
+Django>=5.2
+django-ninja
+pydantic>=2.0
+
+# Database
+psycopg[binary]
+dj-database-url
+
+# Authentication & Security
+PyJWT
+cryptography
+passlib[bcrypt]
+
+# HTTP Communication
+httpx
+
+# Realtime Transport
+centrifuge-python
+
+# File Handling
+pillow
+
+# Environment & Config
+python-dotenv
+
+# Developer Utilities
+django-extensions
+rich
+ipython
+
+# Production Server
+gunicorn
+uvicorn
+
+# Optional Cloud / Storage
+boto3

@@ -1,0 +1,15 @@
+# Web Framework & Server
+fastapi[standard]       # Includes Uvicorn and standard web tools
+pydantic-settings       # Professional .env and config management
+
+# Database & ORM
+sqlmodel                # The FastAPI-native ORM (SQLAlchemy + Pydantic)
+sqladmin[bootstrap]     # The "Django Admin" for FastAPI
+asyncpg                 # High-performance async driver for PostgreSQL
+psycopg2-binary         # Fallback driver (often needed for secondary tools)
+alembic                 # Essential for database migrations (the "makemigrations")
+
+# AI & LLM Orchestration
+litellm                 # One API for all LLMs (GPT-4, Claude, Llama 3)
+instructor              # For getting strict JSON/Pydantic objects from AI
+httpx                   # Async HTTP client for calling your Chat module

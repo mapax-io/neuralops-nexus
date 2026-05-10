@@ -1,7 +1,11 @@
 # apps/core/models.py
 
 import uuid
+import uuid
+
 from django.db import models
+
+from django.utils import timezone
 
 
 class UUIDModel(models.Model):
@@ -68,45 +72,43 @@ class TimeStampedModel(models.Model):
     class Meta:
         abstract = True
 
-
 class SoftDeleteModel(models.Model):
+
     """
 
-    Abstract base model that implements soft delete functionality.
-
-    Instead of permanently deleting records from the database,
-
-    this model marks them as inactive and stores the deletion timestamp.
-
-    Benefits:
-
-    - Prevents accidental data loss
-
-    - Allows recovery of deleted records
-
-    - Maintains historical/audit data
-
-    - Useful for multi-tenant systems where data integrity is critical
-
-    Usage:
-
-        class MyModel(SoftDeleteModel):
-
-            name = models.CharField(max_length=100)
-
-        obj = MyModel.objects.get(...)
-
-        obj.soft_delete()   # Marks as deleted
-
-        obj.restore()       # Restores the object
+    Abstract base model that supports soft deletion.
 
     """
 
     is_active = models.BooleanField(default=True, db_index=True)
+
     deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
+
         abstract = True
+
+    def soft_delete(self, save=True):
+
+        self.is_active = False
+
+        self.deleted_at = timezone.now()
+
+        if save:
+
+            self.save(update_fields=["is_active", "deleted_at", "updated_at"])
+
+    def restore(self, save=True):
+
+        self.is_active = True
+
+        self.deleted_at = None
+
+        if save:
+
+            self.save(update_fields=["is_active", "deleted_at", "updated_at"])
+
+
 
 
 class BaseModel(UUIDModel, TimeStampedModel, SoftDeleteModel):
@@ -131,7 +133,7 @@ class TenantBaseModel(BaseModel):
 
     company = models.ForeignKey(
 
-        "governance.Company",
+        "nucleus.Company",
 
         on_delete=models.CASCADE,
 
@@ -152,7 +154,7 @@ class ProjectBaseModel(TenantBaseModel):
     """
 
     project = models.ForeignKey(
-        "workspace.Project",
+        "nucleus.Project",
         on_delete=models.CASCADE,
         related_name="%(class)s_items",
         db_index=True,
