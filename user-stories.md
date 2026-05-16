@@ -205,6 +205,7 @@ Examples:
 - CSV
 - JSON
 - Codebase files
+- image
 
 Files are:
 
