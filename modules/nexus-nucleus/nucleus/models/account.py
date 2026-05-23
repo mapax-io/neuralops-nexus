@@ -4,7 +4,7 @@ from django.contrib.auth.models import AbstractUser
 
 from .base import BaseModel
 from django.conf import settings
-
+from django.core.exceptions import ValidationError
 
 class User(AbstractUser):
     class UserType(models.TextChoices):
@@ -45,14 +45,14 @@ class User(AbstractUser):
     def __str__(self):
         return self.username
 
-    def clean(self):
-        super().clean()
-        if self.user_type == self.UserType.HUMAN:
-            if not hasattr(self, "human_profile"):
-                raise ValidationError("Human user must have Human profile")
-        if self.user_type == self.UserType.PERSONA:
-            if not hasattr(self, "persona_profile"):
-                raise ValidationError("Persona user must have Persona profile")
+    # def clean(self):
+    #     super().clean()
+    #     if self.user_type == self.UserType.HUMAN:
+    #         if not hasattr(self, "human_profile"):
+    #             raise ValidationError("Human user must have Human profile")
+    #     if self.user_type == self.UserType.PERSONA:
+    #         if not hasattr(self, "persona_profile"):
+    #             raise ValidationError("Persona user must have Persona profile")
 
 class Human(BaseModel):
     user = models.OneToOneField(

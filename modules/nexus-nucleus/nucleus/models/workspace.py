@@ -21,11 +21,11 @@ class KnowledgeBase(TenantBaseModel):
         blank=True,
     )
 
-    channels = models.ManyToManyField(
-        "nucleus.Channel",
-        related_name="knowledge_bases",
-        blank=True,
-    )
+    # channels = models.ManyToManyField(
+    #     "nucleus.Channel",
+    #     related_name="knowledge_bases",
+    #     blank=True,
+    # )
 
     chat_topics = models.ManyToManyField(
         "nucleus.ChatTopic",
@@ -80,7 +80,14 @@ class Project(TenantBaseModel):
     #     related_name="projects",
     #     blank=True,
     # )
+    members = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        through="ProjectMember",
+        through_fields=("project", "user"),
+        related_name="member_projects",
+        blank=True,
 
+    )
     class Meta:
         db_table = "workspace_project"
         constraints = [
@@ -224,7 +231,23 @@ class ChatMessage(ProjectBaseModel):
         blank=True,
         related_name="replies",
     )
+    retry_of = models.ForeignKey(
 
+        "self",
+
+        on_delete=models.SET_NULL,
+
+        null=True,
+
+        blank=True,
+
+        related_name="retries",
+
+    )
+
+    sequence = models.PositiveIntegerField(default=0)
+
+    is_deleted_from_context = models.BooleanField(default=False)
     metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:

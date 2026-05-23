@@ -35,3 +35,24 @@ from .workspace import (
     KnowledgeBase,
     KnowledgeFile,
 )
+from .extended import (
+    Invitation,
+    ProjectMember,
+    TopicParticipant,
+    Upload,
+    UploadPart,
+    AgentRun,
+    KnowledgeChunk,
+    EmbeddingJob,
+    VectorDocument,
+    ProjectContext,
+    TopicContext,
+    AuditEvent,
+    Notification,
+    UserSession,
+    ModelUsageLog,
+    AgentApproval,
+    SavedSearch,
+    SearchLog,
+
+)

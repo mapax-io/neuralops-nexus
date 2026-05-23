@@ -1,0 +1,469 @@
+erDiagram
+    COMPANY ||--o{ COMPANY_ACCESS : has
+    USER ||--o{ COMPANY_ACCESS : joins
+    USER ||--o| HUMAN : has
+    USER ||--o| PERSONA : "persona identity"
+
+    COMPANY ||--o{ PROJECT : owns
+    PROJECT ||--o{ PROJECT_MEMBER : has
+    USER ||--o{ PROJECT_MEMBER : belongs_to
+
+    PROJECT ||--o{ CHANNEL : organizes
+    CHANNEL ||--o{ CHAT_TOPIC : contains
+
+    CHAT_TOPIC ||--o{ TOPIC_PARTICIPANT : has
+    USER ||--o{ TOPIC_PARTICIPANT : participates
+
+    CHAT_TOPIC ||--o{ CHAT_MESSAGE : has
+    USER ||--o{ CHAT_MESSAGE : sends
+    CHAT_MESSAGE ||--o{ CHAT_MESSAGE : replies_or_retries
+
+    CHAT_MESSAGE ||--o{ CHAT_REACTION : has
+    USER ||--o{ CHAT_REACTION : reacts
+
+    CHAT_MESSAGE ||--o{ CHAT_ATTACHMENT : has
+
+    CHAT_TOPIC ||--o{ CHAT_READ_MARKER : tracks
+    USER ||--o{ CHAT_READ_MARKER : reads
+
+    COMPANY ||--o{ AI_MODEL : owns
+    COMPANY ||--o{ MCP_SERVER : owns
+    COMPANY ||--o{ AI_AGENT : owns
+    COMPANY ||--o{ PERSONA : owns
+
+    AI_MODEL ||--o{ AI_AGENT : powers
+    MCP_SERVER ||--o{ AI_AGENT : equips
+
+    AI_MODEL ||--o{ PERSONA : wraps
+    AI_AGENT ||--o{ PERSONA : wraps
+
+    AI_AGENT ||--o{ AGENT_RUN : executes
+    CHAT_TOPIC ||--o{ AGENT_RUN : runs_in
+    USER ||--o{ AGENT_RUN : triggers
+
+    AGENT_RUN ||--o{ AGENT_APPROVAL : requires
+    USER ||--o{ AGENT_APPROVAL : requests_or_approves
+
+    COMPANY ||--o{ KNOWLEDGE_BASE : owns
+    KNOWLEDGE_BASE ||--o{ KNOWLEDGE_FILE : contains
+    KNOWLEDGE_FILE ||--o{ KNOWLEDGE_CHUNK : chunks
+
+    KNOWLEDGE_BASE }o--o{ PROJECT : attaches_to
+    KNOWLEDGE_BASE }o--o{ CHAT_TOPIC : attaches_to
+
+    COMPANY ||--o{ EMBEDDING_JOB : tracks
+    COMPANY ||--o{ VECTOR_DOCUMENT : indexes
+
+    PROJECT ||--o{ PROJECT_CONTEXT : has
+    CHAT_TOPIC ||--o{ TOPIC_CONTEXT : has
+
+    COMPANY ||--o{ INVITATION : sends
+    USER ||--o{ INVITATION : invited_by
+
+    COMPANY ||--o{ UPLOAD : owns
+    USER ||--o{ UPLOAD : uploads
+    UPLOAD ||--o{ UPLOAD_PART : has
+
+    COMPANY ||--o{ AUDIT_EVENT : logs
+    USER ||--o{ AUDIT_EVENT : acts
+
+    COMPANY ||--o{ NOTIFICATION : owns
+    USER ||--o{ NOTIFICATION : receives
+
+    USER ||--o{ USER_SESSION : has
+
+    COMPANY ||--o{ MODEL_USAGE_LOG : tracks
+    USER ||--o{ MODEL_USAGE_LOG : uses
+    AI_MODEL ||--o{ MODEL_USAGE_LOG : measured
+    CHAT_TOPIC ||--o{ MODEL_USAGE_LOG : related_to
+
+    COMPANY ||--o{ SAVED_SEARCH : owns
+    USER ||--o{ SAVED_SEARCH : saves
+
+    COMPANY ||--o{ SEARCH_LOG : logs
+    USER ||--o{ SEARCH_LOG : searches
+
+    COMPANY {
+        uuid id PK
+        string name
+        string slug
+        boolean is_personal
+        boolean is_active
+    }
+
+    USER {
+        uuid id PK
+        string username
+        string email
+        string user_type
+        string google_sso_id
+        uuid current_company_id FK
+    }
+
+    HUMAN {
+        uuid id PK
+        uuid user_id FK
+        string full_name
+        string email
+        string timezone
+        string locale
+    }
+
+    COMPANY_ACCESS {
+        uuid id PK
+        uuid company_id FK
+        uuid user_id FK
+        string role
+        uuid invited_by_id FK
+        datetime joined_at
+    }
+
+    PROJECT {
+        uuid id PK
+        uuid company_id FK
+        string name
+        string slug
+        text description
+    }
+
+    PROJECT_MEMBER {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid user_id FK
+        string role
+        json metadata
+    }
+
+    CHANNEL {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        string name
+        string slug
+        text description
+    }
+
+    CHAT_TOPIC {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid channel_id FK
+        string title
+        string slug
+    }
+
+    TOPIC_PARTICIPANT {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid topic_id FK
+        uuid user_id FK
+        string role
+        json metadata
+    }
+
+    CHAT_MESSAGE {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid topic_id FK
+        uuid sender_id FK
+        string message_type
+        text content
+        json content_json
+        string language
+        string status
+        uuid parent_id FK
+        uuid retry_of_id FK
+        int sequence
+        boolean is_deleted_from_context
+        json metadata
+    }
+
+    CHAT_REACTION {
+        uuid id PK
+        uuid message_id FK
+        uuid user_id FK
+        string emoji
+    }
+
+    CHAT_ATTACHMENT {
+        uuid id PK
+        uuid message_id FK
+        string attachment_type
+        string file
+        string original_filename
+        string mime_type
+        bigint file_size
+        json metadata
+    }
+
+    CHAT_READ_MARKER {
+        uuid id PK
+        uuid user_id FK
+        uuid topic_id FK
+        uuid last_read_message_id FK
+    }
+
+    AI_MODEL {
+        uuid id PK
+        uuid company_id FK
+        string name
+        string provider
+        string model_id
+        uuid created_by_id FK
+        string api_base
+        string secret_ref
+        float temperature
+        int max_tokens
+        int context_window
+        boolean supports_tools
+        boolean supports_streaming
+        boolean supports_vision
+        boolean supports_audio
+        json config
+    }
+
+    MCP_SERVER {
+        uuid id PK
+        uuid company_id FK
+        string name
+        string server_type
+        string transport
+        text command
+        string url
+        string docker_image
+        string kubernetes_service
+        string secret_ref
+        json config
+    }
+
+    AI_AGENT {
+        uuid id PK
+        uuid company_id FK
+        string name
+        string agent_type
+        uuid model_id FK
+        uuid mcp_server_id FK
+        string external_url
+        string secret_ref
+        text system_prompt
+        boolean safety_mode
+        int max_steps
+        boolean allow_parallel_tools
+    }
+
+    PERSONA {
+        uuid id PK
+        uuid company_id FK
+        uuid identity_user_id FK
+        uuid created_by_id FK
+        string name
+        string source_type
+        uuid model_id FK
+        uuid agent_id FK
+        string avatar
+    }
+
+    AGENT_RUN {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid agent_id FK
+        uuid topic_id FK
+        uuid triggered_by_id FK
+        string status
+        json input_payload
+        json output_payload
+        text error
+        datetime started_at
+        datetime completed_at
+    }
+
+    AGENT_APPROVAL {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid run_id FK
+        uuid requested_by_id FK
+        uuid approved_by_id FK
+        string title
+        string status
+        json payload
+    }
+
+    KNOWLEDGE_BASE {
+        uuid id PK
+        uuid company_id FK
+        string name
+        text description
+    }
+
+    KNOWLEDGE_FILE {
+        uuid id PK
+        uuid knowledge_base_id FK
+        string file
+        string original_filename
+        string mime_type
+        bigint file_size
+        string chroma_collection
+        string embedding_status
+    }
+
+    KNOWLEDGE_CHUNK {
+        uuid id PK
+        uuid knowledge_file_id FK
+        int chunk_index
+        text text
+        int token_count
+        json metadata
+    }
+
+    EMBEDDING_JOB {
+        uuid id PK
+        uuid company_id FK
+        string target_type
+        uuid target_id
+        string status
+        text error
+        json metadata
+    }
+
+    VECTOR_DOCUMENT {
+        uuid id PK
+        uuid company_id FK
+        string source_type
+        uuid source_id
+        string vector_db
+        string collection_name
+        string vector_id
+        json metadata
+    }
+
+    PROJECT_CONTEXT {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        string context_type
+        string title
+        text content
+        uuid reference_id
+        json metadata
+    }
+
+    TOPIC_CONTEXT {
+        uuid id PK
+        uuid company_id FK
+        uuid project_id FK
+        uuid topic_id FK
+        string context_type
+        string title
+        text content
+        uuid reference_id
+        json metadata
+    }
+
+    INVITATION {
+        uuid id PK
+        uuid company_id FK
+        string email
+        string status
+        uuid invited_by_id FK
+        string token_hash
+        datetime expires_at
+        datetime accepted_at
+        json access_payload
+    }
+
+    UPLOAD {
+        uuid id PK
+        uuid company_id FK
+        uuid uploaded_by_id FK
+        string original_filename
+        string mime_type
+        bigint file_size
+        string file
+        string storage_key
+        string status
+        json metadata
+    }
+
+    UPLOAD_PART {
+        uuid id PK
+        uuid upload_id FK
+        int part_number
+        string etag
+        bigint size_bytes
+        string storage_key
+    }
+
+    AUDIT_EVENT {
+        uuid id PK
+        uuid company_id FK
+        uuid actor_id FK
+        string action
+        string target_type
+        uuid target_id
+        json payload
+        string ip_address
+        text user_agent
+    }
+
+    NOTIFICATION {
+        uuid id PK
+        uuid company_id FK
+        uuid user_id FK
+        string notification_type
+        string title
+        text body
+        boolean is_read
+        datetime read_at
+        json metadata
+    }
+
+    USER_SESSION {
+        uuid id PK
+        uuid user_id FK
+        string provider
+        string provider_session_id
+        string ip_address
+        text user_agent
+        datetime started_at
+        datetime ended_at
+        boolean is_current
+    }
+
+    MODEL_USAGE_LOG {
+        uuid id PK
+        uuid company_id FK
+        uuid model_id FK
+        uuid user_id FK
+        uuid topic_id FK
+        int prompt_tokens
+        int completion_tokens
+        int total_tokens
+        int latency_ms
+        decimal cost_usd
+        json metadata
+    }
+
+    SAVED_SEARCH {
+        uuid id PK
+        uuid company_id FK
+        uuid user_id FK
+        string name
+        text query
+        json filters
+    }
+
+    SEARCH_LOG {
+        uuid id PK
+        uuid company_id FK
+        uuid user_id FK
+        text query
+        string search_type
+        json filters
+        int result_count
+        int latency_ms
+    }
