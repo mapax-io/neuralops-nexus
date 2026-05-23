@@ -152,3 +152,4 @@ SUPABASE_JWT_ISSUER = (
 )
 
 SUPABASE_JWT_AUDIENCE = "authenticated"
+AUTH_USER_MODEL = "nucleus.User"

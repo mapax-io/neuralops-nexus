@@ -13,3 +13,4 @@ alembic                 # Essential for database migrations (the "makemigrations
 litellm                 # One API for all LLMs (GPT-4, Claude, Llama 3)
 instructor              # For getting strict JSON/Pydantic objects from AI
 httpx                   # Async HTTP client for calling your Chat module
+fastembed

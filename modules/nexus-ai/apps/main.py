@@ -8,7 +8,6 @@ from .schemas import (
 )
 import litellm
 
-app = FastAPI(title="NeuralOps Nucleus")
 
 
 @app.post("/api/v1/internal/models/verify", response_model=ModelVerificationResponse)
