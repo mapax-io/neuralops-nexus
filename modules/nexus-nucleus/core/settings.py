@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'ninja', 
     'nucleus',
+    'authn',
+    'guardian',
 ]
 
 MIDDLEWARE = [
@@ -49,6 +51,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "guardian.backends.ObjectPermissionBackend",
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -135,4 +138,18 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+AUTH_USER_MODEL = "nucleus.User"
+# settings for Supabase JWT verification
+
+SUPABASE_URL = "https://srkhiminurogqlwdjkjx.supabase.co"
+
+SUPABASE_JWKS_URL = (
+    f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+)
+
+SUPABASE_JWT_ISSUER = (
+    f"{SUPABASE_URL}/auth/v1"
+)
+
+SUPABASE_JWT_AUDIENCE = "authenticated"
 AUTH_USER_MODEL = "nucleus.User"

@@ -4,7 +4,7 @@ from django.contrib.auth.models import AbstractUser
 
 from .base import BaseModel
 from django.conf import settings
-
+from django.core.exceptions import ValidationError
 
 class User(AbstractUser):
     class UserType(models.TextChoices):
