@@ -16,13 +16,13 @@ export interface StatusResponse {
 }
 
 export async function getAuthInit(): Promise<InitResponse> {
-  const res = await fetch(`${BASE_URL}/api/auth/init/`);
+  const res = await fetch(`${BASE_URL}/api/v1/auth/init/`);
   if (!res.ok) throw new Error("Failed to reach backend");
   return res.json();
 }
 
 export async function getAuthStatus(): Promise<StatusResponse> {
-  const res = await fetch(`${BASE_URL}/api/auth/status/`);
+  const res = await fetch(`${BASE_URL}/api/v1/auth/status/`);
   if (!res.ok) throw new Error("Failed to reach backend");
   return res.json();
 }
