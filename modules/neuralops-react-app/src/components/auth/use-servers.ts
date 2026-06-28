@@ -3,6 +3,10 @@ import type { ServerEntry } from "@/types";
 
 const KEY = "neuralops-servers";
 
+function generateId() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 export function loadServers(): ServerEntry[] {
   try {
     const raw = localStorage.getItem(KEY);
@@ -24,7 +28,7 @@ export function useServers() {
   }, []);
 
   function add(entry: Omit<ServerEntry, "id">) {
-    const next = [...servers, { ...entry, id: crypto.randomUUID() }];
+    const next = [...servers, { ...entry, id: generateId() }];
     setServers(next);
     saveServers(next);
   }
