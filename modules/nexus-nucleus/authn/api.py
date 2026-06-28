@@ -1,8 +1,8 @@
 from ninja import Router
 from ninja.errors import HttpError
 
-from .schema import AuthInitResponse, AuthStatusResponse, SignInRequest, SignInResponse
-from .services import DeviceAuthError, SignInError, auth_init, auth_status, signin_with_supabase_token
+from .schema import AuthInitResponse, AuthStatusResponse, AuthVerifyResponse, SignInRequest, SignInResponse
+from .services import DeviceAuthError, SignInError, auth_init, auth_status, auth_verify, signin_with_supabase_token
 from .supabase import SupabaseTokenError
 
 
@@ -23,10 +23,6 @@ def signin(request, payload: SignInRequest):
 
 @router.get("/init/", response=AuthInitResponse)
 def init(request):
-    """
-    Called once on app start.
-    Returns authenticated (go to /app) or unauthenticated (show activation screen + login_url).
-    """
     try:
         return auth_init()
     except DeviceAuthError as exc:
@@ -35,8 +31,26 @@ def init(request):
 
 @router.get("/status/", response=AuthStatusResponse)
 def status(request):
-    """
-    Polled every 3 seconds by the frontend while waiting for activation.
-    Reads from DB only — no Supabase call.
-    """
     return auth_status()
+
+
+# ── Server connection verify ─────────────────────────────────────────────────
+
+@router.get("/verify/", response=AuthVerifyResponse)
+def verify(request):
+    """
+    Called by the React app when the user clicks Connect on a server.
+    Verifies the Supabase JWT and checks if the user is allowed on this server.
+    Returns 200 if allowed, 401 if token invalid, 403 if not allowed.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HttpError(401, "Missing authorization token")
+
+    token = auth_header.split(" ", 1)[1]
+    try:
+        return auth_verify(token)
+    except SupabaseTokenError as exc:
+        raise HttpError(401, str(exc))
+    except PermissionError as exc:
+        raise HttpError(403, str(exc))

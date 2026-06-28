@@ -28,23 +28,27 @@ class SignInResponse(Schema):
     external_identity: ExternalIdentityOut
 
 
-# ── New: Device activation flow ─────────────────────────────────────────────
+# ── Device activation flow ──────────────────────────────────────────────────
 
 class AuthInitResponse(Schema):
-    """Response from GET /api/auth/init/"""
     status: Literal["authenticated", "unauthenticated"]
-    # Populated when status == "authenticated"
     email: Optional[str] = None
     user_id: Optional[str] = None
     session_expires_at: Optional[str] = None
-    # Populated when status == "unauthenticated"
     login_url: Optional[str] = None
 
 
 class AuthStatusResponse(Schema):
-    """Response from GET /api/auth/status/"""
     status: Literal["pending", "active", "session_expired"]
-    # Populated when status == "active"
     email: Optional[str] = None
     user_id: Optional[str] = None
     session_expires_at: Optional[str] = None
+
+
+# ── Server connection verify ─────────────────────────────────────────────────
+
+class AuthVerifyResponse(Schema):
+    ok: bool
+    email: str
+    user_id: str
+    is_new_user: bool
