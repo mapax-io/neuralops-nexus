@@ -1,10 +1,10 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from .base import BaseModel, TenantBaseModel, ProjectBaseModel
+from .base import BaseModel, TenantBaseModel, ProjectBaseModel, TenantOperationModel
 
 
-class Invitation(TenantBaseModel):
+class Invitation(TenantOperationModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         ACCEPTED = "accepted", "Accepted"
@@ -27,6 +27,13 @@ class Invitation(TenantBaseModel):
         related_name="sent_invitations",
     )
 
+    role = models.CharField(
+        max_length=20,
+        default="member",
+        db_index=True,
+        help_text="CompanyAccess role to assign when invitation is accepted.",
+    )
+
     token_hash = models.CharField(max_length=255, unique=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     accepted_at = models.DateTimeField(null=True, blank=True)
@@ -37,7 +44,7 @@ class Invitation(TenantBaseModel):
         help_text="Project/topic access to grant after invitation is accepted.",
     )
 
-    class Meta:
+    class Meta(TenantOperationModel.Meta):
         db_table = "governance_invitation"
         indexes = [
             models.Index(fields=["company", "email"]),

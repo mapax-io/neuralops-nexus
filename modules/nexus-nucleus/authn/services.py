@@ -118,10 +118,51 @@ def auth_verify(access_token: str) -> dict:
         }
 
     # ── Membership check ───────────────────────────────────────────────────
-    try:
-        access = CompanyAccess.objects.get(company=company, user=user, is_active=True)
-    except CompanyAccess.DoesNotExist:
-        raise PermissionError("You are not a member of this server. Ask the owner to invite you.")
+    from nucleus.models import Invitation
+    from django.contrib.auth.models import Group
+    from django.utils import timezone
+
+    access = CompanyAccess.objects.filter(company=company, user=user, is_active=True).first()
+
+    if not access:
+        # Check if there's a pending invitation for this email
+        invitation = Invitation.objects.filter(
+            company=company,
+            email=email,
+            status=Invitation.Status.PENDING,
+            is_active=True,
+        ).first()
+
+        if not invitation:
+            raise PermissionError("You are not a member of this server. Ask the owner to invite you.")
+
+        # Check invitation not expired
+        if invitation.expires_at and invitation.expires_at < timezone.now():
+            invitation.status = Invitation.Status.EXPIRED
+            invitation.save(update_fields=["status", "updated_at"])
+            raise PermissionError("Your invitation has expired. Ask the owner to invite you again.")
+
+        # Accept invitation — create CompanyAccess
+        access = CompanyAccess.objects.create(
+            company=company,
+            user=user,
+            role=invitation.role,
+            invited_by=invitation.invited_by,
+        )
+
+        # Add to corresponding Django group
+        try:
+            group = Group.objects.get(name=invitation.role.capitalize())
+            user.groups.add(group)
+        except Group.DoesNotExist:
+            pass
+
+        # Mark invitation as accepted
+        invitation.status = Invitation.Status.ACCEPTED
+        invitation.accepted_at = timezone.now()
+        invitation.save(update_fields=["status", "accepted_at", "updated_at"])
+
+        logger.info("[auth_verify] invitation accepted user=%s role=%s", email, invitation.role)
 
     # ── Update current_company if not set ──────────────────────────────────
     if user.current_company_id != company.id:

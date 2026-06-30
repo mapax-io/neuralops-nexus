@@ -162,3 +162,52 @@ class ProjectBaseModel(TenantBaseModel):
 
     class Meta:
         abstract = True
+
+
+# ── Operation-aware base classes ──────────────────────────────────────────────
+# These extend the base classes with expanded default_permissions so Django
+# automatically creates custom permissions (invite, remove, archive, join)
+# for every concrete model that inherits from them.
+
+OPERATION_PERMISSIONS = (
+    "add", "view", "change", "delete",
+    "invite", "remove", "archive", "join",
+)
+
+
+class OperationModel(BaseModel):
+    """Stand-alone operation-aware model (no tenant FK)."""
+
+    class Meta(BaseModel.Meta):
+        abstract = True
+        default_permissions = OPERATION_PERMISSIONS
+
+
+class TenantOperationModel(BaseModel):
+    """Company-scoped operation-aware model."""
+
+    company = models.ForeignKey(
+        "nucleus.Company",
+        on_delete=models.CASCADE,
+        related_name="%(class)s_items",
+        db_index=True,
+    )
+
+    class Meta(BaseModel.Meta):
+        abstract = True
+        default_permissions = OPERATION_PERMISSIONS
+
+
+class ProjectOperationModel(TenantOperationModel):
+    """Project-scoped operation-aware model."""
+
+    project = models.ForeignKey(
+        "nucleus.Project",
+        on_delete=models.CASCADE,
+        related_name="%(class)s_items",
+        db_index=True,
+    )
+
+    class Meta(TenantOperationModel.Meta):
+        abstract = True
+        default_permissions = OPERATION_PERMISSIONS
