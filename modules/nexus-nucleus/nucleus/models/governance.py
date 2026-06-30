@@ -21,6 +21,15 @@ class Company(BaseModel):
         help_text="Whether this is a personal/private workspace.",
     )
 
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="owned_companies",
+        null=True,
+        blank=True,
+        help_text="The user who owns and administrates this company.",
+    )
+
     members = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         through="CompanyAccess",

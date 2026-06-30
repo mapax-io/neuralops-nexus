@@ -52,3 +52,7 @@ class AuthVerifyResponse(Schema):
     email: str
     user_id: str
     is_new_user: bool
+    company_exists: bool
+    is_owner: bool
+    role: Optional[str] = None
+    company_name: Optional[str] = None

@@ -77,17 +77,18 @@ def auth_verify(access_token: str) -> dict:
 
     1. Verifies the Supabase JWT
     2. Gets or creates the local Django user
-    3. Returns ok + user info
+    3. Checks company + membership status
+    4. Returns ok + user info + company info
 
     Raises:
         SupabaseTokenError — if JWT is invalid
-        PermissionError — if user is not allowed (future: allowlist check)
+        PermissionError   — if user is not allowed on this server
     """
+    from nucleus.models import Company, CompanyAccess
+
     claims = verify_supabase_token(access_token)
 
     email = claims.get("email")
-    supabase_user_id = claims.get("sub")
-
     if not email:
         raise SupabaseTokenError("Email missing from token.")
 
@@ -99,13 +100,47 @@ def auth_verify(access_token: str) -> dict:
     if not user.is_active:
         raise PermissionError("Your account is not active on this server.")
 
-    logger.info("[auth_verify] user=%s new=%s", email, created)
+    # ── Company check ──────────────────────────────────────────────────────
+    company = Company.objects.filter(is_active=True).first()
+
+    if not company:
+        # No company set up yet — server is unconfigured
+        logger.info("[auth_verify] no company found, server needs setup. user=%s", email)
+        return {
+            "ok": True,
+            "email": user.email,
+            "user_id": str(user.id),
+            "is_new_user": created,
+            "company_exists": False,
+            "is_owner": False,
+            "role": None,
+            "company_name": None,
+        }
+
+    # ── Membership check ───────────────────────────────────────────────────
+    try:
+        access = CompanyAccess.objects.get(company=company, user=user, is_active=True)
+    except CompanyAccess.DoesNotExist:
+        raise PermissionError("You are not a member of this server. Ask the owner to invite you.")
+
+    # ── Update current_company if not set ──────────────────────────────────
+    if user.current_company_id != company.id:
+        user.current_company = company
+        user.save(update_fields=["current_company"])
+
+    is_owner = access.role == CompanyAccess.Role.OWNER
+
+    logger.info("[auth_verify] user=%s role=%s company=%s", email, access.role, company.name)
 
     return {
         "ok": True,
         "email": user.email,
         "user_id": str(user.id),
         "is_new_user": created,
+        "company_exists": True,
+        "is_owner": is_owner,
+        "role": access.role,
+        "company_name": company.name,
     }
 
 
