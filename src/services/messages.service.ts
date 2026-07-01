@@ -1,4 +1,4 @@
-import { apiJson, apiRequest } from "./api.client";
+import { apiJson, apiRequest } from "./api-client";
 import type { Message } from "@/types";
 import { useAuthStore } from "@/store/auth.store";
 

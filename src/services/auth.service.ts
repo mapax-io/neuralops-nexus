@@ -50,16 +50,37 @@ export async function getCurrentSession() {
   return data.session;
 }
 
+export interface VerifyResult {
+  ok: boolean;
+  status: number;
+  // populated when ok === true
+  userId?: string;
+  role?: string;
+  companyName?: string;
+  isOwner?: boolean;
+}
+
 /** Verify the Supabase JWT against a Django NeuralOps server. */
 export async function verifyServerAccess(
   serverUrl: string,
   token: string,
-): Promise<{ ok: boolean; status: number }> {
+): Promise<VerifyResult> {
   try {
     const res = await fetch(`${serverUrl}/api/v1/auth/verify/`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return { ok: res.ok, status: res.status };
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return {
+        ok: true,
+        status: res.status,
+        userId: data.user_id,
+        role: data.role ?? null,
+        companyName: data.company_name ?? null,
+        isOwner: data.is_owner ?? false,
+      };
+    }
+    return { ok: false, status: res.status };
   } catch {
     return { ok: false, status: 0 };
   }

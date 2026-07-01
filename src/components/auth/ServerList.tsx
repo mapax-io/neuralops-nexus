@@ -13,7 +13,7 @@ import { Plus, Server } from "lucide-react";
 export function ServerList() {
   const { servers, add, remove, touch } = useServers();
   const supabaseToken = useAuthStore((s) => s.supabaseToken);
-  const setServerUrl = useAuthStore((s) => s.setServerUrl);
+  const setServerInfo = useAuthStore((s) => s.setServerInfo);
   const navigate = useNavigate();
 
   const [adding, setAdding] = useState(false);
@@ -37,7 +37,13 @@ export function ServerList() {
     if (result.ok) {
       touch(server.id);
       setConnectedId(server.id);
-      setServerUrl(cleanUrl);
+      setServerInfo({
+        serverUrl: cleanUrl,
+        userId: result.userId,
+        role: result.role,
+        companyName: result.companyName,
+        isOwner: result.isOwner,
+      });
       setTimeout(() => navigate({ to: "/app" }), 500);
     } else {
       const msg =

@@ -1,4 +1,4 @@
-import { apiRequest } from "./api.client";
+import { apiRequest } from "./api-client";
 
 export interface Member {
   user_id: string;

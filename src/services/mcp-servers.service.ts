@@ -1,4 +1,4 @@
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { MCPServer } from "@/types";
 
 export async function listMCPServers(): Promise<MCPServer[]> {

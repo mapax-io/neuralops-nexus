@@ -1,4 +1,4 @@
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { User } from "@/types";
 
 export async function listUsers(): Promise<User[]> {

@@ -48,6 +48,8 @@ export function MembersPanel() {
   const { data: members, isLoading } = useMembers();
   const removeMutation = useRemoveMember();
   const currentUserId = useAuthStore((s) => s.userId);
+  const currentUserRole = useAuthStore((s) => s.role);
+  const canManageMembers = currentUserRole === "owner" || currentUserRole === "admin";
 
   return (
     <div className="rounded-lg border bg-card">
@@ -92,7 +94,7 @@ export function MembersPanel() {
         {!isLoading &&
           members?.map((m) => {
             const isSelf = currentUserId === m.user_id;
-            const canRemove = !isSelf && m.role !== "owner";
+            const canRemove = canManageMembers && !isSelf && m.role !== "owner";
             return (
               <div
                 key={m.user_id}
