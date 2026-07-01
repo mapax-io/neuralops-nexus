@@ -11,25 +11,39 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type Field = {
-  name: string;
-  label?: string;
-  type: "text" | "number" | "select" | "checkbox";
-  options?: string[];
+// JSON Schema property definition
+type JsonSchemaProp = {
+  type?: string;
+  title?: string;
+  enum?: string[];
 };
 
-type Schema = {
+// JSON Schema format (what the AI sends)
+type JsonSchema = {
   title?: string;
-  fields: Field[];
+  type?: string;
+  properties?: Record<string, JsonSchemaProp>;
+  required?: string[];
 };
+
+function deriveFieldType(prop: JsonSchemaProp): "text" | "number" | "select" | "checkbox" {
+  if (prop.enum && prop.enum.length > 0) return "select";
+  if (prop.type === "boolean") return "checkbox";
+  if (prop.type === "number" || prop.type === "integer") return "number";
+  return "text";
+}
 
 export function FormRenderer({
+  content,
   metadata,
 }: {
   content: string;
   metadata?: Record<string, unknown>;
 }) {
-  const schema = (metadata?.schema as Schema) ?? { fields: [] };
+  const schema = (metadata?.schema as JsonSchema) ?? {};
+  const properties = schema.properties ?? {};
+  const fieldKeys = Object.keys(properties);
+
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [submitted, setSubmitted] = useState(false);
 
@@ -42,6 +56,14 @@ export function FormRenderer({
     setSubmitted(true);
   }
 
+  if (fieldKeys.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
+        {content || "Form schema is empty."}
+      </div>
+    );
+  }
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -50,43 +72,57 @@ export function FormRenderer({
       {schema.title && (
         <div className="text-sm font-medium text-foreground">{schema.title}</div>
       )}
-      {schema.fields.map((f) => (
-        <div key={f.name} className="space-y-1.5">
-          <Label htmlFor={f.name}>{f.label ?? f.name}</Label>
-          {f.type === "select" ? (
-            <Select
-              onValueChange={(v) => update(f.name, v)}
-              value={(values[f.name] as string) ?? ""}
-            >
-              <SelectTrigger id={f.name}>
-                <SelectValue placeholder="Select..." />
-              </SelectTrigger>
-              <SelectContent>
-                {f.options?.map((o) => (
-                  <SelectItem key={o} value={o}>
-                    {o}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : f.type === "checkbox" ? (
-            <Checkbox
-              id={f.name}
-              checked={!!values[f.name]}
-              onCheckedChange={(v) => update(f.name, !!v)}
-            />
-          ) : (
-            <Input
-              id={f.name}
-              type={f.type}
-              value={(values[f.name] as string) ?? ""}
-              onChange={(e) => update(f.name, e.target.value)}
-            />
-          )}
-        </div>
-      ))}
+      {content && (
+        <div className="text-sm text-muted-foreground">{content}</div>
+      )}
+      {fieldKeys.map((key) => {
+        const prop = properties[key];
+        const fieldType = deriveFieldType(prop);
+        const label = prop.title ?? key;
+
+        return (
+          <div key={key} className="space-y-1.5">
+            <Label htmlFor={key}>{label}</Label>
+            {fieldType === "select" ? (
+              <Select
+                onValueChange={(v) => update(key, v)}
+                value={(values[key] as string) ?? ""}
+              >
+                <SelectTrigger id={key}>
+                  <SelectValue placeholder="Select..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {prop.enum?.map((o) => (
+                    <SelectItem key={o} value={o}>
+                      {o}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : fieldType === "checkbox" ? (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id={key}
+                  checked={!!values[key]}
+                  onCheckedChange={(v) => update(key, !!v)}
+                />
+                <label htmlFor={key} className="text-sm text-foreground cursor-pointer">
+                  {label}
+                </label>
+              </div>
+            ) : (
+              <Input
+                id={key}
+                type={fieldType}
+                value={(values[key] as string) ?? ""}
+                onChange={(e) => update(key, e.target.value)}
+              />
+            )}
+          </div>
+        );
+      })}
       <Button type="submit" size="sm" disabled={submitted}>
-        {submitted ? "Sent" : "Send Response"}
+        {submitted ? "Sent ✓" : "Send Response"}
       </Button>
     </form>
   );

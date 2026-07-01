@@ -8,14 +8,14 @@ const MOCK_MESSAGES: ChatMessage[] = [
     type: "text",
     content: "Hello! I'm Nova. How can I help you with this project today?",
     sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
-    timestamp: new Date(Date.now() - 300000).toISOString(),
+    timestamp: new Date(Date.now() - 600000).toISOString(),
   },
   {
     id: "2",
     type: "text",
     content: "Can you write a Python function to calculate fibonacci numbers?",
     sender: { id: "u1", name: "Noaman", type: "human", avatar: null },
-    timestamp: new Date(Date.now() - 240000).toISOString(),
+    timestamp: new Date(Date.now() - 540000).toISOString(),
   },
   {
     id: "3",
@@ -30,7 +30,7 @@ for i in range(10):
     print(f"fibonacci({i}) = {fibonacci(i)}")`,
     language: "python",
     sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
-    timestamp: new Date(Date.now() - 180000).toISOString(),
+    timestamp: new Date(Date.now() - 480000).toISOString(),
   },
   {
     id: "4",
@@ -38,7 +38,7 @@ for i in range(10):
     content:
       "$ python fibonacci.py\nfibonacci(0) = 0\nfibonacci(1) = 1\nfibonacci(2) = 1\nfibonacci(3) = 2\nfibonacci(4) = 3\nfibonacci(5) = 5",
     sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
-    timestamp: new Date(Date.now() - 120000).toISOString(),
+    timestamp: new Date(Date.now() - 360000).toISOString(),
   },
   {
     id: "5",
@@ -56,6 +56,43 @@ for i in range(10):
         { name: "n=7", value: 13 },
       ],
     },
+    sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
+    timestamp: new Date(Date.now() - 240000).toISOString(),
+  },
+  {
+    id: "6",
+    type: "form",
+    content: "Please fill in the deployment configuration:",
+    metadata: {
+      schema: {
+        title: "Deployment Config",
+        type: "object",
+        properties: {
+          environment: {
+            type: "string",
+            title: "Environment",
+            enum: ["development", "staging", "production"],
+          },
+          replicas: {
+            type: "number",
+            title: "Number of Replicas",
+          },
+          enable_monitoring: {
+            type: "boolean",
+            title: "Enable Monitoring",
+          },
+        },
+        required: ["environment", "replicas"],
+      },
+    },
+    sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
+    timestamp: new Date(Date.now() - 120000).toISOString(),
+  },
+  {
+    id: "7",
+    type: "web",
+    // example.com allows iframe embedding (no X-Frame-Options restriction)
+    content: "https://example.com",
     sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
     timestamp: new Date(Date.now() - 60000).toISOString(),
   },
