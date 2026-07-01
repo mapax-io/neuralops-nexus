@@ -1,7 +1,7 @@
 services:
   # NUCLEUS: The Orchestrator
   nucleus:
-    image: nexus-backend:3.0
+    image: nexus-backend:5.0
     container_name: nexus-nucleus
     # build:
     #   context: ./modules/nexus-nucleus
@@ -43,7 +43,7 @@ services:
 
   # CELERY WORKER: Background Tasks
   nucleus-celery:
-    image: nexus-backend:3.0
+    image: nexus-backend:5.0
     container_name: nexus-celery
     volumes:
       - ./modules/nexus-nucleus:/nexus-nucleus

@@ -116,7 +116,6 @@ class Command(BaseCommand):
                 )
 
                 slug = slugify(workspace_name)
-                # Ensure slug uniqueness
                 base_slug = slug
                 counter = 1
                 while Company.objects.filter(slug=slug).exists():
@@ -155,8 +154,10 @@ class Command(BaseCommand):
             )
         )
         self.stdout.write(
-            f"\n  Next step — log in at:\n"
-            f"    {NEURALOPS_APP_URL}\n"
+            f"\n  Next steps:\n"
+            f"    1. Log in at {NEURALOPS_APP_URL}\n"
+            f"    2. Create your first project\n"
+            f"    3. Add an AI model and create a Persona to start chatting\n"
         )
         print_divider()
 

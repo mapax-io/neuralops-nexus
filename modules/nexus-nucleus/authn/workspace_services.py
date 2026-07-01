@@ -142,7 +142,7 @@ def get_channel(company, project, channel_id: str):
 # ── Topics ────────────────────────────────────────────────────────────────────
 
 def list_topics(company, project, channel):
-    return channel.topic_items.filter(
+    return channel.topics.filter(
         company=company, project=project, is_active=True
     ).order_by("created_at")
 

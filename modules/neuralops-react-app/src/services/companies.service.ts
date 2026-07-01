@@ -1,5 +1,5 @@
 // Empty service shell — implement endpoints as the Django API is wired up.
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { Company } from "@/types";
 
 export async function listCompanies(): Promise<Company[]> {

@@ -1,4 +1,4 @@
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { Channel } from "@/types";
 
 export async function listChannels(projectId: string): Promise<Channel[]> {
