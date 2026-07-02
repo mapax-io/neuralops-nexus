@@ -91,7 +91,6 @@ for i in range(10):
   {
     id: "7",
     type: "web",
-    // example.com allows iframe embedding (no X-Frame-Options restriction)
     content: "https://example.com",
     sender: { id: "p1", name: "Nova", type: "persona", avatar: null },
     timestamp: new Date(Date.now() - 60000).toISOString(),
@@ -100,16 +99,19 @@ for i in range(10):
 
 export function MessageList({ messages }: { messages?: ChatMessage[] }) {
   const list = messages ?? MOCK_MESSAGES;
-  const bottomRef = useRef<HTMLDivElement>(null);
+  // Ref on the scroll container itself — we scroll it directly via scrollTop
+  // so only the message list scrolls, not the whole page
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = containerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [list.length]);
 
   if (list.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
-        <p className="text-sm text-foreground-muted">
+        <p className="text-sm text-muted-foreground">
           No messages yet. Start the conversation below.
         </p>
       </div>
@@ -117,11 +119,10 @@ export function MessageList({ messages }: { messages?: ChatMessage[] }) {
   }
 
   return (
-    <div className="h-full overflow-y-auto py-4">
+    <div ref={containerRef} className="h-full overflow-y-auto py-4">
       {list.map((m) => (
         <MessageItem key={m.id} message={m} />
       ))}
-      <div ref={bottomRef} />
     </div>
   );
 }

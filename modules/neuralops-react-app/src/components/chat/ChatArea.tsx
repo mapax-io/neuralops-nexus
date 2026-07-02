@@ -35,10 +35,12 @@ export function ChatArea() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full overflow-hidden">
       <TopicList projectId={activeProjectId} channelId={activeChannelId} />
-      <div className="flex min-w-0 flex-1 flex-col bg-background">
-        <div className="min-h-0 flex-1">
+      {/* Right column: must be overflow-hidden so the flex children are constrained */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        {/* MessageList wrapper: min-h-0 allows flex shrink, overflow-hidden contains scroll */}
+        <div className="min-h-0 flex-1 overflow-hidden">
           <MessageList />
         </div>
         <TypingIndicator actors={typing} />
