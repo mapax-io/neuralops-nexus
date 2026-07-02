@@ -8,8 +8,11 @@ import hashlib
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+
+from .supabase import SupabaseAdminError, invite_user_by_email as supabase_invite
 
 User = get_user_model()
 
@@ -185,7 +188,7 @@ def invite_to_project(
     if scope == "topic" and topic_id:
         access_payload["topic_id"] = topic_id
 
-    Invitation.objects.create(
+    invitation = Invitation.objects.create(
         company=company,
         email=email,
         role=role,
@@ -195,15 +198,41 @@ def invite_to_project(
         access_payload=access_payload,
     )
 
-    # TODO: send email with server URL + token
-    # send_invite_email(email, token, company)
+    # Send invitation email via Supabase Admin API.
+    # Supabase emails the magic link; on click the user lands at the portal
+    # which completes auth and our SupabaseBearer creates their Django User.
+    portal_url = getattr(settings, "NEURALOPS_PORTAL_URL", "")
+    redirect_to = f"{portal_url}/accept-invite" if portal_url else ""
+
+    try:
+        supabase_invite(
+            email=email,
+            redirect_to=redirect_to,
+            metadata={
+                "neuralops_invitation_id": str(invitation.id),
+                "neuralops_token": token,          # plain token for portal to look up
+                "invited_by": inviter.email or str(inviter.id),
+            },
+        )
+        email_sent = True
+    except SupabaseAdminError as exc:
+        # Don't fail the invite if email sending fails — invitation record exists.
+        email_sent = False
+        import logging
+        logging.getLogger(__name__).error("Supabase invite email failed: %s", exc)
+
+    msg = (
+        f"Invitation sent to {email}. They will receive an email with the link to join."
+        if email_sent
+        else f"Invitation created for {email} but email could not be sent (check SUPABASE_SERVICE_KEY)."
+    )
 
     return {
         "ok": True,
         "is_new_user": True,
         "email": email,
         "scope": scope,
-        "message": f"Invitation sent to {email}. They will receive an email with the server link.",
+        "message": msg,
     }
 
 

@@ -29,6 +29,7 @@ function SettingsPage() {
   }
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="mx-auto max-w-2xl space-y-6 p-8">
       <h1 className="text-lg font-semibold text-foreground">Settings</h1>
 
@@ -152,6 +153,7 @@ function SettingsPage() {
           <Button onClick={handleSave}>Save</Button>
         </div>
       </div>
+    </div>
     </div>
   );
 }

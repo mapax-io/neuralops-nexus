@@ -28,15 +28,21 @@ export function CodeRenderer({
   const md = `\`\`\`${language ?? ""}\n${content}\n\`\`\``;
 
   return (
-    <div className="relative overflow-hidden rounded-md border border-border bg-[hsl(220_13%_12%)]">
-      <div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+    <div
+      className="relative overflow-hidden rounded-md border"
+      style={{ backgroundColor: "var(--code-bg)", borderColor: "var(--code-border)" }}
+    >
+      <div
+        className="flex items-center justify-between border-b px-3 py-1.5"
+        style={{ backgroundColor: "var(--code-header-bg)", borderColor: "var(--code-border)" }}
+      >
         <span className="text-xs font-medium text-muted-foreground">
           {language ?? "code"}
         </span>
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 px-2 text-muted-foreground hover:bg-white/10 hover:text-white"
+          className="h-7 px-2 text-muted-foreground hover:text-foreground"
           onClick={handleCopy}
         >
           {copied ? (

@@ -44,7 +44,11 @@ export function ChatArea() {
           <MessageList />
         </div>
         <TypingIndicator actors={typing} />
-        <MessageInput onSend={handleSend} />
+        <MessageInput
+          onSend={handleSend}
+          projectId={activeProjectId}
+          topicId={activeTopicId}
+        />
       </div>
     </div>
   );

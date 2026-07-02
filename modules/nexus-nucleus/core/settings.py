@@ -100,6 +100,7 @@ SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_JWT_ISSUER = f"{SUPABASE_URL}/auth/v1"
 SUPABASE_JWT_AUDIENCE = "authenticated"
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 # =========================================================
 # NeuralOps

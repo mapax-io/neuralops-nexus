@@ -62,20 +62,7 @@ def add_member(request, project_id: str, payload: AddMemberRequest):
         raise HttpError(400, str(exc))
 
 
-# ── Remove member ─────────────────────────────────────────────────────────────
-
-@router.delete("/{project_id}/team/{user_id}/")
-def remove_member(request, project_id: str, user_id: str):
-    """Remove a member from the project."""
-    company, user, project = _resolve(request, project_id)
-
-    try:
-        return svc.remove_member(company, project, user_id, user)
-    except ValueError as exc:
-        raise HttpError(400, str(exc))
-
-
-# ── /invite slash command ─────────────────────────────────────────────────────
+# ── /invite slash command (must be before /{user_id}/ to avoid route conflict) ─
 
 @router.post("/{project_id}/team/invite/")
 def invite_to_project(request, project_id: str, payload: InviteToProjectRequest):
@@ -103,7 +90,7 @@ def invite_to_project(request, project_id: str, payload: InviteToProjectRequest)
     return result
 
 
-# ── Available to add ──────────────────────────────────────────────────────────
+# ── Available to add (must be before /{user_id}/ to avoid route conflict) ─────
 
 @router.get("/{project_id}/team/available-users/", response=List[AvailableUserOut])
 def available_users(request, project_id: str, search: Optional[str] = Query(default="")):
@@ -117,3 +104,16 @@ def available_personas(request, project_id: str):
     """List personas not yet in this project."""
     company, user, project = _resolve(request, project_id)
     return svc.list_available_personas(company, project)
+
+
+# ── Remove member (parameterised — must be LAST to not shadow literal paths) ──
+
+@router.delete("/{project_id}/team/{user_id}/")
+def remove_member(request, project_id: str, user_id: str):
+    """Remove a member from the project."""
+    company, user, project = _resolve(request, project_id)
+
+    try:
+        return svc.remove_member(company, project, user_id, user)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
