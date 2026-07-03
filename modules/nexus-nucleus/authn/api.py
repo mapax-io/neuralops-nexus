@@ -1,12 +1,34 @@
-from ninja import Router
+import hashlib
+
+from django.conf import settings
+from django.utils import timezone
+from ninja import Router, Schema
 from ninja.errors import HttpError
 
 from .schema import AuthInitResponse, AuthStatusResponse, AuthVerifyResponse, SignInRequest, SignInResponse
 from .services import DeviceAuthError, SignInError, auth_init, auth_status, auth_verify, signin_with_supabase_token
 from .supabase import SupabaseTokenError
+from . import workspace_services as ws_svc
+from . import team_services as team_svc
 
 
 router = Router(tags=["Authentication"])
+
+
+# ── Server config (public) ───────────────────────────────────────────────────
+
+class ServerConfigOut(Schema):
+    server_url: str
+
+
+@router.get("/config/", response=ServerConfigOut, auth=None)
+def server_config(request):
+    """
+    Returns the public server URL (NEURALOPS_SERVER_URL env var).
+    Used by the frontend so users know what address to share.
+    No authentication required.
+    """
+    return {"server_url": getattr(settings, "NEURALOPS_SERVER_URL", "")}
 
 
 # ── Supabase JWT sign-in ─────────────────────────────────────────────────────
@@ -39,8 +61,9 @@ def status(request):
 @router.get("/verify/", response=AuthVerifyResponse)
 def verify(request):
     """
-    Called by the React app when the user clicks Connect on a server.
+    Called by the React app when the user connects to a server.
     Verifies the Supabase JWT and checks if the user is allowed on this server.
+    If the user has a pending invitation, it is auto-accepted here.
     Returns 200 if allowed, 401 if token invalid, 403 if not allowed.
     """
     auth_header = request.headers.get("Authorization", "")

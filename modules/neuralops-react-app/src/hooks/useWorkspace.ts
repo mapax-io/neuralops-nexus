@@ -6,6 +6,11 @@ import {
   getTopics,
   createChannel,
   createTopic,
+  getTeam,
+  addTeamMember,
+  removeTeamMember,
+  getAvailableUsers,
+  getAvailablePersonas,
 } from "@/services/workspace.service";
 
 export function useProjects() {
@@ -62,5 +67,57 @@ export function useCreateTopic(
       onSuccess?.();
     },
     onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+// ── Team hooks ───────────────────────────────────────────────────────────────────
+
+export function useTeam(projectId: string) {
+  return useQuery({
+    queryKey: ["team", projectId],
+    queryFn: () => getTeam(projectId),
+    enabled: !!projectId,
+  });
+}
+
+export function useAddTeamMember(projectId: string, onSuccess?: () => void) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { user_id: string; role?: string }) =>
+      addTeamMember(projectId, payload),
+    onSuccess: () => {
+      toast.success("Member added");
+      qc.invalidateQueries({ queryKey: ["team", projectId] });
+      onSuccess?.();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export function useRemoveTeamMember(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => removeTeamMember(projectId, userId),
+    onSuccess: () => {
+      toast.success("Member removed");
+      qc.invalidateQueries({ queryKey: ["team", projectId] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export function useAvailableUsers(projectId: string, search = "") {
+  return useQuery({
+    queryKey: ["available-users", projectId, search],
+    queryFn: () => getAvailableUsers(projectId, search),
+    enabled: !!projectId,
+  });
+}
+
+export function useAvailablePersonas(projectId: string) {
+  return useQuery({
+    queryKey: ["available-personas", projectId],
+    queryFn: () => getAvailablePersonas(projectId),
+    enabled: !!projectId,
   });
 }

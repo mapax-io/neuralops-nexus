@@ -11,6 +11,8 @@ import {
   Settings,
   LogOut,
   Users,
+  Bot,
+  User,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -25,9 +27,10 @@ import { useAuthStore } from "@/store/auth.store";
 import { useUIStore } from "@/store/ui.store";
 import { signOut } from "@/services/auth.service";
 import { MembersPanel } from "@/components/members/MembersPanel";
-import { useProjects } from "@/hooks/useWorkspace";
+import { useProjects, useTeam, useRemoveTeamMember } from "@/hooks/useWorkspace";
 import { AddProjectDialog } from "@/components/workspace/AddProjectDialog";
 import { AddChannelDialog } from "@/components/workspace/AddChannelDialog";
+import { AddTeamMemberDialog } from "@/components/workspace/AddTeamMemberDialog";
 import type { Project, Channel } from "@/services/workspace.service";
 
 export function Sidebar() {
@@ -42,9 +45,11 @@ export function Sidebar() {
   const { data: projects, isLoading } = useProjects();
 
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
+  const [openTeam, setOpenTeam] = useState<Record<string, boolean>>({});
   const [membersOpen, setMembersOpen] = useState(false);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [addChannelFor, setAddChannelFor] = useState<string | null>(null);
+  const [addTeamFor, setAddTeamFor] = useState<string | null>(null);
 
   async function handleSignOut() {
     try {
@@ -142,6 +147,7 @@ export function Sidebar() {
         {!isLoading &&
           projects?.map((project) => {
             const popen = openProjects[project.id] ?? false;
+            const topen = openTeam[project.id] ?? false;
             return (
               <ProjectNode
                 key={project.id}
@@ -150,8 +156,13 @@ export function Sidebar() {
                 onToggle={() =>
                   setOpenProjects((o) => ({ ...o, [project.id]: !popen }))
                 }
+                teamOpen={topen}
+                onToggleTeam={() =>
+                  setOpenTeam((o) => ({ ...o, [project.id]: !topen }))
+                }
                 canManage={canManage}
                 onAddChannel={() => setAddChannelFor(project.id)}
+                onAddTeamMember={() => setAddTeamFor(project.id)}
               />
             );
           })}
@@ -217,6 +228,14 @@ export function Sidebar() {
           projectId={addChannelFor}
         />
       )}
+
+      {addTeamFor && (
+        <AddTeamMemberDialog
+          open={!!addTeamFor}
+          onOpenChange={(o) => !o && setAddTeamFor(null)}
+          projectId={addTeamFor}
+        />
+      )}
     </aside>
   );
 }
@@ -225,17 +244,27 @@ function ProjectNode({
   project,
   open,
   onToggle,
+  teamOpen,
+  onToggleTeam,
   canManage,
   onAddChannel,
+  onAddTeamMember,
 }: {
   project: Project;
   open: boolean;
   onToggle: () => void;
+  teamOpen: boolean;
+  onToggleTeam: () => void;
   canManage: boolean;
   onAddChannel: () => void;
+  onAddTeamMember: () => void;
 }) {
+  const { data: team } = useTeam(open || teamOpen ? project.id : "");
+  const removeMember = useRemoveTeamMember(project.id);
+
   return (
     <div className="mb-2">
+      {/* Project header */}
       <div className="group flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent">
         <button onClick={onToggle} className="flex flex-1 items-center gap-1">
           {open ? (
@@ -250,10 +279,7 @@ function ProjectNode({
           <button
             aria-label="Add channel"
             className="ml-auto text-foreground-muted opacity-0 hover:text-foreground group-hover:opacity-100"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddChannel();
-            }}
+            onClick={(e) => { e.stopPropagation(); onAddChannel(); }}
           >
             <Plus className="h-3 w-3" />
           </button>
@@ -262,18 +288,86 @@ function ProjectNode({
 
       {open && (
         <div className="ml-3 mt-1 border-l border-sidebar-border pl-2">
+          {/* Channels */}
           {project.channels.length === 0 && (
-            <div className="px-2 py-1 text-xs text-foreground-muted">
-              No channels yet
-            </div>
+            <div className="px-2 py-1 text-xs text-foreground-muted">No channels yet</div>
           )}
           {project.channels.map((channel) => (
-            <ChannelNode
-              key={channel.id}
-              projectId={project.id}
-              channel={channel}
-            />
+            <ChannelNode key={channel.id} projectId={project.id} channel={channel} />
           ))}
+
+          {/* Team section */}
+          <div className="mt-2">
+            <div className="group flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+              <button
+                onClick={onToggleTeam}
+                className="flex flex-1 items-center gap-1 text-xs font-medium text-foreground-muted"
+              >
+                {teamOpen ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                <Users className="h-3 w-3" />
+                <span>Team</span>
+                {team && (
+                  <span className="ml-1 text-[10px] text-foreground-muted">
+                    {team.length}
+                  </span>
+                )}
+              </button>
+              <button
+                aria-label="Add team member"
+                className="ml-auto text-foreground-muted opacity-0 hover:text-foreground group-hover:opacity-100"
+                onClick={(e) => { e.stopPropagation(); onAddTeamMember(); }}
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </div>
+
+            {teamOpen && (
+              <div className="mt-0.5 space-y-0.5 pl-4">
+                {!team || team.length === 0 ? (
+                  <div className="px-2 py-1 text-xs text-foreground-muted">No members yet</div>
+                ) : (
+                  team.map((member) => (
+                    <div
+                      key={member.id}
+                      className="group/member flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-sidebar-accent"
+                    >
+                      {member.member_type === "persona" ? (
+                        <Bot className="h-3 w-3 shrink-0 text-accent-foreground" />
+                      ) : (
+                        <User className="h-3 w-3 shrink-0 text-foreground-muted" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                        {member.name}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-foreground-muted">
+                        {member.role}
+                      </span>
+                      {canManage && member.role !== "owner" && (
+                        <button
+                          aria-label="Remove member"
+                          className="ml-1 hidden text-foreground-muted hover:text-destructive group-hover/member:block"
+                          onClick={() => removeMember.mutate(member.user_id)}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* DMs — coming soon */}
+          <div className="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-foreground-muted opacity-40">
+            <MessageSquare className="h-3 w-3" />
+            <span>DMs</span>
+            <span className="ml-auto text-[10px]">soon</span>
+          </div>
         </div>
       )}
     </div>
