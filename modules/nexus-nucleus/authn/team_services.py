@@ -12,7 +12,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from .supabase import SupabaseAdminError, invite_user_by_email as supabase_invite
+# supabase email invite removed — invites now use shareable links
 
 User = get_user_model()
 
@@ -125,6 +125,7 @@ def invite_to_project(
     scope: str = "topic",
     topic_id: str = None,
     role: str = "member",
+    server_url_override: str = None,
 ) -> dict:
     """
     Handles /invite email [project] from the chat input.
@@ -198,41 +199,20 @@ def invite_to_project(
         access_payload=access_payload,
     )
 
-    # Send invitation email via Supabase Admin API.
-    # Supabase emails the magic link; on click the user lands at the portal
-    # which completes auth and our SupabaseBearer creates their Django User.
-    portal_url = getattr(settings, "NEURALOPS_PORTAL_URL", "")
-    redirect_to = f"{portal_url}/accept-invite" if portal_url else ""
-
-    try:
-        supabase_invite(
-            email=email,
-            redirect_to=redirect_to,
-            metadata={
-                "neuralops_invitation_id": str(invitation.id),
-                "neuralops_token": token,          # plain token for portal to look up
-                "invited_by": inviter.email or str(inviter.id),
-            },
-        )
-        email_sent = True
-    except SupabaseAdminError as exc:
-        # Don't fail the invite if email sending fails — invitation record exists.
-        email_sent = False
-        import logging
-        logging.getLogger(__name__).error("Supabase invite email failed: %s", exc)
-
-    msg = (
-        f"Invitation sent to {email}. They will receive an email with the link to join."
-        if email_sent
-        else f"Invitation created for {email} but email could not be sent (check SUPABASE_SERVICE_KEY)."
-    )
+    # Build the shareable invite link.
+    # The link points to the NeuralOps server's /join page.
+    # The invitee clicks it, signs up/in via Supabase, and is added to the project.
+    server_url = (server_url_override or "").rstrip("/") \
+                 or getattr(settings, "NEURALOPS_SERVER_URL", "").rstrip("/")
+    invite_link = f"{server_url}/join?token={token}" if server_url else f"/join?token={token}"
 
     return {
         "ok": True,
         "is_new_user": True,
         "email": email,
         "scope": scope,
-        "message": msg,
+        "invite_link": invite_link,
+        "message": f"Invite link generated for {email}. Share it so they can join.",
     }
 
 

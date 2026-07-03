@@ -16,7 +16,7 @@ from ninja.errors import HttpError
 
 from .auth import SupabaseBearer
 from .team_schema import (
-    TeamMemberOut, AddMemberRequest, InviteToProjectRequest,
+    TeamMemberOut, AddMemberRequest, InviteToProjectRequest, InviteToProjectOut,
     AvailableUserOut, AvailablePersonaOut,
 )
 from . import team_services as svc
@@ -64,7 +64,7 @@ def add_member(request, project_id: str, payload: AddMemberRequest):
 
 # ── /invite slash command (must be before /{user_id}/ to avoid route conflict) ─
 
-@router.post("/{project_id}/team/invite/")
+@router.post("/{project_id}/team/invite/", response=InviteToProjectOut)
 def invite_to_project(request, project_id: str, payload: InviteToProjectRequest):
     """
     Handle the /invite slash command from the chat input.
@@ -83,6 +83,7 @@ def invite_to_project(request, project_id: str, payload: InviteToProjectRequest)
             scope=payload.scope,
             topic_id=payload.topic_id,
             role=payload.role,
+            server_url_override=payload.server_url,
         )
     except ValueError as exc:
         raise HttpError(400, str(exc))

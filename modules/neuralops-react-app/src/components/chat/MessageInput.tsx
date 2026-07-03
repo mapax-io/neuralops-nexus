@@ -128,10 +128,27 @@ export function MessageInput({
         topic_id: scope === "topic" ? (topicId ?? undefined) : undefined,
         role: "member",
       });
-      toast.success(result.message ?? (scope === "project"
-        ? `${email} invited to this project`
-        : `${email} invited to this topic`
-      ));
+
+      if (result.invite_link) {
+        // New user: show a long-lived toast with a copy-link button
+        toast.success(result.message ?? `Invite link generated for ${email}`, {
+          description: result.invite_link,
+          action: {
+            label: "Copy link",
+            onClick: () => {
+              navigator.clipboard.writeText(result.invite_link!);
+              toast.success("Link copied to clipboard");
+            },
+          },
+          duration: 30_000, // 30 s — user needs time to copy
+        });
+      } else {
+        // Existing user: added directly
+        toast.success(result.message ?? (scope === "project"
+          ? `${email} added to this project`
+          : `${email} added to this topic`
+        ));
+      }
       setText("");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Invite failed";
