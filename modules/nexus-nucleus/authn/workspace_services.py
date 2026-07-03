@@ -97,6 +97,41 @@ def get_project(company, user, project_id: str):
     return None
 
 
+def remove_user_from_server(company, user_id: str, requesting_user) -> dict:
+    """
+    Remove a user from the server entirely.
+    Deactivates CompanyAccess + all ProjectMember records.
+    Cannot remove the server owner. Cannot remove yourself.
+    """
+    from nucleus.models import CompanyAccess, ProjectMember
+
+    if str(requesting_user.id) == user_id:
+        raise ValueError("You cannot remove yourself from the server.")
+
+    access = CompanyAccess.objects.filter(
+        company=company, user_id=user_id, is_active=True
+    ).select_related("user").first()
+
+    if not access:
+        raise ValueError("User is not a member of this server.")
+
+    if access.role == CompanyAccess.Role.OWNER:
+        raise ValueError("Cannot remove the server owner.")
+
+    email = access.user.email or str(user_id)
+
+    # Deactivate company access
+    access.is_active = False
+    access.save(update_fields=["is_active", "updated_at"])
+
+    # Deactivate all project memberships
+    ProjectMember.objects.filter(
+        company=company, user_id=user_id, is_active=True
+    ).update(is_active=False)
+
+    return {"ok": True, "message": f"{email} removed from server."}
+
+
 def delete_project(company, project_id: str):
     """Soft-delete a project."""
     from nucleus.models import Project

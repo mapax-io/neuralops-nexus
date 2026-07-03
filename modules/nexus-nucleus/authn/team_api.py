@@ -106,7 +106,7 @@ def available_personas(request, project_id: str):
     return svc.list_available_personas(company, project)
 
 
-# ── Remove member (parameterised — must be LAST to not shadow literal paths) ──
+# ── Remove from project (parameterised — must be LAST to not shadow literal paths) ──
 
 @router.delete("/{project_id}/team/{user_id}/")
 def remove_member(request, project_id: str, user_id: str):
@@ -115,5 +115,25 @@ def remove_member(request, project_id: str, user_id: str):
 
     try:
         return svc.remove_member(company, project, user_id, user)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+
+
+# ── Remove from server entirely ─────────────────────────────────────────────
+
+@router.delete("/server/members/{user_id}/", tags=["Server"])
+def remove_from_server(request, user_id: str):
+    """
+    Remove a user from the server entirely.
+    Deactivates their CompanyAccess and all project memberships.
+    Owner-only action.
+    """
+    user = request.auth
+    company = ws_svc.get_company()
+    if not company:
+        raise HttpError(503, "Server not initialised.")
+
+    try:
+        return ws_svc.remove_user_from_server(company, user_id, user)
     except ValueError as exc:
         raise HttpError(400, str(exc))

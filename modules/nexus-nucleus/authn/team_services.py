@@ -149,7 +149,7 @@ def invite_to_project(
             "message": f"{email} added.",
         }
 
-    # Case 2: new user — just pre-authorize the email, no project payload needed
+    # Case 2: new user — pre-authorize the email and remember which project
     if Invitation.objects.filter(
         company=company, email=email, status=Invitation.Status.PENDING, is_active=True
     ).exists():
@@ -164,6 +164,7 @@ def invite_to_project(
         invited_by=inviter,
         token_hash=token_hash,
         expires_at=timezone.now() + timedelta(days=30),
+        access_payload={"project_id": str(project.id)},
     )
 
     server_url = getattr(settings, "NEURALOPS_SERVER_URL", "").rstrip("/")
