@@ -162,6 +162,9 @@ def auth_verify(access_token: str) -> dict:
         invitation.accepted_at = timezone.now()
         invitation.save(update_fields=["status", "accepted_at", "updated_at"])
 
+        # Add to all active projects on the server
+        _add_user_to_all_projects(company, user, invitation.role)
+
         logger.info("[auth_verify] invitation accepted user=%s role=%s", email, invitation.role)
 
     # ── Update current_company if not set ──────────────────────────────────
@@ -183,6 +186,27 @@ def auth_verify(access_token: str) -> dict:
         "role": access.role,
         "company_name": company.name,
     }
+
+
+# =========================================================
+# Invitation helper
+# =========================================================
+
+def _add_user_to_all_projects(company, user, role: str):
+    """Add a newly invited user to every active project on the server."""
+    from nucleus.models import Project, ProjectMember
+
+    for project in Project.objects.filter(company=company, is_active=True):
+        member, _ = ProjectMember.objects.get_or_create(
+            company=company,
+            project=project,
+            user=user,
+            defaults={"role": role},
+        )
+        if not member.is_active:
+            member.is_active = True
+            member.save(update_fields=["is_active"])
+        logger.info("[invite] user=%s added to project=%s", user.email, project.name)
 
 
 # =========================================================

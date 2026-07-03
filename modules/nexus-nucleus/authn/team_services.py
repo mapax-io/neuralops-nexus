@@ -1,8 +1,5 @@
 """
 Business logic for project team management.
-
-Humans and Personas are both stored as ProjectMembers — the User.user_type
-field ("human" | "persona") distinguishes them without extra joins.
 """
 import hashlib
 import secrets
@@ -56,11 +53,7 @@ def list_team(company, project) -> list:
 
 
 def add_member(company, project, user_id: str, role: str = "member") -> dict:
-    """
-    Add an existing user (human or persona) to a project.
-    Re-activates if previously removed.
-    Raises ValueError if already an active member.
-    """
+    """Add an existing user (human or persona) to a project."""
     from nucleus.models import ProjectMember
 
     user = User.objects.filter(id=user_id, is_active=True).first()
@@ -79,20 +72,14 @@ def add_member(company, project, user_id: str, role: str = "member") -> dict:
         member.save(update_fields=["is_active", "role"])
     else:
         member = ProjectMember.objects.create(
-            company=company,
-            project=project,
-            user=user,
-            role=role,
+            company=company, project=project, user=user, role=role,
         )
 
     return _format_member(member)
 
 
 def remove_member(company, project, user_id: str, requesting_user) -> dict:
-    """
-    Remove a member from the project (soft-delete).
-    Cannot remove the project owner or yourself.
-    """
+    """Remove a member from the project (soft-delete)."""
     from nucleus.models import ProjectMember
 
     member = ProjectMember.objects.filter(
@@ -101,10 +88,8 @@ def remove_member(company, project, user_id: str, requesting_user) -> dict:
 
     if not member:
         raise ValueError("Member not found.")
-
     if member.role == ProjectMember.Role.OWNER:
         raise ValueError("Cannot remove the project owner.")
-
     if str(member.user_id) == str(requesting_user.id):
         raise ValueError("You cannot remove yourself from the project.")
 
@@ -124,16 +109,16 @@ def invite_to_project(
     role: str = "member",
 ) -> dict:
     """
-    Handles /invite email [project] from the chat input.
+    /invite email — pre-authorize an email on this server.
 
-    If the user already exists in the workspace → add them directly.
-    If not → create a pending Invitation record.
-               When they sign up and connect to this server, auth_verify
-               will find the pending invite and let them in automatically.
+    If the user already exists → add them directly to the project/topic.
+    If not → create a pending Invitation (email only, no project payload).
+              When they sign up and connect, auth_verify lets them in
+              and adds them to all projects automatically.
     """
     from nucleus.models import CompanyAccess, Invitation, ProjectMember
 
-    # Case 1: user already exists in the workspace — add directly
+    # Case 1: already on the server — add to project/topic directly
     existing_access = CompanyAccess.objects.filter(
         company=company, user__email=email, is_active=True
     ).select_related("user").first()
@@ -141,33 +126,30 @@ def invite_to_project(
     if existing_access:
         user = existing_access.user
 
-        project_member = ProjectMember.objects.filter(
+        member = ProjectMember.objects.filter(
             company=company, project=project, user=user
         ).first()
-
-        if not project_member or not project_member.is_active:
-            if project_member:
-                project_member.is_active = True
-                project_member.role = role
-                project_member.save(update_fields=["is_active", "role"])
-            else:
-                ProjectMember.objects.create(
-                    company=company, project=project, user=user, role=role
-                )
+        if not member:
+            ProjectMember.objects.create(
+                company=company, project=project, user=user, role=role
+            )
+        elif not member.is_active:
+            member.is_active = True
+            member.role = role
+            member.save(update_fields=["is_active", "role"])
 
         if scope == "topic" and topic_id:
             _add_to_topic(company, project, topic_id, user, role)
 
-        scope_label = "this topic" if scope == "topic" else f"project {project.name}"
         return {
             "ok": True,
             "is_new_user": False,
             "email": email,
             "scope": scope,
-            "message": f"{email} added to {scope_label}.",
+            "message": f"{email} added.",
         }
 
-    # Case 2: new user — create a pending invitation
+    # Case 2: new user — just pre-authorize the email, no project payload needed
     if Invitation.objects.filter(
         company=company, email=email, status=Invitation.Status.PENDING, is_active=True
     ).exists():
@@ -182,11 +164,6 @@ def invite_to_project(
         invited_by=inviter,
         token_hash=token_hash,
         expires_at=timezone.now() + timedelta(days=30),
-        access_payload={
-            "project_id": str(project.id),
-            "scope": scope,
-            **({"topic_id": topic_id} if scope == "topic" and topic_id else {}),
-        },
     )
 
     server_url = getattr(settings, "NEURALOPS_SERVER_URL", "").rstrip("/")
@@ -208,15 +185,11 @@ def _add_to_topic(company, project, topic_id: str, user, role: str = "participan
     topic = ChatTopic.objects.filter(
         company=company, project=project, id=topic_id, is_active=True
     ).first()
-
     if not topic:
         return
 
     TopicParticipant.objects.get_or_create(
-        company=company,
-        project=project,
-        topic=topic,
-        user=user,
+        company=company, project=project, topic=topic, user=user,
         defaults={"role": TopicParticipant.Role.PARTICIPANT},
     )
 
@@ -224,10 +197,7 @@ def _add_to_topic(company, project, topic_id: str, user, role: str = "participan
 # ── Available to add ──────────────────────────────────────────────────────────
 
 def list_available_users(company, project, search: str = "") -> list:
-    """
-    Workspace human members not yet in this project.
-    Optional search by name or email.
-    """
+    """Workspace human members not yet in this project."""
     from nucleus.models import CompanyAccess, ProjectMember
     from django.db.models import Q
 
@@ -235,14 +205,12 @@ def list_available_users(company, project, search: str = "") -> list:
         company=company, project=project, is_active=True
     ).values_list("user_id", flat=True)
 
-    workspace_member_ids = CompanyAccess.objects.filter(
+    workspace_ids = CompanyAccess.objects.filter(
         company=company, is_active=True
     ).values_list("user_id", flat=True)
 
     qs = User.objects.filter(
-        id__in=workspace_member_ids,
-        user_type="human",
-        is_active=True,
+        id__in=workspace_ids, user_type="human", is_active=True,
     ).exclude(id__in=in_project).select_related("human_profile")
 
     if search:
@@ -274,9 +242,7 @@ def list_available_personas(company, project) -> list:
 
     personas = Persona.objects.filter(
         company=company, is_active=True
-    ).exclude(
-        identity_user_id__in=in_project
-    ).select_related("identity_user")
+    ).exclude(identity_user_id__in=in_project).select_related("identity_user")
 
     result = []
     for p in personas:
