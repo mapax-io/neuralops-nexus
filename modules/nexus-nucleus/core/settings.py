@@ -107,6 +107,7 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 # =========================================================
 
 NEURALOPS_INSTALL_TOKEN = os.getenv("NEURALOPS_INSTALL_TOKEN", "")
+NEURALOPS_SERVER_URL = os.getenv("NEURALOPS_SERVER_URL", "")  # public URL of this server
 SUPABASE_DEVICE_REQUEST_URL = os.getenv(
     "SUPABASE_DEVICE_REQUEST_URL",
     "https://xgfsxikypxjhqlutiepw.supabase.co/functions/v1/device-request",

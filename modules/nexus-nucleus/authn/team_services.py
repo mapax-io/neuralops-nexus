@@ -200,11 +200,24 @@ def invite_to_project(
     )
 
     # Build the shareable invite link.
-    # The link points to the NeuralOps server's /join page.
-    # The invitee clicks it, signs up/in via Supabase, and is added to the project.
+    #
+    # The React app (portal) has a CONSTANT URL — that's the base of the link.
+    # The NeuralOps server URL (dynamic: Tailscale, ngrok, local IP, etc.) is
+    # embedded as the `server` query param so the portal knows which backend to
+    # add to the invitee's server list.
+    #
+    # Final link: {portal_url}/join?server={server_url}&token={token}
+    portal_url = getattr(settings, "NEURALOPS_PORTAL_URL", "").rstrip("/")
     server_url = (server_url_override or "").rstrip("/") \
                  or getattr(settings, "NEURALOPS_SERVER_URL", "").rstrip("/")
-    invite_link = f"{server_url}/join?token={token}" if server_url else f"/join?token={token}"
+
+    if portal_url and server_url:
+        invite_link = f"{portal_url}/join?server={server_url}&token={token}"
+    elif server_url:
+        # Fallback: no portal URL configured, link directly to the server
+        invite_link = f"{server_url}/join?token={token}"
+    else:
+        invite_link = f"/join?token={token}"
 
     return {
         "ok": True,

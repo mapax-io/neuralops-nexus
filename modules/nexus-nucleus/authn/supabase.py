@@ -63,7 +63,7 @@ def invite_user_by_email(email: str, redirect_to: str = "", metadata: dict = Non
             "Add it to your .env file (Supabase Dashboard → Settings → API → service_role key)."
         )
 
-    url = f"{settings.SUPABASE_URL}/auth/v1/admin/invite"
+    url = f"{settings.SUPABASE_URL}/auth/v1/invite"
 
     payload = {"email": email}
     if redirect_to:
