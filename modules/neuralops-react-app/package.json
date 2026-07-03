@@ -43,6 +43,7 @@
     "@rjsf/utils": "^6.6.2",
     "@rjsf/validator-ajv8": "^6.6.2",
     "@supabase/supabase-js": "^2.108.2",
+    "centrifuge": "^5.3.5",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query": "^5.101.1",
     "@tanstack/react-router": "^1.170.16",
