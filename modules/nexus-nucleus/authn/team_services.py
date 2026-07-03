@@ -12,8 +12,6 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-# supabase email invite removed — invites now use shareable links
-
 User = get_user_model()
 
 
@@ -76,7 +74,6 @@ def add_member(company, project, user_id: str, role: str = "member") -> dict:
     if member:
         if member.is_active:
             raise ValueError("This person is already a member of this project.")
-        # Re-activate
         member.is_active = True
         member.role = role
         member.save(update_fields=["is_active", "role"])
@@ -125,19 +122,18 @@ def invite_to_project(
     scope: str = "topic",
     topic_id: str = None,
     role: str = "member",
-    server_url_override: str = None,
 ) -> dict:
     """
     Handles /invite email [project] from the chat input.
 
     If the user already exists in the workspace → add them directly.
-    If not → create a workspace Invitation with access_payload so that
-             when they accept, they get added to the right project/topic.
-    Returns a dict describing what happened, used to generate a system message.
+    If not → create a pending Invitation record.
+               When they sign up and connect to this server, auth_verify
+               will find the pending invite and let them in automatically.
     """
     from nucleus.models import CompanyAccess, Invitation, ProjectMember
 
-    # Case 1: user already exists in the workspace
+    # Case 1: user already exists in the workspace — add directly
     existing_access = CompanyAccess.objects.filter(
         company=company, user__email=email, is_active=True
     ).select_related("user").first()
@@ -145,7 +141,6 @@ def invite_to_project(
     if existing_access:
         user = existing_access.user
 
-        # Add to project
         project_member = ProjectMember.objects.filter(
             company=company, project=project, user=user
         ).first()
@@ -160,7 +155,6 @@ def invite_to_project(
                     company=company, project=project, user=user, role=role
                 )
 
-        # Add to topic if scope = "topic"
         if scope == "topic" and topic_id:
             _add_to_topic(company, project, topic_id, user, role)
 
@@ -170,62 +164,40 @@ def invite_to_project(
             "is_new_user": False,
             "email": email,
             "scope": scope,
-            "message": f"{email} was added to {scope_label}.",
+            "message": f"{email} added to {scope_label}.",
         }
 
-    # Case 2: new user — create an invitation
+    # Case 2: new user — create a pending invitation
     if Invitation.objects.filter(
         company=company, email=email, status=Invitation.Status.PENDING, is_active=True
     ).exists():
-        raise ValueError(f"An invitation has already been sent to {email}.")
+        raise ValueError(f"{email} has already been invited.")
 
-    token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    token_hash = hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest()
 
-    access_payload = {
-        "project_id": str(project.id),
-        "scope": scope,
-    }
-    if scope == "topic" and topic_id:
-        access_payload["topic_id"] = topic_id
-
-    invitation = Invitation.objects.create(
+    Invitation.objects.create(
         company=company,
         email=email,
         role=role,
         invited_by=inviter,
         token_hash=token_hash,
-        expires_at=timezone.now() + timedelta(days=7),
-        access_payload=access_payload,
+        expires_at=timezone.now() + timedelta(days=30),
+        access_payload={
+            "project_id": str(project.id),
+            "scope": scope,
+            **({"topic_id": topic_id} if scope == "topic" and topic_id else {}),
+        },
     )
 
-    # Build the shareable invite link.
-    #
-    # The React app (portal) has a CONSTANT URL — that's the base of the link.
-    # The NeuralOps server URL (dynamic: Tailscale, ngrok, local IP, etc.) is
-    # embedded as the `server` query param so the portal knows which backend to
-    # add to the invitee's server list.
-    #
-    # Final link: {portal_url}/join?server={server_url}&token={token}
-    portal_url = getattr(settings, "NEURALOPS_PORTAL_URL", "").rstrip("/")
-    server_url = (server_url_override or "").rstrip("/") \
-                 or getattr(settings, "NEURALOPS_SERVER_URL", "").rstrip("/")
-
-    if portal_url and server_url:
-        invite_link = f"{portal_url}/join?server={server_url}&token={token}"
-    elif server_url:
-        # Fallback: no portal URL configured, link directly to the server
-        invite_link = f"{server_url}/join?token={token}"
-    else:
-        invite_link = f"/join?token={token}"
+    server_url = getattr(settings, "NEURALOPS_SERVER_URL", "").rstrip("/")
 
     return {
         "ok": True,
         "is_new_user": True,
         "email": email,
         "scope": scope,
-        "invite_link": invite_link,
-        "message": f"Invite link generated for {email}. Share it so they can join.",
+        "server_url": server_url or None,
+        "message": f"{email} invited. Ask them to sign up and connect to this server.",
     }
 
 

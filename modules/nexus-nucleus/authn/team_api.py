@@ -83,7 +83,6 @@ def invite_to_project(request, project_id: str, payload: InviteToProjectRequest)
             scope=payload.scope,
             topic_id=payload.topic_id,
             role=payload.role,
-            server_url_override=payload.server_url,
         )
     except ValueError as exc:
         raise HttpError(400, str(exc))

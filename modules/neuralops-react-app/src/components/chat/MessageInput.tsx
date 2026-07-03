@@ -129,25 +129,22 @@ export function MessageInput({
         role: "member",
       });
 
-      if (result.invite_link) {
-        // New user: show a long-lived toast with a copy-link button
-        toast.success(result.message ?? `Invite link generated for ${email}`, {
-          description: result.invite_link,
+      if (result.is_new_user && result.server_url) {
+        // New user: tell the inviter what server address to share
+        toast.success(result.message, {
+          description: `Server address: ${result.server_url}`,
           action: {
-            label: "Copy link",
+            label: "Copy address",
             onClick: () => {
-              navigator.clipboard.writeText(result.invite_link!);
-              toast.success("Link copied to clipboard");
+              navigator.clipboard.writeText(result.server_url!);
+              toast.success("Server address copied");
             },
           },
-          duration: 30_000, // 30 s — user needs time to copy
+          duration: 20_000,
         });
       } else {
-        // Existing user: added directly
-        toast.success(result.message ?? (scope === "project"
-          ? `${email} added to this project`
-          : `${email} added to this topic`
-        ));
+        // Existing user added directly, or no server URL configured
+        toast.success(result.message);
       }
       setText("");
     } catch (err) {
