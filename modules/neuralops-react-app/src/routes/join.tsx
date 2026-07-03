@@ -92,6 +92,8 @@ function JoinPage() {
 
     // Already signed in → skip form, go straight to join
     if (existingToken) {
+      // Pass `clean` directly — djangoUrl state hasn't flushed yet
+      saveServerToList(clean);
       setStage("joining");
       connectAndJoin(existingToken, clean);
       return;
@@ -111,12 +113,16 @@ function JoinPage() {
   }, []);
 
   // ── Add server to list (always happens on sign-up or sign-in) ─────────────
-  function saveServerToList(companyName?: string) {
+  // url defaults to djangoUrl state, but callers inside useEffect must pass
+  // the raw `clean` string because React state may not have flushed yet.
+  function saveServerToList(url?: string, companyName?: string) {
+    const target = (url ?? djangoUrl).replace(/\/$/, "");
+    if (!target) return;
     const servers = loadServers();
-    if (!servers.some((s) => s.url.replace(/\/$/, "") === djangoUrl)) {
+    if (!servers.some((s) => s.url.replace(/\/$/, "") === target)) {
       saveServers([
         ...servers,
-        { id: crypto.randomUUID(), name: companyName ?? "NeuralOps Server", url: djangoUrl },
+        { id: crypto.randomUUID(), name: companyName ?? "NeuralOps Server", url: target },
       ]);
     }
   }
@@ -179,6 +185,7 @@ function JoinPage() {
 
       // Update server name in list now that we know the company name
       if (verify.companyName) {
+        // Update name in list now we know the real company name
         const servers = loadServers();
         saveServers(
           servers.map((s) =>

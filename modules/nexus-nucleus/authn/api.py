@@ -142,14 +142,18 @@ def redeem_invite(request, payload: RedeemInviteRequest):
     token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
     inv = Invitation.objects.filter(
         token_hash=token_hash,
-        status=Invitation.Status.PENDING,
+        # Accept PENDING *and* ACCEPTED: auth_verify may have already marked the
+        # invite ACCEPTED (it auto-accepts company membership on first connect).
+        # We still need to run redeem to add project/topic membership.
+        status__in=[Invitation.Status.PENDING, Invitation.Status.ACCEPTED],
         is_active=True,
     ).select_related("company", "invited_by").first()
 
     if not inv:
         raise HttpError(404, "Invitation not found or already used.")
 
-    if inv.expires_at and inv.expires_at < timezone.now():
+    # Only enforce expiry for invitations that haven't been accepted yet
+    if inv.status == Invitation.Status.PENDING and inv.expires_at and inv.expires_at < timezone.now():
         raise HttpError(410, "This invitation link has expired. Ask the sender to resend it.")
 
     user = request.auth
