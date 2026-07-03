@@ -2,7 +2,7 @@ from django.conf import settings
 
 from django.db import models
 
-from .base import TenantBaseModel, ProjectBaseModel, BaseModel
+from .base import TenantBaseModel, ProjectBaseModel, BaseModel, TenantOperationModel, ProjectOperationModel
 
 class KnowledgeBase(TenantBaseModel):
     """
@@ -70,25 +70,20 @@ class KnowledgeFile(BaseModel):
 
 
 
-class Project(TenantBaseModel):
+class Project(TenantOperationModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=120)
     description = models.TextField(blank=True, null=True)
 
-    # knowledge_bases = models.ManyToManyField(
-    #     "nucleus.KnowledgeBase",
-    #     related_name="projects",
-    #     blank=True,
-    # )
     members = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         through="ProjectMember",
         through_fields=("project", "user"),
         related_name="member_projects",
         blank=True,
-
     )
-    class Meta:
+
+    class Meta(TenantOperationModel.Meta):
         db_table = "workspace_project"
         constraints = [
             models.UniqueConstraint(
@@ -101,18 +96,12 @@ class Project(TenantBaseModel):
         return f"{self.company.name} / {self.name}"
 
 
-class Channel(ProjectBaseModel):
+class Channel(ProjectOperationModel):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=120)
     description = models.TextField(blank=True, null=True)
 
-    # knowledge_bases = models.ManyToManyField(
-    #     "nucleus.KnowledgeBase",
-    #     related_name="channels",
-    #     blank=True,
-    # )
-
-    class Meta:
+    class Meta(ProjectOperationModel.Meta):
         db_table = "workspace_channel"
         constraints = [
             models.UniqueConstraint(
@@ -128,7 +117,7 @@ class Channel(ProjectBaseModel):
         return f"{self.project.name} / {self.name}"
 
 
-class ChatTopic(ProjectBaseModel):
+class ChatTopic(ProjectOperationModel):
     channel = models.ForeignKey(
         "nucleus.Channel",
         on_delete=models.CASCADE,
@@ -138,13 +127,7 @@ class ChatTopic(ProjectBaseModel):
     title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=120)
 
-    # knowledge_bases = models.ManyToManyField(
-    #     "nucleus.KnowledgeBase",
-    #     related_name="chat_topics",
-    #     blank=True,
-    # )
-
-    class Meta:
+    class Meta(ProjectOperationModel.Meta):
         db_table = "workspace_chat_topic"
         constraints = [
             models.UniqueConstraint(

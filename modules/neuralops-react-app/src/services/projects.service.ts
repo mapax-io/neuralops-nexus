@@ -1,4 +1,4 @@
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { Project } from "@/types";
 
 export async function listProjects(companyId?: string): Promise<Project[]> {

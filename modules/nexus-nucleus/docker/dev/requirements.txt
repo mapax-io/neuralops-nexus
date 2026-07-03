@@ -16,6 +16,7 @@ PyJWT
 cryptography
 passlib[bcrypt]
 django-guardian
+django-cors-headers
 
 # HTTP Communication
 httpx

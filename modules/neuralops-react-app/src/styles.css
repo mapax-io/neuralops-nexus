@@ -52,6 +52,13 @@
 
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
+
+  /* Terminal & Code block tokens */
+  --code-bg: #161b22;
+  --code-border: #30363d;
+  --code-text: #e6edf3;
+  --code-cmd: #3fb950;
+  --code-header-bg: #1c2128;
 }
 
 @theme inline {
@@ -113,6 +120,8 @@
     line-height: 1.6;
     background-color: var(--color-background);
     color: var(--color-foreground);
+    height: 100%;
+    overflow: hidden;
   }
 
   h1, h2, h3, h4, h5, h6 {

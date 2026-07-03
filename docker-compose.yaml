@@ -1,7 +1,7 @@
 services:
   # NUCLEUS: The Orchestrator
   nucleus:
-    image: nexus-backend:3.0
+    image: nexus-backend:5.0
     container_name: nexus-nucleus
     # build:
     #   context: ./modules/nexus-nucleus
@@ -22,8 +22,10 @@ services:
       - CENTRIFUGO_HMAC_SECRET=${CENTRIFUGO_HMAC_SECRET}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - NEURALOPS_INSTALL_TOKEN=${NEURALOPS_INSTALL_TOKEN}
       - NEURALOPS_PORTAL_URL=${NEURALOPS_PORTAL_URL:-https://neuralops-nexus-auth.mapax.io}
+      - NEURALOPS_SERVER_URL=${NEURALOPS_SERVER_URL}
       - PYTHONPATH=/nexus-nucleus
       - AI_PROVIDER=${AI_PROVIDER}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -43,7 +45,7 @@ services:
 
   # CELERY WORKER: Background Tasks
   nucleus-celery:
-    image: nexus-backend:3.0
+    image: nexus-backend:5.0
     container_name: nexus-celery
     volumes:
       - ./modules/nexus-nucleus:/nexus-nucleus

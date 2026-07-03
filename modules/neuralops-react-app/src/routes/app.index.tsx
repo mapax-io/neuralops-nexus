@@ -1,11 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { MessageSquare } from "lucide-react";
+import { useUIStore } from "@/store/ui.store";
+import { ChatArea } from "@/components/chat/ChatArea";
 
 export const Route = createFileRoute("/app/")({
   component: WorkspaceHome,
 });
 
 function WorkspaceHome() {
+  const activeChannelId = useUIStore((s) => s.activeChannelId);
+
+  if (activeChannelId) {
+    return <ChatArea />;
+  }
+
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-tint text-primary">

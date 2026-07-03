@@ -1,4 +1,4 @@
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { AIModel } from "@/types";
 
 export async function listAIModels(): Promise<AIModel[]> {

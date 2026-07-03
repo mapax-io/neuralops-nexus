@@ -1,4 +1,4 @@
-import { apiJson } from "./api.client";
+import { apiJson } from "./api-client";
 import type { Notification } from "@/types";
 
 export async function listNotifications(): Promise<Notification[]> {

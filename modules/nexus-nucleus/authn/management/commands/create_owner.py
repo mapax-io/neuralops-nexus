@@ -14,6 +14,7 @@ import sys
 import httpx
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils.text import slugify
@@ -115,7 +116,6 @@ class Command(BaseCommand):
                 )
 
                 slug = slugify(workspace_name)
-                # Ensure slug uniqueness
                 base_slug = slug
                 counter = 1
                 while Company.objects.filter(slug=slug).exists():
@@ -138,6 +138,9 @@ class Command(BaseCommand):
                 user.current_company = company
                 user.save(update_fields=["current_company"])
 
+                # ── Create default permission groups ────────────────────────
+                self._create_default_groups(user)
+
         except Exception as exc:
             self.stderr.write(f"\n  ✗ Failed to create workspace: {exc}\n")
             print_divider()
@@ -151,10 +154,50 @@ class Command(BaseCommand):
             )
         )
         self.stdout.write(
-            f"\n  Next step — log in at:\n"
-            f"    {NEURALOPS_APP_URL}\n"
+            f"\n  Next steps:\n"
+            f"    1. Log in at {NEURALOPS_APP_URL}\n"
+            f"    2. Create your first project\n"
+            f"    3. Add an AI model and create a Persona to start chatting\n"
         )
         print_divider()
+
+    def _create_default_groups(self, owner_user):
+        """
+        Create default permission groups for this server.
+        Owner, Admin, Member, Viewer — each with appropriate permissions.
+        """
+        all_perms = Permission.objects.filter(content_type__app_label="nucleus")
+
+        view_perms = all_perms.filter(codename__startswith="view_")
+        add_change_view_perms = all_perms.filter(
+            codename__startswith="add_"
+        ) | all_perms.filter(
+            codename__startswith="change_"
+        ) | view_perms
+
+        # Owner group — all permissions
+        owner_group, _ = Group.objects.get_or_create(name="Owner")
+        owner_group.permissions.set(all_perms)
+        owner_user.groups.add(owner_group)
+
+        # Admin group — all except delete on company-level
+        admin_group, _ = Group.objects.get_or_create(name="Admin")
+        admin_perms = all_perms.exclude(
+            codename__in=["delete_company", "remove_company"]
+        )
+        admin_group.permissions.set(admin_perms)
+
+        # Member group — add/view/change on workspace, view on AI
+        member_group, _ = Group.objects.get_or_create(name="Member")
+        member_group.permissions.set(add_change_view_perms)
+
+        # Viewer group — view only
+        viewer_group, _ = Group.objects.get_or_create(name="Viewer")
+        viewer_group.permissions.set(view_perms)
+
+        self.stdout.write(self.style.SUCCESS(
+            "  ✓ Default groups created: Owner, Admin, Member, Viewer"
+        ))
 
     def _signin_supabase(self, email: str, password: str) -> str:
         """
