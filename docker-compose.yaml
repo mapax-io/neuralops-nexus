@@ -68,7 +68,7 @@ services:
     command: tail -f /dev/null
     restart: unless-stopped
 
-  # REDIS: Celery Broker & Result Backend
+  # REDIS: Celery Broker & Result Backend + Centrifugo engine
   redis:
     image: redis:7-alpine
     container_name: nexus-redis
@@ -107,21 +107,31 @@ services:
       sh -c "export PYTHONPATH=$PYTHONPATH:/nexus-ai && 
              python3 -m uvicorn apps.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  # REALTIME: Transport
+  # REALTIME: Centrifugo transport with Redis engine
   realtime:
     image: noamanfaisal/nexus-transport:6.0
     container_name: nexus-transport
     ports:
       - "8002:8000"
     environment:
-      - CENTRIFUGO_TOKEN_HMAC_SECRET=${CENTRIFUGO_HMAC_SECRET}
+      - CENTRIFUGO_TOKEN_HMAC_SECRET_KEY=${CENTRIFUGO_HMAC_SECRET}
       - CENTRIFUGO_HTTP_API_KEY=${CENTRIFUGO_API_KEY}
+      # Redis engine — message history + reconnect recovery
+      - CENTRIFUGO_ENGINE=redis
+      - CENTRIFUGO_REDIS_ADDRESS=redis:6379
+      # Phase 1: client insecure — React connects without JWT
+      - CENTRIFUGO_CLIENT_INSECURE=true
+      - CENTRIFUGO_ALLOWED_ORIGINS=*
+      # topic namespace — history so reconnecting clients catch up
+      - CENTRIFUGO_NAMESPACES=[{"name":"topic","history_size":100,"history_ttl":"5m","force_recovery":true}]
     command: >
-      nexus-transport 
-      --admin.enabled 
+      nexus-transport
+      --admin.enabled
       --admin.insecure
     networks:
       - nexus-network
+    depends_on:
+      - redis
 
   # CHROMADB & POSTGRES
   chromadb:
