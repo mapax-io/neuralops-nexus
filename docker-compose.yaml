@@ -6,6 +6,8 @@ services:
     # build:
     #   context: ./modules/nexus-nucleus
     #   dockerfile: ./docker/dev/Dockerfile.nexus-nucleus
+    # Port 8000 is internal only — nginx proxies /api/ to it
+    # Expose 8003 only for direct dev access (optional)
     ports:
       - "8003:8000"
     volumes:
@@ -111,8 +113,8 @@ services:
   realtime:
     image: noamanfaisal/nexus-transport:6.0
     container_name: nexus-transport
-    ports:
-      - "8002:8000"
+    # Port 8000 is internal only — nginx proxies /connection/websocket to it
+    # Expose 8002 only for direct dev access (optional)
     environment:
       - CENTRIFUGO_TOKEN_HMAC_SECRET_KEY=${CENTRIFUGO_HMAC_SECRET}
       - CENTRIFUGO_HTTP_API_KEY=${CENTRIFUGO_API_KEY}
@@ -132,6 +134,21 @@ services:
       - nexus-network
     depends_on:
       - redis
+
+  # NGINX: Reverse proxy — single entry point for all clients
+  nginx:
+    image: nginx:alpine
+    container_name: nexus-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - nexus-network
+    depends_on:
+      - nucleus
+      - realtime
+    restart: unless-stopped
 
   # CHROMADB & POSTGRES
   chromadb:

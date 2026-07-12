@@ -2,14 +2,13 @@ import { useEffect, useRef, useCallback } from "react";
 import { Centrifuge, type Subscription } from "centrifuge";
 import { useAuthStore } from "@/store/auth.store";
 
-// Derive Centrifugo WS URL from server URL
-// Django is on :8003, Centrifugo is on :8002
-// TODO: expose centrifugo_ws_url from /auth/config/ and store it instead
+// Derive Centrifugo WS URL from server URL.
+// nginx routes /connection/websocket → Centrifugo internally.
+// React only ever knows the nginx URL — no port-swapping needed.
 function getCentrifugoWsUrl(serverUrl: string): string {
   return serverUrl
     .replace(/^https/, "wss")
     .replace(/^http/, "ws")
-    .replace(/:\d+($|\/)/, ":8002$1")
     .replace(/\/?$/, "/connection/websocket");
 }
 
