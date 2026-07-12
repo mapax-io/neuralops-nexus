@@ -20,13 +20,8 @@ logger = logging.getLogger(__name__)
 
 def publish(channel: str, data: dict) -> None:
     """
-    Publish an event to a Centrifugo channel via HTTP API.
-    Fire-and-forget — logs a warning on failure but never raises.
-
-    Centrifugo event shapes:
-        Human message  → { type: "message", id, content, sender_name, sender_id, created_at }
-        AI token       → { type: "token",   message_id, content, sender_name }   (Phase 2)
-        AI done        → { type: "done",    message_id, content, sender_name }   (Phase 2)
+    Synchronous publish — kept for compatibility with sync views.
+    Prefer publish_async() inside async endpoints.
     """
     api_url = getattr(settings, "CENTRIFUGO_API_URL", "")
     api_key = getattr(settings, "CENTRIFUGO_API_KEY", "")
@@ -45,6 +40,37 @@ def publish(channel: str, data: dict) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[centrifugo] publish failed channel=%s: %s", channel, exc)
+
+
+async def publish_async(channel: str, data: dict) -> None:
+    """
+    Async publish — use inside async Django Ninja endpoints.
+    Fire-and-forget via asyncio.create_task() so the response
+    returns immediately without waiting for Centrifugo.
+
+    Centrifugo event shapes:
+        Human message  → { type: "message", id, content, sender_name, sender_id, created_at }
+        AI token       → { type: "token",   message_id, content, sender_name }   (Phase 2)
+        AI done        → { type: "done",    message_id, content, sender_name }   (Phase 2)
+    """
+    api_url = getattr(settings, "CENTRIFUGO_API_URL", "")
+    api_key = getattr(settings, "CENTRIFUGO_API_KEY", "")
+    if not api_url:
+        logger.warning("[centrifugo] CENTRIFUGO_API_URL not set — skipping publish")
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{api_url}/publish",
+                json={"channel": channel, "data": data},
+                headers={
+                    "X-API-Key": api_key,
+                    "Content-Type": "application/json",
+                },
+                timeout=3,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[centrifugo] publish_async failed channel=%s: %s", channel, exc)
 
 
 def topic_channel(topic_id: str) -> str:

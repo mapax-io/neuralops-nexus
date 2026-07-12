@@ -1,27 +1,24 @@
 """
-Chat API — human-to-human messaging.
+Chat API — human-to-human messaging (Phase 1).
 
-Endpoints:
-    GET  /api/v1/projects/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/
-    POST /api/v1/projects/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/
-
-Flow (Phase 1 — human-to-human):
+Flow:
     POST /messages/
-        1. Save message to DB (sender = authenticated user)
-        2. Publish to Centrifugo channel "topic:{topic_id}"
-        3. Return the saved message + channel name
+        1. Validate project / channel / topic membership
+        2. Save message to DB (sender = authenticated user)
+        3. Fire-and-forget async publish to Centrifugo topic:{topic_id}
+        4. Return immediately — React receives the message via WebSocket
 
-    React side:
-        - Subscribes to "topic:{topic_id}" on Centrifugo WebSocket
-        - Receives { type: "message", ... } events in real time
-        - Loads history via GET /messages/ on topic open
+    GET /messages/
+        Return last 100 messages (history) when a topic is opened.
 
 Phase 2 extension (AI-to-human) — additive, nothing here changes:
-    After step 1, detect @persona mentions → trigger nexus-ai async
-    nexus-ai streams tokens back → publish { type: "token" / "done" } to same channel
+    After step 2, detect @persona mentions → asyncio.create_task(generate_ai_response())
+    nexus-ai streams tokens back → publish { type:"token" / "done" } to Centrifugo
 """
+import asyncio
 from typing import List
 
+from asgiref.sync import sync_to_async
 from ninja import Router
 from ninja.errors import HttpError
 
@@ -33,8 +30,12 @@ from . import workspace_services as ws_svc
 router = Router(tags=["Chat"], auth=SupabaseBearer())
 
 
-def _resolve_topic(request, project_id: str, channel_id: str, topic_id: str):
-    """Resolve company, user, project, channel, topic — raises on any 404."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_topic_sync(request, project_id: str, channel_id: str, topic_id: str):
+    """Resolve and validate all path params — raises HttpError on any miss."""
     user = request.auth
     company = ws_svc.get_company()
     if not company:
@@ -55,28 +56,43 @@ def _resolve_topic(request, project_id: str, channel_id: str, topic_id: str):
     return company, user, project, channel, topic
 
 
-# ── List messages ─────────────────────────────────────────────────────────────
+# Async-safe wrappers for sync DB calls
+_resolve_topic = sync_to_async(_resolve_topic_sync)
+_list_messages = sync_to_async(chat_svc.list_messages)
+_save_user_message = sync_to_async(chat_svc.save_user_message)
+
+
+# ---------------------------------------------------------------------------
+# GET  /messages/  — load history
+# ---------------------------------------------------------------------------
 
 @router.get(
     "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/",
     response=List[MessageOut],
 )
-def list_messages(request, project_id: str, channel_id: str, topic_id: str):
+async def list_messages(
+    request,
+    project_id: str,
+    channel_id: str,
+    topic_id: str,
+):
     """
     Return the last 100 messages in a topic, oldest first.
-    Called by React when a topic is opened to load history.
+    Called by React on topic open to populate history.
     """
-    _resolve_topic(request, project_id, channel_id, topic_id)
-    return chat_svc.list_messages(topic_id)
+    await _resolve_topic(request, project_id, channel_id, topic_id)
+    return await _list_messages(topic_id)
 
 
-# ── Send message ──────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# POST /messages/  — send message
+# ---------------------------------------------------------------------------
 
 @router.post(
     "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/",
     response=SendMessageOut,
 )
-def send_message(
+async def send_message(
     request,
     project_id: str,
     channel_id: str,
@@ -84,20 +100,21 @@ def send_message(
     payload: SendMessageIn,
 ):
     """
-    Save a human message and broadcast it to all topic subscribers via Centrifugo.
+    Save a human message and broadcast it to all topic subscribers.
 
-    Returns the saved message and the Centrifugo channel name so React
-    knows where to subscribe for live updates.
+    Publish is fire-and-forget (asyncio.create_task) so this endpoint
+    returns immediately — the user sees their message via Centrifugo
+    WebSocket, not via the HTTP response.
     """
-    company, user, project, channel, topic = _resolve_topic(
-        request, project_id, channel_id, topic_id
-    )
-
     if not payload.content.strip():
         raise HttpError(400, "Message content cannot be empty.")
 
+    company, user, project, channel, topic = await _resolve_topic(
+        request, project_id, channel_id, topic_id
+    )
+
     # 1. Save to DB
-    msg = chat_svc.save_user_message(
+    msg = await _save_user_message(
         company=company,
         project=project,
         topic=topic,
@@ -105,11 +122,11 @@ def send_message(
         content=payload.content.strip(),
     )
 
-    # 2. Publish to Centrifugo — all subscribers receive it instantly
+    # 2. Publish to Centrifugo — fire and forget, don't block the response
     centrifugo_channel = chat_svc.topic_channel(topic_id)
-    chat_svc.publish(centrifugo_channel, msg)
+    asyncio.create_task(chat_svc.publish_async(centrifugo_channel, msg))
 
-    # 3. Return message + channel name
+    # 3. Return immediately
     return {
         "message": msg,
         "channel": centrifugo_channel,
