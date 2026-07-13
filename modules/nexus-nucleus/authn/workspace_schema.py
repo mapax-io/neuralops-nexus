@@ -43,3 +43,4 @@ class TopicOut(Schema):
     slug: str
     channel_id: str
     project_id: str
+    has_unread: bool = False

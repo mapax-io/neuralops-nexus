@@ -48,6 +48,7 @@ export interface Topic {
   slug: string;
   channel_id: string;
   project_id: string;
+  has_unread: boolean;
 }
 
 export async function getProjects(): Promise<Project[]> {
@@ -91,6 +92,17 @@ export async function createChannel(
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail ?? "Failed to create channel");
   return data;
+}
+
+export async function markTopicRead(
+  projectId: string,
+  channelId: string,
+  topicId: string,
+): Promise<void> {
+  await apiRequest(
+    `/api/v1/projects/${projectId}/channels/${channelId}/topics/${topicId}/read/`,
+    { method: "POST" },
+  );
 }
 
 export async function createTopic(
