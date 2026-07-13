@@ -2,9 +2,38 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { listMessages, sendMessage, type ApiMessage } from "@/services/chat.service";
 import { useCentrifugo } from "./useCentrifugo";
+import { useAuthStore } from "@/store/auth.store";
 import type { ChatMessage } from "@/components/chat/types";
 
-// Map our API message shape → ChatMessage expected by MessageList/MessageItem
+// ---------------------------------------------------------------------------
+// Beep — plays a short 880 Hz "ding" via Web Audio API when an incoming
+// message arrives from another user. No external file needed.
+// ---------------------------------------------------------------------------
+function playBeep(): void {
+  try {
+    const ctx = new AudioContext();
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.25);
+    osc.onended = () => ctx.close();
+  } catch {
+    // Browsers may block AudioContext until user interaction — ignore silently
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Map API message shape → ChatMessage expected by MessageList/MessageItem
+// ---------------------------------------------------------------------------
 function toUiMessage(m: ApiMessage): ChatMessage {
   return {
     id: m.id,
@@ -28,6 +57,7 @@ export function useTopicMessages(
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const { subscribe } = useCentrifugo();
+  const currentUserId = useAuthStore((s) => s.userId);
 
   // Load history when topic changes
   useEffect(() => {
@@ -53,13 +83,17 @@ export function useTopicMessages(
         setMessages((prev) => {
           // Deduplicate — sender may already have added optimistically
           if (prev.some((m) => m.id === msg.id)) return prev;
+          // Beep only for messages from other users
+          if (msg.sender_id !== currentUserId) {
+            playBeep();
+          }
           return [...prev, toUiMessage(msg)];
         });
       }
     });
 
     return unsub;
-  }, [topicId, subscribe]);
+  }, [topicId, subscribe, currentUserId]);
 
   // Polling fallback — catches messages missed during WebSocket gaps.
   // Centrifugo memory engine has no history: if the WS drops for even a
@@ -75,6 +109,10 @@ export function useTopicMessages(
           const existingIds = new Set(prev.map((m) => m.id));
           const fresh = msgs.filter((m) => !existingIds.has(m.id));
           if (fresh.length === 0) return prev;
+          // Beep if any freshly-polled message is from someone else
+          if (fresh.some((m) => m.sender_id !== currentUserId)) {
+            playBeep();
+          }
           const merged = [...prev, ...fresh.map(toUiMessage)];
           merged.sort(
             (a, b) =>
@@ -89,7 +127,7 @@ export function useTopicMessages(
 
     const id = setInterval(poll, 3000);
     return () => clearInterval(id);
-  }, [projectId, channelId, topicId]);
+  }, [projectId, channelId, topicId, currentUserId]);
 
   const send = useCallback(
     async (content: string) => {
