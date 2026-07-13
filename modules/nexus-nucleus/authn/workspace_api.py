@@ -180,7 +180,8 @@ def list_topics(request, project_id: str, channel_id: str):
     if not channel:
         raise HttpError(404, "Channel not found.")
 
-    topics = svc.list_topics(company, project, channel)
+    topics = list(svc.list_topics(company, project, channel))
+    unread_map = svc.get_topic_unread_map(user, topics)
     return [
         {
             "id": str(t.id),
@@ -188,9 +189,35 @@ def list_topics(request, project_id: str, channel_id: str):
             "slug": t.slug,
             "channel_id": str(t.channel_id),
             "project_id": str(t.project_id),
+            "has_unread": unread_map.get(str(t.id), False),
         }
         for t in topics
     ]
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/read/",
+    response={200: dict},
+    tags=["Chat"],
+)
+def mark_topic_read(request, project_id: str, channel_id: str, topic_id: str):
+    """Mark all messages in a topic as read for the current user."""
+    company, user = _resolve(request)
+
+    project = svc.get_project(company, user, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+
+    channel = svc.get_channel(company, project, channel_id)
+    if not channel:
+        raise HttpError(404, "Channel not found.")
+
+    topic = svc.get_topic(company, project, channel, topic_id)
+    if not topic:
+        raise HttpError(404, "Topic not found.")
+
+    svc.mark_topic_read(user, topic)
+    return {"ok": True}
 
 
 @router.post("/{project_id}/channels/{channel_id}/topics/", response=TopicOut)

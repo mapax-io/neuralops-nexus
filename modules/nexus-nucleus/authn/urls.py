@@ -5,6 +5,9 @@ from authn.api import router as authn_router
 from authn.members_api import router as members_router
 from authn.workspace_api import router as workspace_router
 from authn.team_api import router as team_router
+from authn.chat_api import router as chat_router
+# ⚠️ SPIKE — delete this import when nexus-ai streaming is wired up
+from authn.dev_ai_spike import router as dev_spike_router
 
 
 api = NinjaAPI(
@@ -15,7 +18,10 @@ api = NinjaAPI(
 api.add_router("/auth/", authn_router)
 api.add_router("/members/", members_router)
 api.add_router("/projects/", workspace_router)
-api.add_router("/projects/", team_router)   # team endpoints: /{project_id}/team/*
+api.add_router("/projects/", team_router)
+api.add_router("/projects/", chat_router)   # chat: /{project_id}/channels/{channel_id}/topics/{topic_id}/messages/
+# ⚠️ SPIKE — delete this line when nexus-ai streaming is wired up
+api.add_router("/dev/", dev_spike_router)
 
 urlpatterns = [
     path("", api.urls),

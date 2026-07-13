@@ -8,15 +8,13 @@ class SendMessageIn(Schema):
 
 class MessageOut(Schema):
     id: str
-    role: str           # "user" | "assistant"
+    type: str           # "message" | "token" | "done" — Phase 1 always "message"
     content: str
-    status: str         # pending | streaming | completed | failed
-    sender_name: Optional[str] = None
-    sender_id: Optional[str] = None
+    sender_name: str
+    sender_id: str
     created_at: str
 
 
 class SendMessageOut(Schema):
-    user_message: MessageOut
-    ai_message_id: str   # ID of the placeholder AI message — subscribe to this via Centrifugo
-    channel: str         # Centrifugo channel to subscribe to: "topic:{topic_id}"
+    message: MessageOut
+    channel: str        # Centrifugo channel to subscribe to: "topic:{topic_id}"

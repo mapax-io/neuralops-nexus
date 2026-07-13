@@ -205,6 +205,70 @@ def get_topic(company, project, channel, topic_id: str):
     ).first()
 
 
+# ── Read markers ──────────────────────────────────────────────────────────────────────────────
+
+def mark_topic_read(user, topic) -> None:
+    """
+    Record that *user* has read all current messages in *topic*.
+    Upserts a ChatReadMarker pointing at the latest message.
+    No-op if the topic has no messages yet.
+    """
+    from nucleus.models import ChatReadMarker, ChatMessage
+
+    latest = (
+        ChatMessage.objects.filter(topic=topic, is_active=True)
+        .order_by("-created_at")
+        .first()
+    )
+    if latest is None:
+        return
+
+    ChatReadMarker.objects.update_or_create(
+        user=user,
+        topic=topic,
+        defaults={"last_read_message": latest},
+    )
+
+
+def get_topic_unread_map(user, topics) -> dict:
+    """
+    Return {str(topic_id): bool} — True when the topic has messages
+    newer than the user’s last-read marker.
+
+    Efficient: one query for all markers, then one EXISTS check per topic
+    only when needed.
+    """
+    from nucleus.models import ChatReadMarker, ChatMessage
+
+    topic_ids = [t.id for t in topics]
+
+    # Load all read markers for these topics in one query
+    markers = {
+        m.topic_id: m.last_read_message
+        for m in ChatReadMarker.objects.filter(
+            user=user, topic_id__in=topic_ids
+        ).select_related("last_read_message")
+    }
+
+    result = {}
+    for topic in topics:
+        marker_msg = markers.get(topic.id)
+        if marker_msg is None:
+            # Never opened — unread if any messages exist
+            result[str(topic.id)] = ChatMessage.objects.filter(
+                topic=topic, is_active=True
+            ).exists()
+        else:
+            # Unread if any message is newer than the last-read one
+            result[str(topic.id)] = ChatMessage.objects.filter(
+                topic=topic,
+                is_active=True,
+                created_at__gt=marker_msg.created_at,
+            ).exists()
+
+    return result
+
+
 # ── Slug helpers ──────────────────────────────────────────────────────────────
 
 def _unique_project_slug(company, name: str) -> str:

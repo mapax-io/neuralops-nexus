@@ -1,32 +1,59 @@
-import { apiRequest } from "./api-client";
+import { apiJson } from "./api-client";
 
-export interface SendMessagePayload {
+// Shape returned by GET + POST /messages/
+export interface ApiMessage {
+  id: string;
+  type: string;        // always "message" for human messages (Phase 1)
   content: string;
-  type?: "text";
-  topic_id?: string;
-  channel_id: string;
-  project_id: string;
+  sender_name: string;
+  sender_id: string;
+  created_at: string;
 }
 
 export interface SendMessageResponse {
-  topic_id: string;
-  message_id: string;
+  message: ApiMessage;
+  channel: string;   // Centrifugo channel: "topic:{topic_id}"
+}
+
+export async function listMessages(
+  projectId: string,
+  channelId: string,
+  topicId: string,
+): Promise<ApiMessage[]> {
+  return apiJson<ApiMessage[]>(
+    `/api/v1/projects/${projectId}/channels/${channelId}/topics/${topicId}/messages/`,
+  );
 }
 
 export async function sendMessage(
-  payload: SendMessagePayload,
+  projectId: string,
+  channelId: string,
+  topicId: string,
+  content: string,
 ): Promise<SendMessageResponse> {
-  const res = await apiRequest("/api/v1/chat/messages/", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail ?? "Failed to send message");
-  return data;
+  return apiJson<SendMessageResponse>(
+    `/api/v1/projects/${projectId}/channels/${channelId}/topics/${topicId}/messages/`,
+    {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    },
+  );
 }
 
-export async function getMessages(topicId: string) {
-  const res = await apiRequest(`/api/v1/chat/topics/${topicId}/messages/`);
-  if (!res.ok) throw new Error("Failed to fetch messages");
-  return res.json();
+// ---------------------------------------------------------------------------
+// ⚠️  SPIKE — delete when nexus-ai streaming is wired up
+// ---------------------------------------------------------------------------
+export async function triggerAiSpike(
+  projectId: string,
+  channelId: string,
+  topicId: string,
+  content: string,
+): Promise<void> {
+  await apiJson<{ ok: boolean }>(
+    `/api/v1/dev/${projectId}/channels/${channelId}/topics/${topicId}/ai-stream/`,
+    {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    },
+  );
 }

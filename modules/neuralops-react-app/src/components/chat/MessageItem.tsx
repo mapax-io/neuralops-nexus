@@ -7,14 +7,44 @@ import { FormRenderer } from "./renderers/FormRenderer";
 import { ImageRenderer } from "./renderers/ImageRenderer";
 import { WebRenderer } from "./renderers/WebRenderer";
 
-function formatTime(ts: string) {
+function formatTime(ts: string): { short: string; full: string } {
   try {
-    return new Date(ts).toLocaleTimeString([], {
+    const date = new Date(ts);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const isThisWeek =
+      now.getTime() - date.getTime() < 7 * 24 * 60 * 60 * 1000;
+
+    const time = date.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
+
+    let short: string;
+    if (isToday) {
+      short = time;
+    } else if (isThisWeek) {
+      const day = date.toLocaleDateString([], { weekday: "short" });
+      short = `${day} ${time}`;
+    } else {
+      const dateStr = date.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+      });
+      short = `${dateStr}, ${time}`;
+    }
+
+    const full = date.toLocaleString([], {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    return { short, full };
   } catch {
-    return "";
+    return { short: "", full: "" };
   }
 }
 
@@ -46,9 +76,17 @@ export function MessageItem({ message }: { message: ChatMessage }) {
           <span className="text-sm font-semibold text-foreground">
             {message.sender.name}
           </span>
-          <span className="text-xs text-foreground-muted">
-            {formatTime(message.timestamp)}
-          </span>
+          {(() => {
+            const { short, full } = formatTime(message.timestamp);
+            return (
+              <span
+                className="text-xs text-muted-foreground cursor-default"
+                title={full}
+              >
+                {short}
+              </span>
+            );
+          })()}
         </div>
         <div className="mt-1">
           <Renderer message={message} />

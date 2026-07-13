@@ -122,6 +122,14 @@ NEURALOPS_PORTAL_URL = os.getenv(
 )
 
 # =========================================================
+# Centrifugo — Real-time pub/sub
+# =========================================================
+
+CENTRIFUGO_API_URL = os.getenv("CENTRIFUGO_API_URL", "")   # e.g. http://realtime:8000/api
+CENTRIFUGO_API_KEY = os.getenv("CENTRIFUGO_API_KEY", "")
+CENTRIFUGO_HMAC_SECRET = os.getenv("CENTRIFUGO_HMAC_SECRET", "")
+
+# =========================================================
 # Celery — Async Task Queue
 # =========================================================
 

@@ -1,6 +1,6 @@
 import { Hash } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useTopics } from "@/hooks/useWorkspace";
+import { useTopics, useMarkTopicRead } from "@/hooks/useWorkspace";
 import { useUIStore } from "@/store/ui.store";
 import { useProjects } from "@/hooks/useWorkspace";
 
@@ -15,9 +15,15 @@ export function TopicList({
   const { data: projects } = useProjects();
   const activeTopicId = useUIStore((s) => s.activeTopicId);
   const setActiveTopicId = useUIStore((s) => s.setActiveTopicId);
+  const { mutate: markRead } = useMarkTopicRead(projectId, channelId);
 
   const project = projects?.find((p) => p.id === projectId);
   const channel = project?.channels.find((c) => c.id === channelId);
+
+  function handleTopicClick(topicId: string) {
+    setActiveTopicId(topicId);
+    markRead(topicId);
+  }
 
   return (
     <div className="flex h-full w-[220px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
@@ -43,17 +49,26 @@ export function TopicList({
         {!isLoading &&
           topics?.map((t) => {
             const active = t.id === activeTopicId;
+            const unread = !active && t.has_unread;
             return (
               <button
                 key={t.id}
-                onClick={() => setActiveTopicId(t.id)}
-                className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm ${
+                onClick={() => handleTopicClick(t.id)}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
                   active
                     ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                    : "text-foreground-muted hover:bg-sidebar-accent hover:text-foreground"
+                    : unread
+                      ? "text-foreground font-semibold hover:bg-sidebar-accent"
+                      : "text-foreground-muted hover:bg-sidebar-accent hover:text-foreground"
                 }`}
               >
-                {t.title}
+                {/* Unread dot */}
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full transition-colors ${
+                    unread ? "bg-primary" : "bg-transparent"
+                  }`}
+                />
+                <span className="truncate">{t.title}</span>
               </button>
             );
           })}

@@ -6,6 +6,7 @@ import {
   getTopics,
   createChannel,
   createTopic,
+  markTopicRead,
   getTeam,
   addTeamMember,
   removeTeamMember,
@@ -35,6 +36,21 @@ export function useTopics(projectId: string, channelId: string) {
     queryKey: ["topics", projectId, channelId],
     queryFn: () => getTopics(projectId, channelId),
     enabled: !!projectId && !!channelId,
+    refetchInterval: 10_000,   // refresh unread dots every 10 s
+  });
+}
+
+export function useMarkTopicRead(
+  projectId: string,
+  channelId: string,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (topicId: string) => markTopicRead(projectId, channelId, topicId),
+    onSuccess: () => {
+      // Immediately clear the dot in the sidebar
+      qc.invalidateQueries({ queryKey: ["topics", projectId, channelId] });
+    },
   });
 }
 
