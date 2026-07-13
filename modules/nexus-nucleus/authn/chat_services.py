@@ -74,8 +74,13 @@ async def publish_async(channel: str, data: dict) -> None:
 
 
 def topic_channel(topic_id: str) -> str:
-    """Returns the Centrifugo channel name for a topic."""
-    return f"topic:{topic_id}"
+    """Returns the Centrifugo channel name for a topic.
+    
+    Uses a hyphen instead of colon so the channel is in Centrifugo's default
+    namespace — colon is the namespace separator and nexus-transport has no
+    named namespaces configured.
+    """
+    return f"topic-{topic_id}"
 
 
 # ---------------------------------------------------------------------------

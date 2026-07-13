@@ -11,8 +11,7 @@ import { useAuthStore } from "@/store/auth.store";
 import type { ChatMessage } from "@/components/chat/types";
 
 // ---------------------------------------------------------------------------
-// Beep — plays a short 880 Hz "ding" via Web Audio API when an incoming
-// message arrives from another user. No external file needed.
+// Beep
 // ---------------------------------------------------------------------------
 function playBeep(): void {
   try {
@@ -20,30 +19,22 @@ function playBeep(): void {
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.25, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
-
     const osc = ctx.createOscillator();
     osc.type = "sine";
     osc.frequency.setValueAtTime(880, ctx.currentTime);
-
     osc.connect(gain);
     gain.connect(ctx.destination);
-
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + 0.25);
     osc.onended = () => ctx.close();
-  } catch {
-    // Browsers may block AudioContext until user interaction — ignore silently
-  }
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
 // Centrifugo event shapes
 // ---------------------------------------------------------------------------
-
-// Human message (existing)
 type HumanMessageEvent = ApiMessage & { type: "message" };
 
-// ⚠️ SPIKE events — these shapes are permanent (nexus-ai will use them too)
 interface AiStartEvent {
   type: "message_start";
   id: string;
@@ -68,7 +59,7 @@ type CentrifugoEvent =
   | AiDoneEvent;
 
 // ---------------------------------------------------------------------------
-// Map API message shape → ChatMessage expected by MessageList/MessageItem
+// Helpers
 // ---------------------------------------------------------------------------
 function toUiMessage(m: ApiMessage): ChatMessage {
   return {
@@ -78,16 +69,18 @@ function toUiMessage(m: ApiMessage): ChatMessage {
     sender: {
       id: m.sender_id,
       name: m.sender_name,
-      type: "human",   // Phase 1: all messages are human
+      type: "human",
       avatar: null,
     },
     timestamp: m.created_at,
   };
 }
 
-// ⚠️ SPIKE trigger — prefix the user types to invoke the AI
 const AI_TEST_PREFIX = "/ai-test ";
 
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
 export function useTopicMessages(
   projectId: string | null,
   channelId: string | null,
@@ -98,7 +91,7 @@ export function useTopicMessages(
   const { subscribe } = useCentrifugo();
   const currentUserId = useAuthStore((s) => s.userId);
 
-  // Load history when topic changes
+  // Load history
   useEffect(() => {
     if (!projectId || !channelId || !topicId) {
       setMessages([]);
@@ -111,17 +104,20 @@ export function useTopicMessages(
       .finally(() => setLoading(false));
   }, [projectId, channelId, topicId]);
 
-  // Subscribe to Centrifugo for live messages + AI streaming events
+  // Centrifugo subscription
   useEffect(() => {
     if (!topicId) return;
-    const channel = `topic:${topicId}`;
+    const channel = `topic-${topicId}`;
 
     const unsub = subscribe(channel, (data) => {
       const event = data as CentrifugoEvent;
-      if (!event?.type || !event?.id) return;
+
+      // ⚠️ SPIKE DEBUG — remove after streaming is confirmed working
+      console.log("[centrifugo]", event?.type, event);
+
+      if (!event?.type || !("id" in event)) return;
 
       if (event.type === "message") {
-        // ── Human message ────────────────────────────────────────────────
         setMessages((prev) => {
           if (prev.some((m) => m.id === event.id)) return prev;
           if (event.sender_id !== currentUserId) playBeep();
@@ -129,7 +125,6 @@ export function useTopicMessages(
         });
 
       } else if (event.type === "message_start") {
-        // ── AI message bubble appears with blinking cursor ───────────────
         playBeep();
         setMessages((prev) => {
           if (prev.some((m) => m.id === event.id)) return prev;
@@ -152,7 +147,6 @@ export function useTopicMessages(
         });
 
       } else if (event.type === "message_delta") {
-        // ── Token arrives — append to streaming message ──────────────────
         setMessages((prev) =>
           prev.map((m) =>
             m.id === event.id
@@ -162,7 +156,6 @@ export function useTopicMessages(
         );
 
       } else if (event.type === "message_done") {
-        // ── Stream finished — remove blinking cursor ─────────────────────
         setMessages((prev) =>
           prev.map((m) =>
             m.id === event.id ? { ...m, isStreaming: false } : m,
@@ -174,10 +167,9 @@ export function useTopicMessages(
     return unsub;
   }, [topicId, subscribe, currentUserId]);
 
-  // Polling fallback — catches messages missed during WebSocket gaps.
+  // Polling fallback
   useEffect(() => {
     if (!projectId || !channelId || !topicId) return;
-
     const poll = async () => {
       try {
         const msgs = await listMessages(projectId, channelId, topicId);
@@ -185,21 +177,13 @@ export function useTopicMessages(
           const existingIds = new Set(prev.map((m) => m.id));
           const fresh = msgs.filter((m) => !existingIds.has(m.id));
           if (fresh.length === 0) return prev;
-          if (fresh.some((m) => m.sender_id !== currentUserId)) {
-            playBeep();
-          }
+          if (fresh.some((m) => m.sender_id !== currentUserId)) playBeep();
           const merged = [...prev, ...fresh.map(toUiMessage)];
-          merged.sort(
-            (a, b) =>
-              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-          );
+          merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
           return merged;
         });
-      } catch {
-        // silent — don't spam toasts on poll failure
-      }
+      } catch { /* silent */ }
     };
-
     const id = setInterval(poll, 3000);
     return () => clearInterval(id);
   }, [projectId, channelId, topicId, currentUserId]);
@@ -208,8 +192,6 @@ export function useTopicMessages(
     async (content: string) => {
       if (!projectId || !channelId || !topicId) return;
 
-      // ⚠️ SPIKE — detect /ai-test prefix and route to spike endpoint
-      // Remove this block when nexus-ai @mention detection is implemented.
       if (content.startsWith(AI_TEST_PREFIX)) {
         const query = content.slice(AI_TEST_PREFIX.length).trim();
         if (!query) return;
@@ -222,7 +204,6 @@ export function useTopicMessages(
         return;
       }
 
-      // Normal human message flow
       try {
         const { message } = await sendMessage(projectId, channelId, topicId, content);
         setMessages((prev) => {
