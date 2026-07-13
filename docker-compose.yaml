@@ -6,10 +6,10 @@ services:
     # build:
     #   context: ./modules/nexus-nucleus
     #   dockerfile: ./docker/dev/Dockerfile.nexus-nucleus
-    # Port 8000 is internal only — nginx proxies /api/ to it
-    # Expose 8003 only for direct dev access (optional)
-    ports:
-      - "8003:8000"
+    # Port 8000 is internal only — all traffic goes through nginx on port 80.
+    # Removing direct port exposure forces the correct nginx → Django path.
+    # ports:
+    #   - "8003:8000"
     volumes:
       - ./modules/nexus-nucleus:/nexus-nucleus
     environment:
@@ -118,22 +118,18 @@ services:
     image: noamanfaisal/nexus-transport:6.0
     container_name: nexus-transport
     # Port 8000 is internal only — nginx proxies /connection/websocket to it
-    # Expose 8002 only for direct dev access (optional)
+    # Config file keys unknown for v6.6.2-nexus — using env vars instead.
+    # CENTRIFUGO_ALLOWED_ORIGINS: space-separated list of allowed WebSocket origins.
+    # Run `nexus-transport --help | grep origin` to find the exact flag/key names.
     environment:
-      - CENTRIFUGO_TOKEN_HMAC_SECRET_KEY=${CENTRIFUGO_HMAC_SECRET}
       - CENTRIFUGO_HTTP_API_KEY=${CENTRIFUGO_API_KEY}
-      # Redis engine — message history + reconnect recovery
-      - CENTRIFUGO_ENGINE=redis
-      - CENTRIFUGO_REDIS_ADDRESS=redis:6379
-      # Phase 1: client insecure — React connects without JWT
-      - CENTRIFUGO_CLIENT_INSECURE=true
-      - CENTRIFUGO_ALLOWED_ORIGINS=*
-      # topic namespace — history so reconnecting clients catch up
-      - CENTRIFUGO_NAMESPACES=[{"name":"topic","history_size":100,"history_ttl":"5m","force_recovery":true}]
+      - CENTRIFUGO_ALLOWED_ORIGINS=http://192.168.1.90:3000
     command: >
       nexus-transport
       --admin.enabled
       --admin.insecure
+      --client.insecure
+      --http_api.insecure
     networks:
       - nexus-network
     depends_on:

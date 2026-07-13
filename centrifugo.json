@@ -1,0 +1,12 @@
+{
+  "allowed_origins": ["*"],
+  "client_insecure": true,
+  "namespaces": [
+    {
+      "name": "topic",
+      "history_size": 100,
+      "history_ttl": "5m",
+      "force_recovery": true
+    }
+  ]
+}

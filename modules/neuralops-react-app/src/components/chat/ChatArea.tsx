@@ -39,6 +39,8 @@ export function ChatArea() {
           onSend={send}
           projectId={activeProjectId}
           topicId={activeTopicId}
+          disabled={!activeTopicId}
+          placeholder={activeTopicId ? undefined : "Select a conversation to start messaging"}
         />
       </div>
     </div>

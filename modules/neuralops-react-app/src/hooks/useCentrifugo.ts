@@ -12,7 +12,10 @@ function getCentrifugoWsUrl(serverUrl: string): string {
     .replace(/\/?$/, "/connection/websocket");
 }
 
+// Module-level singleton — one connection shared across all hook instances.
+// Keyed by URL so a server URL change triggers a clean reconnect.
 let centrifugeInstance: Centrifuge | null = null;
+let centrifugeUrl: string | null = null;
 
 export function useCentrifugo() {
   const serverUrl = useAuthStore((s) => s.serverUrl);
@@ -23,14 +26,24 @@ export function useCentrifugo() {
 
     const wsUrl = getCentrifugoWsUrl(serverUrl);
 
-    // Reuse existing connection if already created
+    // If the server URL changed, disconnect the old instance and start fresh
+    if (centrifugeInstance && centrifugeUrl !== wsUrl) {
+      centrifugeInstance.disconnect();
+      centrifugeInstance = null;
+      centrifugeUrl = null;
+      subsRef.current.clear();
+    }
+
+    // Create and connect only if not already connected to this URL
     if (!centrifugeInstance) {
       centrifugeInstance = new Centrifuge(wsUrl);
+      centrifugeUrl = wsUrl;
       centrifugeInstance.connect();
     }
 
     return () => {
-      // Don't disconnect on unmount — keep connection alive across components
+      // Keep connection alive across component unmounts —
+      // only disconnect when the URL changes (handled above on next render)
     };
   }, [serverUrl]);
 
@@ -38,7 +51,7 @@ export function useCentrifugo() {
     (channel: string, onMessage: (data: unknown) => void) => {
       if (!centrifugeInstance) return () => {};
 
-      // Reuse existing subscription if already subscribed
+      // Reuse existing subscription if already subscribed to this channel
       let sub = subsRef.current.get(channel);
       if (!sub) {
         sub = centrifugeInstance.newSubscription(channel);

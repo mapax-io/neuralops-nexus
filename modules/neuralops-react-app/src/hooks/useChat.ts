@@ -61,12 +61,48 @@ export function useTopicMessages(
     return unsub;
   }, [topicId, subscribe]);
 
+  // Polling fallback — catches messages missed during WebSocket gaps.
+  // Centrifugo memory engine has no history: if the WS drops for even a
+  // moment, publications in that window are lost. Polling every 3 s ensures
+  // eventual delivery regardless of connection state.
+  useEffect(() => {
+    if (!projectId || !channelId || !topicId) return;
+
+    const poll = async () => {
+      try {
+        const msgs = await listMessages(projectId, channelId, topicId);
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          const fresh = msgs.filter((m) => !existingIds.has(m.id));
+          if (fresh.length === 0) return prev;
+          const merged = [...prev, ...fresh.map(toUiMessage)];
+          merged.sort(
+            (a, b) =>
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+          );
+          return merged;
+        });
+      } catch {
+        // silent — don't spam toasts on poll failure
+      }
+    };
+
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
+  }, [projectId, channelId, topicId]);
+
   const send = useCallback(
     async (content: string) => {
       if (!projectId || !channelId || !topicId) return;
-      // No optimistic update — Centrifugo will deliver it back to us
       try {
-        await sendMessage(projectId, channelId, topicId, content);
+        const { message } = await sendMessage(projectId, channelId, topicId, content);
+        // Add to local state immediately so the sender sees their own message
+        // without waiting for Centrifugo. The dedup check in the subscription
+        // handler prevents a duplicate when the WS echo arrives.
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === message.id)) return prev;
+          return [...prev, toUiMessage(message)];
+        });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to send";
         toast.error(msg);
