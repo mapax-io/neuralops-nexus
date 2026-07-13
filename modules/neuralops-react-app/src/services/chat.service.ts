@@ -39,3 +39,21 @@ export async function sendMessage(
     },
   );
 }
+
+// ---------------------------------------------------------------------------
+// ⚠️  SPIKE — delete when nexus-ai streaming is wired up
+// ---------------------------------------------------------------------------
+export async function triggerAiSpike(
+  projectId: string,
+  channelId: string,
+  topicId: string,
+  content: string,
+): Promise<void> {
+  await apiJson<{ ok: boolean }>(
+    `/api/v1/dev/${projectId}/channels/${channelId}/topics/${topicId}/ai-stream/`,
+    {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    },
+  );
+}

@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { listMessages, sendMessage, type ApiMessage } from "@/services/chat.service";
+import {
+  listMessages,
+  sendMessage,
+  triggerAiSpike,        // ⚠️ SPIKE — remove when nexus-ai is wired up
+  type ApiMessage,
+} from "@/services/chat.service";
 import { useCentrifugo } from "./useCentrifugo";
 import { useAuthStore } from "@/store/auth.store";
 import type { ChatMessage } from "@/components/chat/types";
@@ -32,6 +37,37 @@ function playBeep(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Centrifugo event shapes
+// ---------------------------------------------------------------------------
+
+// Human message (existing)
+type HumanMessageEvent = ApiMessage & { type: "message" };
+
+// ⚠️ SPIKE events — these shapes are permanent (nexus-ai will use them too)
+interface AiStartEvent {
+  type: "message_start";
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  created_at: string;
+}
+interface AiDeltaEvent {
+  type: "message_delta";
+  id: string;
+  delta: string;
+}
+interface AiDoneEvent {
+  type: "message_done";
+  id: string;
+}
+
+type CentrifugoEvent =
+  | HumanMessageEvent
+  | AiStartEvent
+  | AiDeltaEvent
+  | AiDoneEvent;
+
+// ---------------------------------------------------------------------------
 // Map API message shape → ChatMessage expected by MessageList/MessageItem
 // ---------------------------------------------------------------------------
 function toUiMessage(m: ApiMessage): ChatMessage {
@@ -48,6 +84,9 @@ function toUiMessage(m: ApiMessage): ChatMessage {
     timestamp: m.created_at,
   };
 }
+
+// ⚠️ SPIKE trigger — prefix the user types to invoke the AI
+const AI_TEST_PREFIX = "/ai-test ";
 
 export function useTopicMessages(
   projectId: string | null,
@@ -72,23 +111,63 @@ export function useTopicMessages(
       .finally(() => setLoading(false));
   }, [projectId, channelId, topicId]);
 
-  // Subscribe to Centrifugo for live messages
+  // Subscribe to Centrifugo for live messages + AI streaming events
   useEffect(() => {
     if (!topicId) return;
     const channel = `topic:${topicId}`;
 
     const unsub = subscribe(channel, (data) => {
-      const msg = data as ApiMessage;
-      if (msg?.type === "message" && msg?.id) {
+      const event = data as CentrifugoEvent;
+      if (!event?.type || !event?.id) return;
+
+      if (event.type === "message") {
+        // ── Human message ────────────────────────────────────────────────
         setMessages((prev) => {
-          // Deduplicate — sender may already have added optimistically
-          if (prev.some((m) => m.id === msg.id)) return prev;
-          // Beep only for messages from other users
-          if (msg.sender_id !== currentUserId) {
-            playBeep();
-          }
-          return [...prev, toUiMessage(msg)];
+          if (prev.some((m) => m.id === event.id)) return prev;
+          if (event.sender_id !== currentUserId) playBeep();
+          return [...prev, toUiMessage(event)];
         });
+
+      } else if (event.type === "message_start") {
+        // ── AI message bubble appears with blinking cursor ───────────────
+        playBeep();
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === event.id)) return prev;
+          return [
+            ...prev,
+            {
+              id: event.id,
+              type: "text",
+              content: "",
+              sender: {
+                id: event.sender_id,
+                name: event.sender_name,
+                type: "agent",
+                avatar: null,
+              },
+              timestamp: event.created_at,
+              isStreaming: true,
+            } satisfies ChatMessage,
+          ];
+        });
+
+      } else if (event.type === "message_delta") {
+        // ── Token arrives — append to streaming message ──────────────────
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === event.id
+              ? { ...m, content: m.content + event.delta }
+              : m,
+          ),
+        );
+
+      } else if (event.type === "message_done") {
+        // ── Stream finished — remove blinking cursor ─────────────────────
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === event.id ? { ...m, isStreaming: false } : m,
+          ),
+        );
       }
     });
 
@@ -96,9 +175,6 @@ export function useTopicMessages(
   }, [topicId, subscribe, currentUserId]);
 
   // Polling fallback — catches messages missed during WebSocket gaps.
-  // Centrifugo memory engine has no history: if the WS drops for even a
-  // moment, publications in that window are lost. Polling every 3 s ensures
-  // eventual delivery regardless of connection state.
   useEffect(() => {
     if (!projectId || !channelId || !topicId) return;
 
@@ -109,7 +185,6 @@ export function useTopicMessages(
           const existingIds = new Set(prev.map((m) => m.id));
           const fresh = msgs.filter((m) => !existingIds.has(m.id));
           if (fresh.length === 0) return prev;
-          // Beep if any freshly-polled message is from someone else
           if (fresh.some((m) => m.sender_id !== currentUserId)) {
             playBeep();
           }
@@ -132,11 +207,24 @@ export function useTopicMessages(
   const send = useCallback(
     async (content: string) => {
       if (!projectId || !channelId || !topicId) return;
+
+      // ⚠️ SPIKE — detect /ai-test prefix and route to spike endpoint
+      // Remove this block when nexus-ai @mention detection is implemented.
+      if (content.startsWith(AI_TEST_PREFIX)) {
+        const query = content.slice(AI_TEST_PREFIX.length).trim();
+        if (!query) return;
+        try {
+          await triggerAiSpike(projectId, channelId, topicId, query);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : "AI spike failed";
+          toast.error(msg);
+        }
+        return;
+      }
+
+      // Normal human message flow
       try {
         const { message } = await sendMessage(projectId, channelId, topicId, content);
-        // Add to local state immediately so the sender sees their own message
-        // without waiting for Centrifugo. The dedup check in the subscription
-        // handler prevents a duplicate when the WS echo arrives.
         setMessages((prev) => {
           if (prev.some((m) => m.id === message.id)) return prev;
           return [...prev, toUiMessage(message)];
