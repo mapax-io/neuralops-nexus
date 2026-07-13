@@ -50,21 +50,22 @@ router = Router(tags=["⚠️ DEV-SPIKE — delete me"], auth=SupabaseBearer())
 # OpenAI streaming via raw httpx SSE — no openai package required
 # ---------------------------------------------------------------------------
 
-async def _stream_openai_to_centrifugo(
+async def _stream_claude_to_centrifugo(
     channel: str,
     msg_id: str,
     user_message: str,
 ) -> None:
     """
-    Stream GPT-4o tokens and publish each one as a message_delta.
+    Stream Claude Haiku tokens and publish each one as a message_delta.
+    Uses Anthropic's SSE streaming API directly via httpx — no SDK needed.
     Runs as a fire-and-forget asyncio task.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         await publish_async(channel, {
             "type": "message_delta",
             "id": msg_id,
-            "delta": "⚠️  `OPENAI_API_KEY` is not set in the environment.",
+            "delta": "⚠️  `ANTHROPIC_API_KEY` is not set in the environment.",
         })
         await publish_async(channel, {"type": "message_done", "id": msg_id})
         return
@@ -75,53 +76,53 @@ async def _stream_openai_to_centrifugo(
         async with httpx.AsyncClient(timeout=60) as client:
             async with client.stream(
                 "POST",
-                "https://api.openai.com/v1/chat/completions",
+                "https://api.anthropic.com/v1/messages",
                 headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
                 },
                 json={
-                    "model": "gpt-4o",
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1024,
+                    "stream": True,
+                    "system": (
+                        "You are NeuralOps AI, a helpful assistant embedded "
+                        "in the NeuralOps platform. Be clear and concise."
+                    ),
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are NeuralOps AI, a helpful assistant embedded "
-                                "in the NeuralOps platform. Be clear and concise."
-                            ),
-                        },
                         {"role": "user", "content": user_message},
                     ],
-                    "stream": True,
                 },
             ) as response:
                 if response.status_code != 200:
                     body = await response.aread()
                     raise RuntimeError(
-                        f"OpenAI returned HTTP {response.status_code}: {body.decode()[:300]}"
+                        f"Anthropic returned HTTP {response.status_code}: {body.decode()[:300]}"
                     )
 
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
-                    payload = line[6:]
-                    if payload.strip() == "[DONE]":
-                        break
+                    payload = line[6:].strip()
+                    if not payload:
+                        continue
                     try:
-                        chunk = json.loads(payload)
-                        delta_text = (
-                            chunk.get("choices", [{}])[0]
-                            .get("delta", {})
-                            .get("content") or ""
-                        )
-                        if delta_text:
-                            full_content.append(delta_text)
-                            await publish_async(channel, {
-                                "type": "message_delta",
-                                "id": msg_id,
-                                "delta": delta_text,
-                            })
-                    except (json.JSONDecodeError, IndexError, KeyError):
+                        event_data = json.loads(payload)
+                        # Anthropic streams content_block_delta events with text_delta
+                        if event_data.get("type") == "content_block_delta":
+                            delta_text = (
+                                event_data.get("delta", {})
+                                .get("text") or ""
+                            )
+                            if delta_text:
+                                full_content.append(delta_text)
+                                await publish_async(channel, {
+                                    "type": "message_delta",
+                                    "id": msg_id,
+                                    "delta": delta_text,
+                                })
+                    except (json.JSONDecodeError, KeyError):
                         continue
 
     except Exception as exc:  # noqa: BLE001
@@ -196,7 +197,7 @@ async def ai_stream_spike(
 
     # Kick off streaming in the background — return HTTP 200 immediately
     asyncio.create_task(
-        _stream_openai_to_centrifugo(channel, msg_id, user_message)
+        _stream_claude_to_centrifugo(channel, msg_id, user_message)
     )
 
     return {"ok": True, "message_id": msg_id}
