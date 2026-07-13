@@ -36,8 +36,21 @@ export function useCentrifugo() {
 
     // Create and connect only if not already connected to this URL
     if (!centrifugeInstance) {
+      console.log("[centrifugo] connecting to", wsUrl);
       centrifugeInstance = new Centrifuge(wsUrl);
       centrifugeUrl = wsUrl;
+
+      // ⚠️ DEBUG — remove after WebSocket is confirmed working
+      centrifugeInstance.on("connected", (ctx) =>
+        console.log("[centrifugo] connected", ctx),
+      );
+      centrifugeInstance.on("disconnected", (ctx) =>
+        console.log("[centrifugo] disconnected", ctx),
+      );
+      centrifugeInstance.on("error", (ctx) =>
+        console.log("[centrifugo] connection error", ctx),
+      );
+
       centrifugeInstance.connect();
     }
 
@@ -56,6 +69,17 @@ export function useCentrifugo() {
       if (!sub) {
         sub = centrifugeInstance.newSubscription(channel);
         subsRef.current.set(channel, sub);
+
+        // ⚠️ DEBUG — remove after WebSocket is confirmed working
+        sub.on("subscribed", (ctx) =>
+          console.log("[centrifugo] subscribed to", channel, ctx),
+        );
+        sub.on("unsubscribed", (ctx) =>
+          console.log("[centrifugo] unsubscribed from", channel, ctx),
+        );
+        sub.on("error", (ctx) =>
+          console.log("[centrifugo] subscription error", channel, ctx),
+        );
       }
 
       const handler = (ctx: { data: unknown }) => onMessage(ctx.data);
