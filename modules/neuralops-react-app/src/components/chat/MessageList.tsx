@@ -5,11 +5,17 @@ import type { ChatMessage } from "./types";
 export function MessageList({ messages }: { messages: ChatMessage[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Track total streamed content length so we scroll on every delta,
+  // not just when a new message is added.
+  const streamingLength = messages.reduce(
+    (acc, m) => acc + (m.isStreaming ? m.content.length : 0),
+    0,
+  );
+
   useEffect(() => {
     const el = containerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [messages.length, streamingLength]);
 
   if (messages.length === 0) {
     return (
