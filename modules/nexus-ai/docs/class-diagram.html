@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>nexus-ai Class Diagram</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #ffffff; font-family: system-ui, sans-serif; font-size: 12px; color: #1e293b; }
+
+  .canvas { padding: 24px; min-width: 900px; }
+
+  h1 { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: #0f172a; }
+  .subtitle { font-size: 11px; color: #64748b; margin-bottom: 18px; }
+
+  /* Legend */
+  .legend { display: flex; gap: 18px; margin-bottom: 18px; align-items: center; flex-wrap: wrap; }
+  .leg { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #64748b; }
+  .leg-box { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; }
+  .leg-interface { background: #ede9fe; border-color: #7c3aed; }
+  .leg-impl { background: #f0fdf4; border-color: #16a34a; }
+  .leg-manager { background: #eff6ff; border-color: #2563eb; }
+  .leg-factory { background: #fff7ed; border-color: #ea580c; }
+  .leg-schema { background: #f8fafc; border-color: #cbd5e1; }
+  .leg-lib { background: #fdf2f8; border-color: #9d174d; }
+
+  /* Grid layout */
+  .row { display: flex; gap: 14px; margin-bottom: 14px; align-items: flex-start; }
+  .col { display: flex; flex-direction: column; gap: 14px; }
+
+  /* Class box */
+  .cls { border-radius: 6px; border: 1.5px solid; min-width: 148px; overflow: hidden; }
+  .cls-header { padding: 5px 8px; font-weight: 700; font-size: 11px; border-bottom: 1px solid; }
+  .cls-tag { font-size: 9px; font-weight: 400; opacity: 0.7; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
+  .cls-body { padding: 5px 8px; }
+  .member { font-size: 10.5px; line-height: 1.6; color: #475569; font-family: 'SF Mono', 'Fira Code', monospace; white-space: nowrap; }
+  .member.method { color: #1d4ed8; }
+  .member.field { color: #065f46; }
+  .divider { height: 1px; background: #e2e8f0; margin: 3px 0; }
+
+  /* Colour themes */
+  .interface { background: #ede9fe; border-color: #7c3aed; }
+  .interface .cls-header { background: #ddd6fe; border-color: #7c3aed; color: #4c1d95; }
+  .impl     { background: #f0fdf4; border-color: #16a34a; }
+  .impl .cls-header { background: #dcfce7; border-color: #16a34a; color: #14532d; }
+  .manager  { background: #eff6ff; border-color: #2563eb; }
+  .manager .cls-header { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+  .factory  { background: #fff7ed; border-color: #ea580c; }
+  .factory .cls-header { background: #fed7aa; border-color: #ea580c; color: #7c2d12; }
+  .schema   { background: #f8fafc; border-color: #cbd5e1; }
+  .schema .cls-header { background: #f1f5f9; border-color: #cbd5e1; color: #334155; }
+  .lib      { background: #fdf2f8; border-color: #9d174d; }
+  .lib .cls-header { background: #fce7f3; border-color: #9d174d; color: #831843; }
+
+  /* Section labels */
+  .section-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="canvas">
+
+  <h1>nexus-ai — Class Diagram</h1>
+  <div class="subtitle">Interfaces · Factories · Implementations · Managers · Schemas · External Libraries</div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="leg"><div class="leg-box leg-interface"></div> Interface (ABC)</div>
+    <div class="leg"><div class="leg-box leg-impl"></div> Implementation</div>
+    <div class="leg"><div class="leg-box leg-manager"></div> Manager</div>
+    <div class="leg"><div class="leg-box leg-factory"></div> Factory</div>
+    <div class="leg"><div class="leg-box leg-schema"></div> Schema / Config</div>
+    <div class="leg"><div class="leg-box leg-lib"></div> External Library</div>
+  </div>
+
+  <div class="row">
+
+    <!-- COL 1: Interfaces -->
+    <div class="col" style="min-width:170px">
+      <div class="section-label">Interfaces</div>
+
+      <div class="cls interface">
+        <div class="cls-header"><span class="cls-tag">«interface»</span>LLMModel</div>
+        <div class="cls-body">
+          <div class="member method">+ stream(messages, …)</div>
+          <div class="member method">&nbsp;&nbsp;→ AsyncIter[str]</div>
+        </div>
+      </div>
+
+      <div class="cls interface">
+        <div class="cls-header"><span class="cls-tag">«interface»</span>AgentRunner</div>
+        <div class="cls-body">
+          <div class="member method">+ run_stream(job, msgs)</div>
+          <div class="member method">&nbsp;&nbsp;→ AsyncIter[Event]</div>
+        </div>
+      </div>
+
+      <div class="cls interface">
+        <div class="cls-header"><span class="cls-tag">«interface»</span>EmbeddingModel</div>
+        <div class="cls-body">
+          <div class="member method">+ embed(texts) → vectors</div>
+          <div class="member method">+ embed_query(text) → vec</div>
+        </div>
+      </div>
+
+      <div class="cls interface">
+        <div class="cls-header"><span class="cls-tag">«interface»</span>VectorStore</div>
+        <div class="cls-body">
+          <div class="member method">+ store(texts, vecs, …)</div>
+          <div class="member method">+ search(vec, coll, k)</div>
+          <div class="member method">+ delete_collection(id)</div>
+        </div>
+      </div>
+
+      <div class="cls interface">
+        <div class="cls-header"><span class="cls-tag">«interface»</span>ContextAdapter</div>
+        <div class="cls-body">
+          <div class="member method">+ extract(content, meta)</div>
+          <div class="member method">&nbsp;&nbsp;→ list[str]</div>
+        </div>
+      </div>
+
+      <div class="cls interface">
+        <div class="cls-header"><span class="cls-tag">«interface»</span>MCPClient</div>
+        <div class="cls-body">
+          <div class="member method">+ list_tools()</div>
+          <div class="member method">+ call_tool(name, args)</div>
+          <div class="member method">+ close()</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COL 2: Factories + Implementations -->
+    <div class="col" style="min-width:185px">
+      <div class="section-label">Factories</div>
+
+      <div class="cls factory">
+        <div class="cls-header"><span class="cls-tag">«factory»</span>LLMFactory</div>
+        <div class="cls-body">
+          <div class="member method">+ get(provider?, model?)</div>
+          <div class="member">&nbsp;&nbsp;→ LLMModel</div>
+        </div>
+      </div>
+
+      <div class="cls factory">
+        <div class="cls-header"><span class="cls-tag">«factory»</span>AgentFactory</div>
+        <div class="cls-body">
+          <div class="member method">+ get(backend?)</div>
+          <div class="member">&nbsp;&nbsp;→ AgentRunner</div>
+        </div>
+      </div>
+
+      <div class="cls factory">
+        <div class="cls-header"><span class="cls-tag">«factory»</span>EmbeddingFactory</div>
+        <div class="cls-body">
+          <div class="member method">+ get(provider?)</div>
+          <div class="member">&nbsp;&nbsp;→ EmbeddingModel</div>
+        </div>
+      </div>
+
+      <div class="cls factory">
+        <div class="cls-header"><span class="cls-tag">«factory»</span>VectorStoreFactory</div>
+        <div class="cls-body">
+          <div class="member method">+ get(backend?)</div>
+          <div class="member">&nbsp;&nbsp;→ VectorStore</div>
+        </div>
+      </div>
+
+      <div class="cls factory">
+        <div class="cls-header"><span class="cls-tag">«factory»</span>AdapterFactory</div>
+        <div class="cls-body">
+          <div class="member method">+ get(type)</div>
+          <div class="member">&nbsp;&nbsp;→ ContextAdapter</div>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:8px">Implementations</div>
+
+      <div class="cls impl">
+        <div class="cls-header"><span class="cls-tag">LLMModel</span>LiteLLMModel</div>
+        <div class="cls-body">
+          <div class="member field">model_id: str</div>
+          <div class="member method">+ stream(…) → tokens</div>
+          <div class="divider"></div>
+          <div class="member" style="color:#9d174d">uses: litellm.acompletion</div>
+        </div>
+      </div>
+
+      <div class="cls impl">
+        <div class="cls-header"><span class="cls-tag">EmbeddingModel</span>LiteLLMEmbedding</div>
+        <div class="cls-body">
+          <div class="member field">model: str</div>
+          <div class="member field">_api_base: str | None</div>
+          <div class="member method">+ embed(texts) → vecs</div>
+          <div class="divider"></div>
+          <div class="member" style="color:#9d174d">uses: litellm.aembedding</div>
+        </div>
+      </div>
+
+      <div class="cls impl">
+        <div class="cls-header"><span class="cls-tag">AgentRunner</span>PydanticAIRunner</div>
+        <div class="cls-body">
+          <div class="member method">+ run_stream(job, msgs)</div>
+          <div class="divider"></div>
+          <div class="member" style="color:#9d174d">uses: pydantic_ai.Agent</div>
+        </div>
+      </div>
+
+      <div class="cls impl">
+        <div class="cls-header"><span class="cls-tag">VectorStore</span>ChromaStore</div>
+        <div class="cls-body">
+          <div class="member field">client: HttpClient</div>
+          <div class="member method">+ store / search / delete</div>
+          <div class="divider"></div>
+          <div class="member" style="color:#9d174d">uses: chromadb (threaded)</div>
+        </div>
+      </div>
+
+      <div class="cls impl">
+        <div class="cls-header"><span class="cls-tag">ContextAdapter</span>DocAdapter</div>
+        <div class="cls-body">
+          <div class="member">paragraph chunking</div>
+          <div class="member">100–1000 chars/chunk</div>
+        </div>
+      </div>
+
+      <div class="cls impl">
+        <div class="cls-header"><span class="cls-tag">ContextAdapter</span>CodeAdapter</div>
+        <div class="cls-body">
+          <div class="member">fn/class boundary split</div>
+          <div class="member">regex → fixed fallback</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- COL 3: Managers + Routers -->
+    <div class="col" style="min-width:200px">
+      <div class="section-label">Managers</div>
+
+      <div class="cls manager">
+        <div class="cls-header"><span class="cls-tag">orchestrator</span>AgenticManager</div>
+        <div class="cls-body">
+          <div class="member field">runner: AgentRunner</div>
+          <div class="member field">context_mgr: ContextManager</div>
+          <div class="member field">prompt_builder: PromptBuilder</div>
+          <div class="divider"></div>
+          <div class="member method">+ run(job) → AsyncIter[Event]</div>
+          <div class="member" style="font-size:10px; color:#94a3b8">retrieve → build → stream</div>
+        </div>
+      </div>
+
+      <div class="cls manager">
+        <div class="cls-header"><span class="cls-tag">retrieval</span>ContextManager</div>
+        <div class="cls-body">
+          <div class="member field">embedder: EmbeddingModel</div>
+          <div class="member field">store: VectorStore</div>
+          <div class="divider"></div>
+          <div class="member method">+ retrieve(msg, hist, srcs)</div>
+          <div class="member" style="font-size:10px; color:#94a3b8">embed query → parallel search</div>
+          <div class="member" style="font-size:10px; color:#94a3b8">→ rank → token budget</div>
+        </div>
+      </div>
+
+      <div class="cls manager">
+        <div class="cls-header"><span class="cls-tag">assembly</span>PromptBuilder</div>
+        <div class="cls-body">
+          <div class="member method">+ build(job, chunks)</div>
+          <div class="member" style="font-size:10px; color:#94a3b8">system → context</div>
+          <div class="member" style="font-size:10px; color:#94a3b8">→ history → message</div>
+        </div>
+      </div>
+
+      <div class="cls manager">
+        <div class="cls-header"><span class="cls-tag">ingest</span>EmbeddingManager</div>
+        <div class="cls-body">
+          <div class="member field">embedder: EmbeddingModel</div>
+          <div class="member field">store: VectorStore</div>
+          <div class="divider"></div>
+          <div class="member method">+ ingest(req) → EmbedResponse</div>
+          <div class="member" style="font-size:10px; color:#94a3b8">adapt → embed → store</div>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:8px">Routers</div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">POST /api/v1/embed/</span>embed router</div>
+        <div class="cls-body">
+          <div class="member">auth: X-Internal-Key</div>
+          <div class="member">→ EmbeddingManager.ingest()</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">POST /api/v1/trigger/</span>trigger router</div>
+        <div class="cls-body">
+          <div class="member">auth: X-Internal-Key</div>
+          <div class="member">→ AgenticManager.run()</div>
+          <div class="member">→ StreamingResponse (SSE)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COL 4: Schemas + Config + Libs -->
+    <div class="col" style="min-width:185px">
+      <div class="section-label">Schemas</div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">trigger.py</span>TriggerJob</div>
+        <div class="cls-body">
+          <div class="member field">job_id: str</div>
+          <div class="member field">msg_id: str</div>
+          <div class="member field">persona: PersonaConfig</div>
+          <div class="member field">message: str</div>
+          <div class="member field">history: list[HistoryMsg]</div>
+          <div class="member field">context_sources: list[CSRef]</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">trigger.py</span>PersonaConfig</div>
+        <div class="cls-body">
+          <div class="member field">id, name: str</div>
+          <div class="member field">system_prompt: str</div>
+          <div class="member field">model: ModelConfig</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">trigger.py</span>ModelConfig</div>
+        <div class="cls-body">
+          <div class="member field">provider: str</div>
+          <div class="member field">model_id: str</div>
+          <div class="member field">max_tokens, temperature</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">trigger.py</span>AgentEvent</div>
+        <div class="cls-body">
+          <div class="member field">type: str  <span style="color:#94a3b8">start|delta|done</span></div>
+          <div class="member field">id: str</div>
+          <div class="member field">delta: str | None</div>
+          <div class="member field">content: str | None</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">embed.py</span>EmbedRequest</div>
+        <div class="cls-body">
+          <div class="member field">source_id, type, label</div>
+          <div class="member field">content: str</div>
+          <div class="member field">language: str | None</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">embed.py</span>EmbedResponse</div>
+        <div class="cls-body">
+          <div class="member field">source_id: str</div>
+          <div class="member field">collection_id: str</div>
+          <div class="member field">chunks_count: int</div>
+        </div>
+      </div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">vectorstore.py</span>Chunk</div>
+        <div class="cls-body">
+          <div class="member field">text: str</div>
+          <div class="member field">score: float</div>
+          <div class="member field">metadata: dict</div>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:8px">Config</div>
+
+      <div class="cls schema">
+        <div class="cls-header"><span class="cls-tag">core/config.py</span>Settings</div>
+        <div class="cls-body">
+          <div class="member field">AGENT_BACKEND</div>
+          <div class="member field">LLM_PROVIDER / LLM_MODEL</div>
+          <div class="member field">EMBEDDING_PROVIDER / MODEL</div>
+          <div class="member field">VECTOR_STORE</div>
+          <div class="member field">CHROMA_HOST / PORT</div>
+          <div class="member field">OLLAMA_BASE_URL</div>
+          <div class="member field">INTERNAL_API_KEY</div>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:8px">External Libraries</div>
+
+      <div class="cls lib">
+        <div class="cls-header"><span class="cls-tag">pip</span>litellm</div>
+        <div class="cls-body">
+          <div class="member">acompletion() — LLM calls</div>
+          <div class="member">aembedding() — embed calls</div>
+          <div class="member">100+ providers, one API</div>
+        </div>
+      </div>
+
+      <div class="cls lib">
+        <div class="cls-header"><span class="cls-tag">pip</span>pydantic-ai-slim</div>
+        <div class="cls-body">
+          <div class="member">Agent, run_stream()</div>
+          <div class="member">AnthropicModel, OpenAIModel</div>
+          <div class="member">MCP tool support</div>
+        </div>
+      </div>
+
+      <div class="cls lib">
+        <div class="cls-header"><span class="cls-tag">pip</span>chromadb</div>
+        <div class="cls-body">
+          <div class="member">HttpClient (sync)</div>
+          <div class="member">wrapped: asyncio.to_thread</div>
+        </div>
+      </div>
+
+      <div class="cls lib">
+        <div class="cls-header"><span class="cls-tag">pip</span>fastapi + uvicorn</div>
+        <div class="cls-body">
+          <div class="member">StreamingResponse (SSE)</div>
+          <div class="member">APIKeyHeader auth</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

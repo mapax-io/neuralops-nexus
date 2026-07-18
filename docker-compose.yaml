@@ -98,20 +98,36 @@ services:
     volumes:
       - ./modules/nexus-ai:/nexus-ai
     environment:
-      - CHROMA_HOST=${CHROMA_HOST}
-      - CHROMA_PORT=${CHROMA_PORT}
+      - CHROMA_HOST=${CHROMA_HOST:-nexus-chroma}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - MODEL_NAME=${MODEL_NAME}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-litellm}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-ollama/nomic-embed-text}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://nexus-ollama:11434}
       - PYTHONPATH=/nexus-ai
     networks:
       - nexus-network
     depends_on:
       - chromadb
+      - ollama
     working_dir: /nexus-ai
     command: >
       sh -c "export PYTHONPATH=$PYTHONPATH:/nexus-ai && 
              python3 -m uvicorn apps.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # OLLAMA: Local model runner for embeddings (and optionally LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: nexus-ollama
+    volumes:
+      - ./data/ollama_data:/root/.ollama
+    networks:
+      - nexus-network
+    restart: unless-stopped
+    # Pull the embedding model on first start
+    # Run: docker exec nexus-ollama ollama pull nomic-embed-text
 
   # REALTIME: Centrifugo transport with Redis engine
   realtime:
