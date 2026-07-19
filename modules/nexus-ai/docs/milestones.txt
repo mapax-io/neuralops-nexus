@@ -1,0 +1,550 @@
+================================================================================
+  NEURALOPS AI — COMPLETE FLOW + MILESTONES + TASKS
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DATA MODEL HIERARCHY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  AIModel  (provider, model_id, encrypted api_key, licence_accepted)
+      │
+      ├── MCPServer[] (optional — attaching MCP makes it an agent)
+      │       name, endpoint, type (stdio|sse), config
+      │       multiple MCP servers per model = multiple capabilities
+      │
+      └── Persona[] (WHO the AI is)
+              name, shadow_user
+              │
+              └── Prompt
+                      system_prompt
+                      context_scope (optional — restricts which contexts to use)
+                      output_type   (text|code|chart|html|form)
+                      template_ref  (optional — from PromptTemplate library)
+
+  PromptTemplate  (growing curated library, platform maintained)
+      title, description, system_prompt, output_type, tags
+
+  ContextSource  (attached to a topic)
+      type (doc|code), label, content, language
+      collection_id (Chroma — returned after embed)
+      topic → ForeignKey
+
+  AIRequestLog
+      persona, user, topic
+      full_prompt (complete messages[] sent to model)
+      response    (full model response)
+      model_used, tokens_input, tokens_output, tokens_total, cost
+      latency_ms, created_at
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ COMPLETE FLOW DIAGRAM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+────────────────────────────────────────────────────────────────────────────────
+ FLOW 1 — Add AI Model
+────────────────────────────────────────────────────────────────────────────────
+
+  [User]
+    │  POST /api/ai-models/
+    │  { provider, model_id, api_key, licence_accepted }
+    ▼
+  [nexus-nucleus]
+    ├──► licence_accepted check
+    ├──► encrypt api_key
+    └──► save PostgreSQL [AIModel]
+
+
+────────────────────────────────────────────────────────────────────────────────
+ FLOW 2 — Attach MCP Servers to Model (optional → model becomes agent)
+────────────────────────────────────────────────────────────────────────────────
+
+  [User]
+    │  POST /api/ai-models/{id}/mcp-servers/
+    │  { name, endpoint, type: stdio|sse, config }
+    ▼
+  [nexus-nucleus]
+    └──► save PostgreSQL [MCPServer → AIModel]
+
+  Note: multiple MCP servers per model allowed
+        each MCP server = one set of tool capabilities
+        (terminal, SSH, database, API, file system, etc.)
+        model WITH MCP servers = agent
+        model WITHOUT MCP servers = plain LLM
+
+
+────────────────────────────────────────────────────────────────────────────────
+ FLOW 3 — Add Persona + Prompt
+────────────────────────────────────────────────────────────────────────────────
+
+  [User]
+    │  POST /api/personas/
+    │  { name, ai_model_id, prompt }
+    │  prompt.system_prompt → from PromptTemplate library OR custom
+    │  prompt.context_scope → optional (restrict which contexts to use)
+    │  prompt.output_type  → text|code|chart|html|form
+    ▼
+  [nexus-nucleus]
+    ├──► create shadow User account for persona
+    └──► save PostgreSQL [Persona + Prompt]
+
+
+────────────────────────────────────────────────────────────────────────────────
+ FLOW 4 — Attach Context Source to Topic
+────────────────────────────────────────────────────────────────────────────────
+
+  [User]
+    │  POST /api/topics/{topic_id}/contexts/
+    │  { type: doc|code, label, content, language }
+    ▼
+  [nexus-nucleus]
+    ├──► save PostgreSQL [ContextSource]
+    │
+    │  POST /api/v1/embed/context/
+    ▼
+  [nexus-ai — EmbeddingManager]
+    ├──► AdapterFactory.get(type)
+    │       DocAdapter  → paragraph chunking (100–1000 chars)
+    │       CodeAdapter → fn/class boundary splitting
+    ├──► EmbeddingFactory → LiteLLMEmbedding → litellm.aembedding()
+    └──► ChromaStore.store()
+            collection_id returned
+    │
+    ◄── collection_id
+  [nexus-nucleus]
+    └──► save collection_id back to ContextSource
+
+
+────────────────────────────────────────────────────────────────────────────────
+ FLOW 5 — Normal Message (no @mention)
+────────────────────────────────────────────────────────────────────────────────
+
+  [React App]
+    │  send message: "just chatting"
+    ▼
+  [nexus-nucleus]
+    ├──► save message to PostgreSQL
+    ├──► publish to Centrifugo [topic-{id}] → [React App sees message]
+    │
+    │  has no-context flag?
+    ├── YES ──► skip embed — done
+    │
+    └── NO  ──► POST /api/v1/embed/message/ (fire & forget)
+                  { message_id, topic_id, content, role, sender, tags,
+                    message_number }
+                ▼
+              [nexus-ai — /embed/message/]
+                ├──► LiteLLMEmbedding.embed(content)
+                └──► ChromaStore.store()
+                      collection: topic-{topic_id}-chat
+                      metadata: { message_id, message_number,
+                                  tags, sender, topic_id, role }
+
+
+────────────────────────────────────────────────────────────────────────────────
+ FLOW 6 — AI Trigger (@mention)
+────────────────────────────────────────────────────────────────────────────────
+
+  [React App]
+    │  send message: "@Bot explain this"
+    ▼
+  [nexus-nucleus — @Mention Detector]
+    ├──► detect @Bot → resolve to Persona
+    ├──► no-context + @mention? → no-context IGNORED (@mention wins)
+    ├──► save message to PostgreSQL
+    ├──► publish to Centrifugo [topic-{id}] → [React App sees message]
+    ├──► POST /api/v1/embed/message/ (fire & forget) ← always embeds
+    │
+    │  POST /api/v1/trigger/
+    │  { persona_id, topic_id, user_id }   ← only these three
+    ▼
+  [nexus-ai — /trigger/ router]
+    │
+    ├──► [Authorization]
+    │       GET /internal/personas/{persona_id}/
+    │       ◄── { persona, prompt, model_config, mcp_servers[] }
+    │       check user has rights to call this model
+    │       → 403 if not authorized
+    │
+    ├──► has MCP servers?
+    │       YES → AgentFactory → AgentRunner (pydantic-ai with MCP tools)
+    │       NO  → LLMFactory   → LiteLLMModel (direct streaming call)
+    │
+    ├──► [AgenticManager.run(persona, topic_id, message, output_type)]
+    │
+    │       ▼
+    │     [ContextManager] receives topic_id
+    │       │
+    │       │  GET /internal/topics/{topic_id}/contexts/
+    │       │  ◄── list of attached context sources
+    │       │  apply prompt.context_scope filter if defined
+    │       │
+    │       ├──────────────────────────────────────┐
+    │       ▼                                      ▼
+    │   [ChatContext]                  [DocContext / CodeContext / ...]
+    │   always runs                    runs for each attached source
+    │       │                                      │
+    │       │  embed query (LiteLLM)               │  embed query (LiteLLM)
+    │       │  search Chroma                       │  search Chroma
+    │       │  collection: topic-{id}-chat         │  collection: {collection_id}
+    │       │  → top-k relevant messages           │  → top-k relevant chunks
+    │       │                                      │
+    │       └──────────────┬───────────────────────┘
+    │                      ▼
+    │              rank + token budget → selected chunks
+    │
+    │       ▼
+    │     [PromptBuilder.build()]
+    │       │  system_prompt         (from persona prompt)
+    │       │  output_type hint      (injected as format instruction)
+    │       │  + context results     (from ContextManager)
+    │       │  + current message
+    │       │  → messages[] (OpenAI format)
+    │
+    │       ▼
+    │     [LLMModel or AgentRunner]
+    │       LiteLLM.acompletion(model, messages, stream=True)
+    │       AgentRunner calls MCP tools if needed during run
+    │       → tokens stream out
+    │
+    │  SSE: message_start → message_delta... → message_done
+    │       message_done includes: { content, output_type,
+    │                                tokens_input, tokens_output,
+    │                                tokens_total, cost, latency_ms,
+    │                                full_prompt }
+    ▼
+  [nexus-nucleus — SSE Consumer]
+    │
+    ├── message_delta ──► publish token to Centrifugo [topic-{id}]
+    │                         ▼
+    │                     [React App] renders token by token
+    │                     frontend renders based on output_type
+    │
+    └── message_done  ──► save full AI response to PostgreSQL
+                              sender = persona.user (shadow account)
+                          ├──► save AIRequestLog (full audit)
+                          └──► POST /api/v1/embed/message/ (fire & forget)
+                                    embed AI response into Chroma
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ no-context RULES (precedence)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  message only             →  DB ✓  Centrifugo ✓  Chroma ✓
+  message + no-context     →  DB ✓  Centrifugo ✓  Chroma ✗
+  @persona only            →  DB ✓  Centrifugo ✓  Chroma ✓  AI trigger ✓
+  @persona + no-context    →  DB ✓  Centrifugo ✓  Chroma ✓  AI trigger ✓
+                                     (@persona wins, no-context ignored)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CONTEXT MANAGEMENT CONTROLS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  inline flag        →  "message text no-context"
+  per-message UI     →  Remove from context
+                         → DELETE /api/v1/embed/message/{message_id}/
+  context panel      →  per topic, shows all Chroma entries, add/remove any
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ OUTPUT TYPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Static (no MCP needed — prompt instruction + frontend rendering):
+    text     →  markdown, default
+    code     →  syntax highlighted block
+    chart    →  Chart.js JSON config → frontend renders graph
+    html     →  raw HTML → sandboxed iframe
+    form     →  form schema JSON → frontend renders interactive form
+
+  Interactive (MCP required):
+    terminal →  MCP tool execution → terminal-style rendering
+                "run in terminal" button on code output
+                parked until MCP milestone
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ nexus-ai ENDPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  POST   /api/v1/embed/context/         →  ingest doc/code context source
+  POST   /api/v1/embed/message/         →  embed chat message (fire & forget)
+  DELETE /api/v1/embed/message/{id}/    →  remove message from Chroma
+  POST   /api/v1/trigger/               →  AI trigger, returns SSE stream
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ nexus-nucleus INTERNAL API (called by nexus-ai)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  GET /internal/personas/{persona_id}/       →  persona + prompt + model + mcp_servers[]
+  GET /internal/topics/{topic_id}/contexts/  →  attached context sources
+
+
+================================================================================
+ MILESTONES + TASKS
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 1 — AI Model & Persona Setup
+ Goal: Register AI models, MCP servers, personas and prompts via API
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] Django model: AIModel
+        provider, model_id, api_key (encrypted), licence_accepted
+        project → ForeignKey
+
+  [ ] Django model: MCPServer
+        name, endpoint, type (stdio|sse), config (JSON)
+        ai_model → ForeignKey
+
+  [ ] Django model: PromptTemplate
+        title, description, system_prompt, output_type, tags
+        (platform curated, growing library)
+
+  [ ] Django model: Persona
+        name, ai_model → ForeignKey
+        shadow_user → OneToOne (User account for saving AI messages)
+        project → ForeignKey
+
+  [ ] Django model: Prompt
+        system_prompt, output_type, context_scope (JSON, optional)
+        persona → OneToOne
+        template_ref → ForeignKey(PromptTemplate, null=True)
+
+  [ ] api_key encryption on save / decryption on read
+        use cryptography.fernet or django-encrypted-fields
+
+  [ ] API: POST   /api/ai-models/
+  [ ] API: GET    /api/ai-models/
+  [ ] API: DELETE /api/ai-models/{id}/
+  [ ] API: POST   /api/ai-models/{id}/mcp-servers/
+  [ ] API: GET    /api/ai-models/{id}/mcp-servers/
+  [ ] API: DELETE /api/ai-models/{id}/mcp-servers/{mcp_id}/
+  [ ] API: POST   /api/personas/
+  [ ] API: GET    /api/personas/
+  [ ] API: PATCH  /api/personas/{id}/
+  [ ] API: DELETE /api/personas/{id}/
+  [ ] API: GET    /api/prompt-templates/
+
+  [ ] nexus-nucleus internal API:
+        GET /internal/personas/{persona_id}/
+        returns: persona + prompt + model_config + mcp_servers[]
+
+  [ ] migrations + tests
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 2 — Chat Message Embedding
+ Goal: Every chat message auto-embedded into Chroma for ChatContext search
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] Ollama running in docker-compose (already in place)
+  [ ] Pull nomic-embed-text model:
+        docker exec nexus-ollama ollama pull nomic-embed-text
+
+  [ ] nexus-ai: POST /api/v1/embed/message/
+        { message_id, topic_id, content, role, sender, tags, message_number }
+        embed → store in ChromaDB
+        collection: topic-{topic_id}-chat
+        metadata: { message_id, message_number, tags, sender, topic_id, role }
+
+  [ ] nexus-ai: DELETE /api/v1/embed/message/{message_id}/
+        remove single message from Chroma by message_id
+
+  [ ] nexus-nucleus: detect no-context flag in message handler
+  [ ] nexus-nucleus: apply no-context precedence rules
+        @mention present → always embed (no-context ignored)
+        no @mention + no-context → skip embed
+  [ ] nexus-nucleus: fire & forget call to /embed/message/ after save
+
+  [ ] Test: send message → verify in Chroma
+  [ ] Test: send "msg no-context" → verify NOT in Chroma
+  [ ] Test: send "@Bot msg no-context" → verify IS in Chroma
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 3 — Basic AI Trigger (no context retrieval yet)
+ Goal: @mention works end-to-end — persona streams response in the UI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] nexus-nucleus: @mention detection in message handler
+        parse message for @PersonaName
+        resolve name → Persona object
+        handle multiple @mentions in one message
+
+  [ ] nexus-nucleus: POST /api/v1/trigger/ call
+        payload: { persona_id, topic_id, user_id }
+
+  [ ] nexus-nucleus: async SSE consumer
+        read stream from nexus-ai
+        message_delta → publish token to Centrifugo
+        message_done  → save full response to DB as persona.user
+        message_done  → fire & forget /embed/message/ for AI response
+
+  [ ] nexus-ai: authorization check
+        GET /internal/personas/{id}/ → fetch model config
+        check user rights against model
+        return 403 if not authorized
+
+  [ ] nexus-ai: model/agent path decision
+        has mcp_servers[]? → AgentFactory → AgentRunner
+        no mcp_servers?    → LLMFactory   → LiteLLMModel
+
+  [ ] nexus-ai: PromptBuilder (basic — no context yet)
+        system_prompt + output_type instruction + current message
+
+  [ ] nexus-ai: LiteLLMModel.stream() or AgentRunner.run_stream()
+        stream tokens back as SSE events
+
+  [ ] SSE events: message_start, message_delta, message_done
+
+  [ ] Test: @Bot hello → see streaming response in React UI
+  [ ] Test: unauthorized user → 403 returned cleanly
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 4 — AI Request Logging
+ Goal: Every model call fully logged — prompt, response, tokens, cost
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] Django model: AIRequestLog
+        persona, user, topic
+        full_prompt (JSON — complete messages[] sent to model)
+        response    (full response text)
+        model_used  (exact model string)
+        tokens_input, tokens_output, tokens_total
+        cost        (from LiteLLM response metadata)
+        latency_ms
+        created_at
+
+  [ ] nexus-ai: capture from LiteLLM response
+        response.usage.prompt_tokens
+        response.usage.completion_tokens
+        response._hidden_params["response_cost"]
+        latency = time between trigger and message_done
+
+  [ ] nexus-ai: include log payload in message_done SSE event
+
+  [ ] nexus-nucleus: on message_done → save AIRequestLog
+
+  [ ] API: GET /api/ai-logs/
+        filter by: persona, user, topic, date range
+        returns: all fields including token counts and cost
+
+  [ ] Test: trigger AI → verify log entry created with correct token counts
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 5 — Context Sources (DocContext / CodeContext)
+ Goal: Attach doc/code to topics and have them feed into AI responses
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] Django model: ContextSource
+        type (doc|code), label, content, language
+        collection_id (returned from nexus-ai after embed)
+        topic → ForeignKey
+
+  [ ] API: POST   /api/topics/{topic_id}/contexts/
+  [ ] API: GET    /api/topics/{topic_id}/contexts/
+  [ ] API: DELETE /api/topics/{topic_id}/contexts/{id}/
+
+  [ ] nexus-nucleus: on POST → call /embed/context/ → save collection_id back
+  [ ] nexus-nucleus internal API:
+        GET /internal/topics/{topic_id}/contexts/
+        returns: list of { source_id, type, label, collection_id }
+
+  [ ] nexus-ai: ContextManager fetches context sources from nucleus
+        GET /internal/topics/{topic_id}/contexts/
+        apply prompt.context_scope filter if defined
+
+  [ ] nexus-ai: ChatContext
+        always runs for every topic
+        embed query → search topic-{id}-chat collection
+        → top-k relevant past messages
+
+  [ ] nexus-ai: DocContext / CodeContext
+        run for each attached source
+        embed query → search {collection_id}
+        → top-k relevant chunks
+
+  [ ] nexus-ai: merge all results
+        rank by score → apply token budget → feed to PromptBuilder
+
+  [ ] Test: attach doc → @mention → verify doc content appears in response
+  [ ] Test: attach code → @mention → verify code context used
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 6 — Context Management Controls
+ Goal: User controls what lives in ChatContext
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] Frontend: no-context flag visible on message (indicator)
+  [ ] Frontend: per-message "Remove from context" option
+        → DELETE /api/v1/embed/message/{message_id}/
+  [ ] Frontend: context panel per topic
+        list all messages currently in Chroma for this topic
+        add / remove individual messages
+  [ ] API: GET /api/topics/{topic_id}/chat-context/
+        returns list of embedded messages with metadata
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 7 — Static Output Types
+ Goal: AI responses render as chart, html, form, code or text
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] output_type field on Prompt model (already in M1)
+  [ ] nexus-ai: PromptBuilder injects format instruction into system prompt
+  [ ] nexus-ai: AgentEvent message_done includes output_type
+  [ ] nexus-nucleus: pass output_type to Centrifugo with final message
+
+  [ ] Frontend: render based on output_type
+        text  → markdown (already works)
+        code  → syntax highlighted (already works)
+        chart → Chart.js JSON → rendered graph
+        html  → sandboxed iframe
+        form  → form schema JSON → interactive form
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 8 — MCP Integration
+ Goal: Models with MCP servers become agents with real tool capabilities
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] nexus-ai: MCPClientFactory — connect to MCP servers from model config
+  [ ] nexus-ai: AgentRunner (pydantic-ai) calls MCP tools during run
+  [ ] nexus-ai: MCP tool results feed into response
+  [ ] MCP server types supported: stdio, SSE
+  [ ] Test: model with MCP attached → agent calls tool → result in response
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MILESTONE 9 — Terminal + Interactive Outputs (depends on M8)
+ Goal: Terminal-style interaction via MCP, run-in-terminal on code blocks
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [ ] terminal output_type → terminal-style frontend rendering
+  [ ] "Run in terminal" button on code output blocks
+  [ ] MCP server executes command → output streams back
+  [ ] Multiple MCP terminals per model (one per MCP server)
+  [ ] Interactive back-and-forth session via MCP tool calls
+
+
+================================================================================
+ EXECUTION ORDER
+================================================================================
+
+  M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9
+
+  M3 gives you a fully working AI trigger.
+  M4 adds full audit logging from day one.
+  M5 adds context retrieval on top of working AI.
+  M8 + M9 add agent/terminal capabilities last.
+
+================================================================================
