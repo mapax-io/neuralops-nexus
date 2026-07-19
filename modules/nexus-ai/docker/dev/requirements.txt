@@ -12,6 +12,11 @@ pydantic-ai-slim[anthropic,openai,mcp]
 # Supports 100+ providers (Anthropic, OpenAI, Ollama, Bedrock, Cohere, etc.)
 litellm
 
+# ── Local Embedding (ONNX, runs inside nexus-ai) ──────────────────────────────
+# FastEmbed runs bge-m3 via ONNX — no GPU needed, ~300MB, fast CPU inference.
+# Switch provider via EMBEDDING_PROVIDER env var (litellm → Ollama/Infinity).
+fastembed
+
 # ── Vector Store ──────────────────────────────────────────────────────────────
 chromadb                 # Phase 1 — swap via VectorStoreFactory
 

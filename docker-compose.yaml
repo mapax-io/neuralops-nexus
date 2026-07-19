@@ -103,15 +103,15 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - MODEL_NAME=${MODEL_NAME}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-litellm}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-ollama/nomic-embed-text}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-fastembed}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://nexus-ollama:11434}
       - PYTHONPATH=/nexus-ai
     networks:
       - nexus-network
     depends_on:
       - chromadb
-      - ollama
+      # - ollama  # Enable when switching EMBEDDING_PROVIDER=litellm + ollama model
     working_dir: /nexus-ai
     command: >
       sh -c "export PYTHONPATH=$PYTHONPATH:/nexus-ai && 
