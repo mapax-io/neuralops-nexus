@@ -25,6 +25,11 @@ from .intelligence import (
     Persona,
 )
 
+from .prompt import (
+    PromptTemplate,
+    Prompt,
+)
+
 from .workspace import (
     Project,
     Channel,
@@ -36,6 +41,7 @@ from .workspace import (
     KnowledgeBase,
     KnowledgeFile,
 )
+
 from .extended import (
     Invitation,
     ProjectMember,
@@ -55,5 +61,4 @@ from .extended import (
     AgentApproval,
     SavedSearch,
     SearchLog,
-
 )
