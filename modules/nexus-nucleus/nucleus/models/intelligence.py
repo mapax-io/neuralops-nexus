@@ -1,7 +1,26 @@
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ImproperlyConfigured
 
 from .base import BaseModel, TenantBaseModel
+
+
+def _fernet():
+    """Return a Fernet instance using FIELD_ENCRYPTION_KEY from settings."""
+    try:
+        from cryptography.fernet import Fernet
+        key = getattr(settings, "FIELD_ENCRYPTION_KEY", None)
+        if not key:
+            raise ImproperlyConfigured(
+                "FIELD_ENCRYPTION_KEY is not set. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except ImportError:
+        raise ImproperlyConfigured(
+            "cryptography package is required for api_key encryption. "
+            "Add it to requirements.txt."
+        )
 
 
 class CompanyAIConfig(BaseModel):
@@ -132,7 +151,22 @@ class AIModel(TenantBaseModel):
         max_length=255,
         null=True,
         blank=True,
-        help_text="Reference to secret manager entry.",
+        help_text="Reference to secret manager entry (production: Vault / AWS Secrets Manager).",
+    )
+
+    # ── API Key (encrypted at rest) ───────────────────────────────────────────
+    # Stored as a Fernet-encrypted base64 string.
+    # Use set_api_key() to write, get_api_key() to read.
+    # For production deployments, prefer secret_ref + a secrets manager.
+    api_key_encrypted = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Fernet-encrypted API key. Do not set directly — use set_api_key().",
+    )
+
+    licence_accepted = models.BooleanField(
+        default=False,
+        help_text="User must accept the provider's terms of service before this model is active.",
     )
 
     temperature = models.FloatField(default=0.7)
@@ -174,8 +208,19 @@ class AIModel(TenantBaseModel):
             models.Index(fields=["company", "is_active"]),
         ]
 
+    def set_api_key(self, raw_key: str) -> None:
+        """Encrypt and store an API key."""
+        self.api_key_encrypted = _fernet().encrypt(raw_key.encode()).decode()
+
+    def get_api_key(self) -> str | None:
+        """Decrypt and return the API key, or None if not set."""
+        if not self.api_key_encrypted:
+            return None
+        return _fernet().decrypt(self.api_key_encrypted.encode()).decode()
+
     def __str__(self):
         return f"{self.name} ({self.model_id})"
+
 
 class AIAgent(TenantBaseModel):
     class AgentType(models.TextChoices):
