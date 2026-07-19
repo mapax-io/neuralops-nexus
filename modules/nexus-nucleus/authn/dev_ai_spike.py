@@ -7,9 +7,13 @@ Validates the full streaming pipeline end-to-end without building nexus-ai yet:
 
   /ai-test <message>
       → POST /api/v1/dev/{project_id}/channels/{channel_id}/topics/{topic_id}/ai-stream/
-      → OpenAI GPT-4o streams tokens via httpx SSE (no openai package needed)
+      → Claude Haiku streams tokens via httpx SSE (no anthropic package needed)
       → Each token published to Centrifugo as message_delta
       → React accumulates deltas in real time
+
+  The user's trigger message is saved to DB as a regular user message so
+  all users (polling + WebSocket) can see what was asked.  The AI response
+  itself is WebSocket-only until the persona system is built in nexus-ai.
 
 Centrifugo event format (same format nexus-ai will use permanently):
     { "type": "message_start", "id": "<uuid>", "sender_id": "ai",
@@ -38,7 +42,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from .auth import SupabaseBearer
-from .chat_services import publish_async, topic_channel
+from .chat_services import publish_async, topic_channel, save_user_message
 from . import workspace_services as ws_svc
 
 logger = logging.getLogger(__name__)
@@ -140,12 +144,28 @@ async def _stream_claude_to_centrifugo(
 
 
 # ---------------------------------------------------------------------------
-# Endpoint
+# Async DB helpers
 # ---------------------------------------------------------------------------
 
 _get_company = sync_to_async(ws_svc.get_company)
 _get_project = sync_to_async(ws_svc.get_project)
+_save_user_message = sync_to_async(save_user_message)
 
+
+def _get_topic_sync(topic_id: str):
+    from nucleus.models import ChatTopic
+    try:
+        return ChatTopic.objects.get(id=topic_id, is_active=True)
+    except ChatTopic.DoesNotExist:
+        return None
+
+
+_get_topic = sync_to_async(_get_topic_sync)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint
+# ---------------------------------------------------------------------------
 
 @router.post(
     "/{project_id}/channels/{channel_id}/topics/{topic_id}/ai-stream/",
@@ -161,7 +181,8 @@ async def ai_stream_spike(
     ⚠️  TEMPORARY — validates Centrifugo streaming pipeline only.
 
     Body: { "content": "<user message>" }
-    Returns immediately; GPT-4o tokens flow via Centrifugo WebSocket.
+    Returns immediately; Claude tokens flow via Centrifugo WebSocket.
+    The user's trigger message is saved to DB so all users see it.
     """
     try:
         body = json.loads(request.body)
@@ -182,9 +203,19 @@ async def ai_stream_spike(
     if not project:
         raise HttpError(404, "Project not found.")
 
-    # Generate a temporary AI message ID and announce the stream start
-    msg_id = str(uuid.uuid4())
+    topic = await _get_topic(topic_id)
+    if not topic:
+        raise HttpError(404, "Topic not found.")
+
     channel = topic_channel(topic_id)
+
+    # ── Save user's trigger message to DB so ALL users see the question ──
+    # (sender = the real user, content = the stripped query without /ai-test)
+    user_msg = await _save_user_message(company, project, topic, user, user_message)
+    await publish_async(channel, {"type": "message", **user_msg})
+
+    # ── Announce AI response start ──
+    msg_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     await publish_async(channel, {
