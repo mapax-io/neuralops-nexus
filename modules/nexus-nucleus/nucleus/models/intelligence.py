@@ -1,7 +1,75 @@
 from django.conf import settings
 from django.db import models
 
-from .base import TenantBaseModel
+from .base import BaseModel, TenantBaseModel
+
+
+class CompanyAIConfig(BaseModel):
+    """
+    Per-company AI configuration.
+
+    Singleton per company — controls which embedding provider, model,
+    and default LLM are used for all AI operations within the company.
+
+    Changeable via API at runtime (no restart required).
+    nexus-ai fetches this via internal API and caches per request.
+
+    To switch providers:
+      - fastembed  → runs bge-m3 / nomic inside nexus-ai (ONNX, no extra service)
+      - litellm    → routes to Ollama, OpenAI, Infinity, etc. via api_base
+    """
+
+    class EmbeddingProvider(models.TextChoices):
+        FASTEMBED = "fastembed", "FastEmbed (local ONNX)"
+        LITELLM   = "litellm",   "LiteLLM (Ollama / OpenAI / Infinity)"
+
+    company = models.OneToOneField(
+        "nucleus.Company",
+        on_delete=models.CASCADE,
+        related_name="ai_config",
+    )
+
+    # ── Embedding ─────────────────────────────────────────────────────────────
+    embedding_provider = models.CharField(
+        max_length=50,
+        choices=EmbeddingProvider.choices,
+        default=EmbeddingProvider.FASTEMBED,
+    )
+
+    embedding_model = models.CharField(
+        max_length=255,
+        default="nomic-ai/nomic-embed-text-v1.5",
+        help_text="Model name passed to the embedding provider.",
+    )
+
+    embedding_base_url = models.URLField(
+        blank=True,
+        default="",
+        help_text="Required when provider=litellm and model runs on Ollama or Infinity.",
+    )
+
+    # ── LLM defaults ─────────────────────────────────────────────────────────
+    default_llm_model = models.CharField(
+        max_length=255,
+        default="anthropic/claude-haiku-4-5-20251001",
+        help_text="Fallback LLM model when a persona has no model assigned.",
+    )
+
+    # ── Audit ─────────────────────────────────────────────────────────────────
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_config_updates",
+    )
+
+    class Meta:
+        db_table = "intelligence_company_ai_config"
+        verbose_name = "Company AI Config"
+
+    def __str__(self):
+        return f"{self.company} — {self.embedding_provider}/{self.embedding_model}"
 class AIModel(TenantBaseModel):
     """
     Base LLM/runtime configuration.

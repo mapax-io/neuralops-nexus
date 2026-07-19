@@ -18,6 +18,7 @@ from .governance import (
 )
 
 from .intelligence import (
+    CompanyAIConfig,
     AIModel,
     MCPServer,
     AIAgent,
