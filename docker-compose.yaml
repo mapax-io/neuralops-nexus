@@ -97,6 +97,7 @@ services:
       - "8000:8000"
     volumes:
       - ./modules/nexus-ai:/nexus-ai
+      - ./data/fastembed_cache:/root/.cache/fastembed
     environment:
       - CHROMA_HOST=${CHROMA_HOST:-nexus-chroma}
       - CHROMA_PORT=${CHROMA_PORT:-8000}
