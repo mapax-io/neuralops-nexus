@@ -34,8 +34,8 @@ class CompanyAIConfig(BaseModel):
     nexus-ai fetches this via internal API and caches per request.
 
     To switch providers:
-      - fastembed  → runs bge-m3 / nomic inside nexus-ai (ONNX, no extra service)
-      - litellm    → routes to Ollama, OpenAI, Infinity, etc. via api_base
+      - fastembed  -> runs nomic / bge-m3 inside nexus-ai (ONNX, no extra service)
+      - litellm    -> routes to Ollama, OpenAI, Infinity, etc. via api_base
     """
 
     class EmbeddingProvider(models.TextChoices):
@@ -48,7 +48,7 @@ class CompanyAIConfig(BaseModel):
         related_name="ai_config",
     )
 
-    # ── Embedding ─────────────────────────────────────────────────────────────
+    # -- Embedding ------------------------------------------------------------
     embedding_provider = models.CharField(
         max_length=50,
         choices=EmbeddingProvider.choices,
@@ -67,14 +67,14 @@ class CompanyAIConfig(BaseModel):
         help_text="Required when provider=litellm and model runs on Ollama or Infinity.",
     )
 
-    # ── LLM defaults ─────────────────────────────────────────────────────────
+    # -- LLM defaults ---------------------------------------------------------
     default_llm_model = models.CharField(
         max_length=255,
         default="anthropic/claude-haiku-4-5-20251001",
         help_text="Fallback LLM model when a persona has no model assigned.",
     )
 
-    # ── Audit ─────────────────────────────────────────────────────────────────
+    # -- Audit ----------------------------------------------------------------
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -88,7 +88,9 @@ class CompanyAIConfig(BaseModel):
         verbose_name = "Company AI Config"
 
     def __str__(self):
-        return f"{self.company} — {self.embedding_provider}/{self.embedding_model}"
+        return f"{self.company} - {self.embedding_provider}/{self.embedding_model}"
+
+
 class AIModel(TenantBaseModel):
     """
     Base LLM/runtime configuration.
@@ -154,14 +156,14 @@ class AIModel(TenantBaseModel):
         help_text="Reference to secret manager entry (production: Vault / AWS Secrets Manager).",
     )
 
-    # ── API Key (encrypted at rest) ───────────────────────────────────────────
+    # -- API Key (encrypted at rest) ------------------------------------------
     # Stored as a Fernet-encrypted base64 string.
     # Use set_api_key() to write, get_api_key() to read.
     # For production deployments, prefer secret_ref + a secrets manager.
     api_key_encrypted = models.TextField(
         null=True,
         blank=True,
-        help_text="Fernet-encrypted API key. Do not set directly — use set_api_key().",
+        help_text="Fernet-encrypted API key. Do not set directly - use set_api_key().",
     )
 
     licence_accepted = models.BooleanField(
@@ -401,9 +403,6 @@ class Persona(TenantBaseModel):
 
     def __str__(self):
         return self.name
-    
-
-
 
 
 class MCPServer(TenantBaseModel):
@@ -532,4 +531,3 @@ class MCPServer(TenantBaseModel):
 
     def __str__(self):
         return self.name
-    
