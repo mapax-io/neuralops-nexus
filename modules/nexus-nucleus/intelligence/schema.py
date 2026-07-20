@@ -139,6 +139,25 @@ class PromptTemplateOut(Schema):
 
 # ── CompanyAIConfig ───────────────────────────────────────────────────────────
 
+# ── AIRequestLog ─────────────────────────────────────────────────────────────
+
+class AIRequestLogOut(Schema):
+    id: str
+    job_id: str
+    msg_id: str
+    persona_id: Optional[str] = None
+    model_id: str
+    provider: str
+    prompt: list
+    response: str
+    prompt_tokens: int
+    completion_tokens: int
+    latency_ms: int
+    status: str
+    error: Optional[str] = None
+    created_at: str
+
+
 class CompanyAIConfigIn(Schema):
     embedding_provider: str
     embedding_model: str

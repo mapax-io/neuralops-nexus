@@ -71,6 +71,21 @@ class ContextSourceInternal(Schema):
     collection_id: str
 
 
+class AIRequestLogIn(Schema):
+    job_id: str
+    msg_id: str
+    persona_id: Optional[str] = None
+    model_id: str
+    provider: str
+    prompt: list
+    response: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_ms: int = 0
+    status: str = "success"
+    error: Optional[str] = None
+
+
 class AIConfigInternal(Schema):
     embedding_provider: str
     embedding_model: str
@@ -188,6 +203,40 @@ def get_topic_contexts(request, topic_id: str):
         )
         for s in sources
     ]
+
+
+@router.post("/ai-request-logs/", response={201: dict})
+def create_ai_request_log(request, payload: AIRequestLogIn):
+    """
+    Called by nexus-ai after every model completion.
+    Writes a log record with the full prompt + raw response.
+    """
+    from nucleus.models import AIRequestLog, Persona, Company
+
+    company = Company.objects.filter(is_active=True).first()
+    if not company:
+        raise HttpError(503, "No company found.")
+
+    persona = None
+    if payload.persona_id:
+        persona = Persona.objects.filter(id=payload.persona_id, is_active=True).first()
+
+    AIRequestLog.objects.create(
+        company=company,
+        job_id=payload.job_id,
+        msg_id=payload.msg_id,
+        persona=persona,
+        model_id=payload.model_id,
+        provider=payload.provider,
+        prompt=payload.prompt,
+        response=payload.response,
+        prompt_tokens=payload.prompt_tokens,
+        completion_tokens=payload.completion_tokens,
+        latency_ms=payload.latency_ms,
+        status=payload.status,
+        error=payload.error,
+    )
+    return 201, {"ok": True}
 
 
 @router.get("/companies/{company_id}/ai-config/", response=AIConfigInternal)

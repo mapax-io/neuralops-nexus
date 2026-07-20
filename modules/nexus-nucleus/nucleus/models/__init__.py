@@ -23,6 +23,7 @@ from .intelligence import (
     MCPServer,
     AIAgent,
     Persona,
+    AIRequestLog,
 )
 
 from .prompt import (

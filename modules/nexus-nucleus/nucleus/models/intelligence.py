@@ -308,6 +308,64 @@ class AIAgent(TenantBaseModel):
         return self.name
 
 
+class AIRequestLog(TenantBaseModel):
+    """
+    Logs every model call made by nexus-ai.
+    Written by nexus-ai via POST /internal/ai-request-logs/ after each completion.
+    Records the exact prompt sent and the raw response received.
+    """
+
+    class Status(models.TextChoices):
+        SUCCESS = "success", "Success"
+        ERROR   = "error",   "Error"
+
+    # -- Trigger context ------------------------------------------------------
+    job_id  = models.CharField(max_length=64, db_index=True)
+    msg_id  = models.CharField(max_length=64, db_index=True)
+
+    persona = models.ForeignKey(
+        "nucleus.Persona",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="request_logs",
+    )
+
+    # -- Model identity -------------------------------------------------------
+    model_id = models.CharField(max_length=255)   # e.g. "openai/gpt-3.5-turbo"
+    provider = models.CharField(max_length=50)    # e.g. "litellm", "local"
+
+    # -- Payload --------------------------------------------------------------
+    prompt   = models.JSONField()                 # full messages array sent
+    response = models.TextField(blank=True)       # raw text received
+
+    # -- Stats ----------------------------------------------------------------
+    prompt_tokens     = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    latency_ms        = models.PositiveIntegerField(default=0)
+
+    # -- Status ---------------------------------------------------------------
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.SUCCESS,
+        db_index=True,
+    )
+    error = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "intelligence_ai_request_log"
+        indexes = [
+            models.Index(fields=["company", "persona"]),
+            models.Index(fields=["company", "created_at"]),
+            models.Index(fields=["job_id"]),
+            models.Index(fields=["msg_id"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.status}] {self.model_id} job={self.job_id}"
+
+
 class Persona(TenantBaseModel):
     """
     User-like AI identity.

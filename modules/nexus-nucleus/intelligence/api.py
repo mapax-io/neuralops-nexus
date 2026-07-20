@@ -13,6 +13,7 @@ from .schema import (
     PersonaIn, PersonaPatchIn, PersonaOut,
     PromptTemplateOut,
     CompanyAIConfigIn, CompanyAIConfigOut,
+    AIRequestLogOut,
 )
 from . import services as svc
 
@@ -205,6 +206,36 @@ def get_ai_config(request):
         embedding_base_url=config.embedding_base_url,
         default_llm_model=config.default_llm_model,
     )
+
+
+@router.get("/ai-request-logs/", response=List[AIRequestLogOut])
+def list_ai_request_logs(request):
+    """Return the last 200 AI request logs, newest first."""
+    from nucleus.models import AIRequestLog
+    company = _company(request)
+    logs = (
+        AIRequestLog.objects.filter(company=company)
+        .order_by("-created_at")[:200]
+    )
+    return [
+        AIRequestLogOut(
+            id=str(log.id),
+            job_id=log.job_id,
+            msg_id=log.msg_id,
+            persona_id=str(log.persona_id) if log.persona_id else None,
+            model_id=log.model_id,
+            provider=log.provider,
+            prompt=log.prompt,
+            response=log.response,
+            prompt_tokens=log.prompt_tokens,
+            completion_tokens=log.completion_tokens,
+            latency_ms=log.latency_ms,
+            status=log.status,
+            error=log.error,
+            created_at=log.created_at.isoformat(),
+        )
+        for log in logs
+    ]
 
 
 @router.put("/ai-config/", response=CompanyAIConfigOut)
