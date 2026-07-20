@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # ── Internal auth (nexus-nucleus → nexus-ai calls) ───────────────────────
     INTERNAL_API_KEY: str = "change-me-in-production"
 
+    # ── nexus-nucleus base URL (nexus-ai → nexus-nucleus calls) ───────────────
+    NEXUS_NUCLEUS_URL: str = "http://nexus-nucleus:8000"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

@@ -14,8 +14,11 @@ For M8 MCP integration: wrap with pydantic-ai Agent + mcp_servers here only.
 """
 from __future__ import annotations
 
+import logging
+import time
 from typing import AsyncIterator
 
+import httpx
 import litellm
 
 from apps.interfaces.agent import AgentRunner
@@ -24,6 +27,8 @@ from apps.core.config import settings
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
+
+log = logging.getLogger(__name__)
 
 
 class PydanticAIRunner(AgentRunner):
@@ -41,22 +46,79 @@ class PydanticAIRunner(AgentRunner):
         model_config = job.persona.model
         kwargs = _build_litellm_kwargs(model_config, messages)
 
+        full_response = ""
+        prompt_tokens = 0
+        completion_tokens = 0
+        status = "success"
+        error_msg = None
+        t0 = time.monotonic()
+
         try:
             response = await litellm.acompletion(**kwargs)
             async for chunk in response:
                 delta = chunk.choices[0].delta.content or ""
                 if delta:
+                    full_response += delta
                     yield AgentEvent(
                         type="message_delta",
                         id=job.msg_id,
                         delta=delta,
                     )
+                # Accumulate usage from the final chunk (some providers send it there)
+                if hasattr(chunk, "usage") and chunk.usage:
+                    prompt_tokens = getattr(chunk.usage, "prompt_tokens", 0) or 0
+                    completion_tokens = getattr(chunk.usage, "completion_tokens", 0) or 0
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(
-                "[runner] litellm error for job %s: %s", job.job_id, exc
-            )
+            status = "error"
+            error_msg = str(exc)
+            log.error("[runner] litellm error for job %s: %s", job.job_id, exc)
             raise
+        finally:
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            await _post_ai_request_log(
+                job=job,
+                messages=messages,
+                response=full_response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+                status=status,
+                error=error_msg,
+            )
+
+
+async def _post_ai_request_log(
+    *,
+    job: TriggerJob,
+    messages: list[dict],
+    response: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    latency_ms: int,
+    status: str,
+    error: str | None,
+) -> None:
+    """Fire-and-forget POST to nucleus internal API to persist the AI request log."""
+    url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/ai-request-logs/"
+    payload = {
+        "job_id": job.job_id,
+        "msg_id": job.msg_id,
+        "persona_id": str(job.persona.id) if job.persona else None,
+        "model_id": job.persona.model.model_id if job.persona else "",
+        "provider": job.persona.model.provider if job.persona else "",
+        "prompt": messages,
+        "response": response,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "latency_ms": latency_ms,
+        "status": status,
+        "error": error,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(url, json=payload)
+    except Exception as exc:
+        log.warning("[runner] failed to post AI request log: %s", exc)
 
 
 def _build_litellm_kwargs(model_config: ModelConfig, messages: list[dict]) -> dict:
