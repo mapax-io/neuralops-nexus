@@ -34,8 +34,8 @@ class CompanyAIConfig(BaseModel):
     nexus-ai fetches this via internal API and caches per request.
 
     To switch providers:
-      - fastembed  -> runs nomic / bge-m3 inside nexus-ai (ONNX, no extra service)
-      - litellm    -> routes to Ollama, OpenAI, Infinity, etc. via api_base
+      - fastembed  -> runs nomic-embed-text-v1.5 inside nexus-ai (ONNX, no extra service)
+      - litellm    -> routes to Ollama, OpenAI, Infinity, etc. via embedding_base_url
     """
 
     class EmbeddingProvider(models.TextChoices):
@@ -93,25 +93,22 @@ class CompanyAIConfig(BaseModel):
 
 class AIModel(TenantBaseModel):
     """
-    Base LLM/runtime configuration.
+    LLM configuration stored per company.
 
-    This model stores all runtime-related configuration required
-    to communicate with a model provider through LiteLLM or local runtimes.
+    All calls go through LiteLLM — the actual provider (Anthropic, OpenAI,
+    Azure, Ollama, etc.) is encoded in model_id using LiteLLM's prefix format:
+      "anthropic/claude-haiku-4-5-20251001"
+      "openai/gpt-4o"
+      "azure/gpt-4"
+      "ollama/llama3"  (+ api_base pointing to Ollama service)
 
-    Examples:
-    - GPT-4o
-    - Claude Sonnet
-    - Ollama llama3
-    - DeepSeek
+    provider=local is reserved for future direct ONNX/llama.cpp runtimes
+    that bypass LiteLLM entirely.
     """
 
     class Provider(models.TextChoices):
-        LITELLM = "litellm", "LiteLLM"
-        OPENAI = "openai", "OpenAI"
-        ANTHROPIC = "anthropic", "Anthropic"
-        OLLAMA = "ollama", "Ollama"
-        AZURE = "azure", "Azure OpenAI"
-        LOCAL = "local", "Local"
+        LITELLM = "litellm", "LiteLLM (all cloud/hosted providers)"
+        LOCAL   = "local",   "Local (custom ONNX / llama.cpp runtime)"
 
     name = models.CharField(
         max_length=255,
@@ -127,7 +124,7 @@ class AIModel(TenantBaseModel):
 
     model_id = models.CharField(
         max_length=255,
-        help_text="Provider model identifier.",
+        help_text="LiteLLM model string, e.g. 'anthropic/claude-haiku-4-5-20251001'.",
     )
 
     created_by = models.ForeignKey(
@@ -146,7 +143,7 @@ class AIModel(TenantBaseModel):
     api_base = models.URLField(
         null=True,
         blank=True,
-        help_text="Optional custom API base URL.",
+        help_text="Optional custom API base URL (e.g. Ollama or self-hosted endpoint).",
     )
 
     secret_ref = models.CharField(
@@ -163,7 +160,7 @@ class AIModel(TenantBaseModel):
     api_key_encrypted = models.TextField(
         null=True,
         blank=True,
-        help_text="Fernet-encrypted API key. Do not set directly - use set_api_key().",
+        help_text="Fernet-encrypted API key. Do not set directly — use set_api_key().",
     )
 
     licence_accepted = models.BooleanField(
@@ -419,16 +416,16 @@ class MCPServer(TenantBaseModel):
     """
 
     class ServerType(models.TextChoices):
-        LOCAL = "local", "Local"
-        DOCKER = "docker", "Docker"
+        LOCAL      = "local",      "Local"
+        DOCKER     = "docker",     "Docker"
         KUBERNETES = "kubernetes", "Kubernetes"
-        REMOTE = "remote", "Remote"
-        HOSTED = "hosted", "Hosted / Online"
+        REMOTE     = "remote",     "Remote"
+        HOSTED     = "hosted",     "Hosted / Online"
 
     class Transport(models.TextChoices):
-        STDIO = "stdio", "STDIO"
-        HTTP = "http", "HTTP"
-        SSE = "sse", "SSE"
+        STDIO     = "stdio",     "STDIO"
+        HTTP      = "http",      "HTTP"
+        SSE       = "sse",       "SSE"
         WEBSOCKET = "websocket", "WebSocket"
 
     name = models.CharField(max_length=255)

@@ -4,17 +4,18 @@ pydantic-settings
 uvicorn[standard]
 
 # ── AI Agent Framework ────────────────────────────────────────────────────────
-# Slim install — only pull the providers we use (avoids logfire, google, evals)
-pydantic-ai-slim[anthropic,openai,mcp]
+# openai extra = pydantic-ai talks to LiteLLM via OpenAI-compatible API.
+# anthropic extra removed — LiteLLM handles Anthropic, no direct SDK needed.
+pydantic-ai-slim[openai,mcp]
 
 # ── LLM + Embedding Provider Routing ─────────────────────────────────────────
-# All LLM and embedding calls go through LiteLLM — no local model downloads.
-# Supports 100+ providers (Anthropic, OpenAI, Ollama, Bedrock, Cohere, etc.)
+# Single gateway for all LLM calls (Anthropic, OpenAI, Azure, Ollama, etc.).
+# pydantic-ai → LiteLLM → provider. Swap provider via model_id string only.
 litellm
 
 # ── Local Embedding (ONNX, runs inside nexus-ai) ──────────────────────────────
-# FastEmbed runs bge-m3 via ONNX — no GPU needed, ~300MB, fast CPU inference.
-# Switch provider via EMBEDDING_PROVIDER env var (litellm → Ollama/Infinity).
+# FastEmbed runs nomic-embed-text-v1.5 via ONNX — no GPU, no network.
+# Switch to LiteLLM embedding (Ollama/Infinity) via EMBEDDING_PROVIDER=litellm.
 fastembed
 
 # ── Vector Store ──────────────────────────────────────────────────────────────

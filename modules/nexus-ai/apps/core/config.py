@@ -11,20 +11,24 @@ class Settings(BaseSettings):
     AGENT_BACKEND: str = "pydantic_ai"
 
     # ── LLM ──────────────────────────────────────────────────────────────────
-    # Options: "litellm" | "openai" | "anthropic" | "ollama"
+    # All LLM calls go through LiteLLM — one gateway for all providers.
+    # Encode the provider in LLM_MODEL using LiteLLM's prefix format:
+    #   "anthropic/claude-haiku-4-5-20251001"
+    #   "openai/gpt-4o"
+    #   "azure/gpt-4"
+    #   "ollama/llama3"  (set OLLAMA_BASE_URL for the Ollama service)
     LLM_PROVIDER: str = "litellm"
-    # Full model string passed to LiteLLM (provider/model-id format).
-    # Examples: "anthropic/claude-haiku-4-5-20251001", "openai/gpt-4o-mini"
     LLM_MODEL: str = "anthropic/claude-haiku-4-5-20251001"
 
     # ── Embedding ─────────────────────────────────────────────────────────────
-    # Options: "litellm" | "openai" | "ollama" | "fastembed"
-    # "litellm" routes through LiteLLM — no local model downloads.
-    # Model format examples:
-    #   "ollama/nomic-embed-text"        ← default (Ollama docker service)
-    #   "openai/text-embedding-3-small"  (needs OpenAI key with embedding access)
-    EMBEDDING_PROVIDER: str = "litellm"
-    EMBEDDING_MODEL: str = "ollama/nomic-embed-text"
+    # Options: "fastembed" | "litellm"
+    #   fastembed  — local ONNX, runs inside nexus-ai, no network, no GPU (default)
+    #   litellm    — routes to any remote service; set EMBEDDING_MODEL with prefix:
+    #                "ollama/nomic-embed-text", "openai/text-embedding-3-small"
+    #                Set EMBEDDING_BASE_URL if needed (Ollama, Infinity, etc.)
+    EMBEDDING_PROVIDER: str = "fastembed"
+    EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
+    EMBEDDING_BASE_URL: str = ""
 
     # ── Vector store ──────────────────────────────────────────────────────────
     # Options: "chroma" | "qdrant" | "pgvector"
@@ -35,7 +39,8 @@ class Settings(BaseSettings):
     # ── API keys / endpoints ──────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    # Points to the Ollama docker service; override in .env if running locally.
+    # Ollama service URL — only needed when EMBEDDING_PROVIDER=litellm
+    # and EMBEDDING_MODEL starts with "ollama/", or LLM_MODEL starts with "ollama/"
     OLLAMA_BASE_URL: str = "http://nexus-ollama:11434"
 
     # ── Internal auth (nexus-nucleus → nexus-ai calls) ───────────────────────

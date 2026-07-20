@@ -20,6 +20,7 @@ services:
       - POSTGRES_HOST=${POSTGRES_HOST}
       - NEXUS_AI_URL=${NEXUS_AI_URL}
       - FIELD_ENCRYPTION_KEY=${FIELD_ENCRYPTION_KEY}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - CENTRIFUGO_API_URL=${CENTRIFUGO_API_URL}
       - CENTRIFUGO_API_KEY=${CENTRIFUGO_API_KEY}
       - CENTRIFUGO_HMAC_SECRET=${CENTRIFUGO_HMAC_SECRET}
@@ -30,13 +31,6 @@ services:
       - NEURALOPS_PORTAL_URL=${NEURALOPS_PORTAL_URL:-https://neuralops-nexus-auth.mapax.io}
       - NEURALOPS_SERVER_URL=${NEURALOPS_SERVER_URL}
       - PYTHONPATH=/nexus-nucleus
-      - AI_PROVIDER=${AI_PROVIDER}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OLLAMA_API_BASE=${OLLAMA_API_BASE}
-      - AIDER_MODEL=${AIDER_MODEL}
-      - OPENAI_API_BASE=${OPENAI_API_BASE}
-      - AIDER_MAP_TOKENS=${AIDER_MAP_TOKENS}
     networks:
       - nexus-network
     depends_on:
@@ -87,7 +81,10 @@ services:
       - nexus-network
     restart: unless-stopped
 
-  # NEXUS-AI: The Worker
+  # NEXUS-AI: The AI Worker
+  # LLM calls:       pydantic-ai → LiteLLM → any provider (model_id encodes provider)
+  # Embedding:       FastEmbed (local ONNX, default) or LiteLLM (remote)
+  # Switch provider: change EMBEDDING_PROVIDER / LLM_MODEL env vars, no rebuild needed
   nexus-ai:
     image: nexus-ai:2.0
     container_name: nexus-ai
@@ -104,22 +101,31 @@ services:
       - CHROMA_PORT=${CHROMA_PORT:-8000}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MODEL_NAME=${MODEL_NAME}
+      - LLM_MODEL=${LLM_MODEL:-anthropic/claude-haiku-4-5-20251001}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-fastembed}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
+      # Ollama URL — only needed when EMBEDDING_PROVIDER=litellm + ollama model,
+      # or LLM_MODEL starts with "ollama/". Dormant by default.
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://nexus-ollama:11434}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - PYTHONPATH=/nexus-ai
     networks:
       - nexus-network
     depends_on:
       - chromadb
-      # - ollama  # Enable when switching EMBEDDING_PROVIDER=litellm + ollama model
+      # - ollama  # Uncomment when switching EMBEDDING_PROVIDER=litellm + ollama model
     working_dir: /nexus-ai
     command: >
-      sh -c "export PYTHONPATH=$PYTHONPATH:/nexus-ai && 
+      sh -c "export PYTHONPATH=$PYTHONPATH:/nexus-ai &&
              python3 -m uvicorn apps.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  # OLLAMA: Local model runner for embeddings (and optionally LLM)
+  # OLLAMA: Local model runner (dormant by default)
+  # Enable by adding to nexus-ai depends_on and setting:
+  #   EMBEDDING_PROVIDER=litellm
+  #   EMBEDDING_MODEL=ollama/nomic-embed-text
+  #   EMBEDDING_BASE_URL=http://nexus-ollama:11434
+  # Then: docker exec nexus-ollama ollama pull nomic-embed-text
   ollama:
     image: ollama/ollama:latest
     container_name: nexus-ollama
@@ -128,17 +134,11 @@ services:
     networks:
       - nexus-network
     restart: unless-stopped
-    # Pull the embedding model on first start
-    # Run: docker exec nexus-ollama ollama pull nomic-embed-text
 
   # REALTIME: Centrifugo transport with Redis engine
   realtime:
     image: noamanfaisal/nexus-transport:6.0
     container_name: nexus-transport
-    # Port 8000 is internal only — nginx proxies /connection/websocket to it
-    # Config file keys unknown for v6.6.2-nexus — using env vars instead.
-    # CENTRIFUGO_ALLOWED_ORIGINS: space-separated list of allowed WebSocket origins.
-    # Run `nexus-transport --help | grep origin` to find the exact flag/key names.
     environment:
       - CENTRIFUGO_HTTP_API_KEY=${CENTRIFUGO_API_KEY}
       - CENTRIFUGO_ALLOWED_ORIGINS=http://192.168.1.90:3000

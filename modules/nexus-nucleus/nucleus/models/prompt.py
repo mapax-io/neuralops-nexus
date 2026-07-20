@@ -13,11 +13,13 @@ class PromptTemplate(TenantBaseModel):
     """
 
     class OutputType(models.TextChoices):
-        TEXT  = "text",  "Text (Markdown)"
-        CODE  = "code",  "Code"
-        CHART = "chart", "Chart (Chart.js)"
-        HTML  = "html",  "HTML"
-        FORM  = "form",  "Form"
+        TEXT = "text", "Text (Markdown)"
+        CODE = "code", "Code"
+        HTML = "html", "HTML"
+        # MCP servers pre-render their output to HTML — forms, product cards,
+        # diagrams, ecommerce results, coding environments, etc. all use "html".
+        # New output types are added here only if the FRONTEND needs to handle
+        # them differently (e.g. a native code editor vs a sandboxed HTML div).
 
     title = models.CharField(max_length=255)
 
@@ -74,8 +76,12 @@ class Prompt(TenantBaseModel):
     One Prompt per Persona (OneToOne).
     Can be created from a PromptTemplate or written from scratch.
 
-    output_type controls how nexus-ai formats the response
-    and how the frontend renders it.
+    output_type controls how the frontend renders the response:
+      text — markdown rendered in a chat bubble
+      code — syntax-highlighted code block
+      html — sandboxed div; MCP servers return pre-rendered HTML for
+             forms, product cards, diagrams, ecommerce results,
+             coding environments, class diagrams, network diagrams, etc.
 
     context_scope optionally restricts which context types
     ContextManager will search (e.g. only doc, only chat).
@@ -83,11 +89,9 @@ class Prompt(TenantBaseModel):
     """
 
     class OutputType(models.TextChoices):
-        TEXT  = "text",  "Text (Markdown)"
-        CODE  = "code",  "Code"
-        CHART = "chart", "Chart (Chart.js)"
-        HTML  = "html",  "HTML"
-        FORM  = "form",  "Form"
+        TEXT = "text", "Text (Markdown)"
+        CODE = "code", "Code"
+        HTML = "html", "HTML"
 
     persona = models.OneToOneField(
         "nucleus.Persona",
