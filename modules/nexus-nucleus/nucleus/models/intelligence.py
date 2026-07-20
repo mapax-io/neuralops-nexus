@@ -1,28 +1,114 @@
 from django.conf import settings
 from django.db import models
+from django.core.exceptions import ImproperlyConfigured
 
-from .base import TenantBaseModel
+from .base import BaseModel, TenantBaseModel
+
+
+def _fernet():
+    """Return a Fernet instance using FIELD_ENCRYPTION_KEY from settings."""
+    try:
+        from cryptography.fernet import Fernet
+        key = getattr(settings, "FIELD_ENCRYPTION_KEY", None)
+        if not key:
+            raise ImproperlyConfigured(
+                "FIELD_ENCRYPTION_KEY is not set. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+        return Fernet(key.encode() if isinstance(key, str) else key)
+    except ImportError:
+        raise ImproperlyConfigured(
+            "cryptography package is required for api_key encryption. "
+            "Add it to requirements.txt."
+        )
+
+
+class CompanyAIConfig(BaseModel):
+    """
+    Per-company AI configuration.
+
+    Singleton per company — controls which embedding provider, model,
+    and default LLM are used for all AI operations within the company.
+
+    Changeable via API at runtime (no restart required).
+    nexus-ai fetches this via internal API and caches per request.
+
+    To switch providers:
+      - fastembed  -> runs nomic-embed-text-v1.5 inside nexus-ai (ONNX, no extra service)
+      - litellm    -> routes to Ollama, OpenAI, Infinity, etc. via embedding_base_url
+    """
+
+    class EmbeddingProvider(models.TextChoices):
+        FASTEMBED = "fastembed", "FastEmbed (local ONNX)"
+        LITELLM   = "litellm",   "LiteLLM (Ollama / OpenAI / Infinity)"
+
+    company = models.OneToOneField(
+        "nucleus.Company",
+        on_delete=models.CASCADE,
+        related_name="ai_config",
+    )
+
+    # -- Embedding ------------------------------------------------------------
+    embedding_provider = models.CharField(
+        max_length=50,
+        choices=EmbeddingProvider.choices,
+        default=EmbeddingProvider.FASTEMBED,
+    )
+
+    embedding_model = models.CharField(
+        max_length=255,
+        default="nomic-ai/nomic-embed-text-v1.5",
+        help_text="Model name passed to the embedding provider.",
+    )
+
+    embedding_base_url = models.URLField(
+        blank=True,
+        default="",
+        help_text="Required when provider=litellm and model runs on Ollama or Infinity.",
+    )
+
+    # -- LLM defaults ---------------------------------------------------------
+    default_llm_model = models.CharField(
+        max_length=255,
+        default="anthropic/claude-haiku-4-5-20251001",
+        help_text="Fallback LLM model when a persona has no model assigned.",
+    )
+
+    # -- Audit ----------------------------------------------------------------
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ai_config_updates",
+    )
+
+    class Meta:
+        db_table = "intelligence_company_ai_config"
+        verbose_name = "Company AI Config"
+
+    def __str__(self):
+        return f"{self.company} - {self.embedding_provider}/{self.embedding_model}"
+
+
 class AIModel(TenantBaseModel):
     """
-    Base LLM/runtime configuration.
+    LLM configuration stored per company.
 
-    This model stores all runtime-related configuration required
-    to communicate with a model provider through LiteLLM or local runtimes.
+    All calls go through LiteLLM — the actual provider (Anthropic, OpenAI,
+    Azure, Ollama, etc.) is encoded in model_id using LiteLLM's prefix format:
+      "anthropic/claude-haiku-4-5-20251001"
+      "openai/gpt-4o"
+      "azure/gpt-4"
+      "ollama/llama3"  (+ api_base pointing to Ollama service)
 
-    Examples:
-    - GPT-4o
-    - Claude Sonnet
-    - Ollama llama3
-    - DeepSeek
+    provider=local is reserved for future direct ONNX/llama.cpp runtimes
+    that bypass LiteLLM entirely.
     """
 
     class Provider(models.TextChoices):
-        LITELLM = "litellm", "LiteLLM"
-        OPENAI = "openai", "OpenAI"
-        ANTHROPIC = "anthropic", "Anthropic"
-        OLLAMA = "ollama", "Ollama"
-        AZURE = "azure", "Azure OpenAI"
-        LOCAL = "local", "Local"
+        LITELLM = "litellm", "LiteLLM (all cloud/hosted providers)"
+        LOCAL   = "local",   "Local (custom ONNX / llama.cpp runtime)"
 
     name = models.CharField(
         max_length=255,
@@ -38,7 +124,7 @@ class AIModel(TenantBaseModel):
 
     model_id = models.CharField(
         max_length=255,
-        help_text="Provider model identifier.",
+        help_text="LiteLLM model string, e.g. 'anthropic/claude-haiku-4-5-20251001'.",
     )
 
     created_by = models.ForeignKey(
@@ -57,14 +143,29 @@ class AIModel(TenantBaseModel):
     api_base = models.URLField(
         null=True,
         blank=True,
-        help_text="Optional custom API base URL.",
+        help_text="Optional custom API base URL (e.g. Ollama or self-hosted endpoint).",
     )
 
     secret_ref = models.CharField(
         max_length=255,
         null=True,
         blank=True,
-        help_text="Reference to secret manager entry.",
+        help_text="Reference to secret manager entry (production: Vault / AWS Secrets Manager).",
+    )
+
+    # -- API Key (encrypted at rest) ------------------------------------------
+    # Stored as a Fernet-encrypted base64 string.
+    # Use set_api_key() to write, get_api_key() to read.
+    # For production deployments, prefer secret_ref + a secrets manager.
+    api_key_encrypted = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Fernet-encrypted API key. Do not set directly — use set_api_key().",
+    )
+
+    licence_accepted = models.BooleanField(
+        default=False,
+        help_text="User must accept the provider's terms of service before this model is active.",
     )
 
     temperature = models.FloatField(default=0.7)
@@ -106,8 +207,19 @@ class AIModel(TenantBaseModel):
             models.Index(fields=["company", "is_active"]),
         ]
 
+    def set_api_key(self, raw_key: str) -> None:
+        """Encrypt and store an API key."""
+        self.api_key_encrypted = _fernet().encrypt(raw_key.encode()).decode()
+
+    def get_api_key(self) -> str | None:
+        """Decrypt and return the API key, or None if not set."""
+        if not self.api_key_encrypted:
+            return None
+        return _fernet().decrypt(self.api_key_encrypted.encode()).decode()
+
     def __str__(self):
         return f"{self.name} ({self.model_id})"
+
 
 class AIAgent(TenantBaseModel):
     class AgentType(models.TextChoices):
@@ -194,6 +306,64 @@ class AIAgent(TenantBaseModel):
 
     def __str__(self):
         return self.name
+
+
+class AIRequestLog(TenantBaseModel):
+    """
+    Logs every model call made by nexus-ai.
+    Written by nexus-ai via POST /internal/ai-request-logs/ after each completion.
+    Records the exact prompt sent and the raw response received.
+    """
+
+    class Status(models.TextChoices):
+        SUCCESS = "success", "Success"
+        ERROR   = "error",   "Error"
+
+    # -- Trigger context ------------------------------------------------------
+    job_id  = models.CharField(max_length=64, db_index=True)
+    msg_id  = models.CharField(max_length=64, db_index=True)
+
+    persona = models.ForeignKey(
+        "nucleus.Persona",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="request_logs",
+    )
+
+    # -- Model identity -------------------------------------------------------
+    model_id = models.CharField(max_length=255)   # e.g. "openai/gpt-3.5-turbo"
+    provider = models.CharField(max_length=50)    # e.g. "litellm", "local"
+
+    # -- Payload --------------------------------------------------------------
+    prompt   = models.JSONField()                 # full messages array sent
+    response = models.TextField(blank=True)       # raw text received
+
+    # -- Stats ----------------------------------------------------------------
+    prompt_tokens     = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    latency_ms        = models.PositiveIntegerField(default=0)
+
+    # -- Status ---------------------------------------------------------------
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.SUCCESS,
+        db_index=True,
+    )
+    error = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = "intelligence_ai_request_log"
+        indexes = [
+            models.Index(fields=["company", "persona"]),
+            models.Index(fields=["company", "created_at"]),
+            models.Index(fields=["job_id"]),
+            models.Index(fields=["msg_id"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.status}] {self.model_id} job={self.job_id}"
 
 
 class Persona(TenantBaseModel):
@@ -288,9 +458,6 @@ class Persona(TenantBaseModel):
 
     def __str__(self):
         return self.name
-    
-
-
 
 
 class MCPServer(TenantBaseModel):
@@ -307,16 +474,16 @@ class MCPServer(TenantBaseModel):
     """
 
     class ServerType(models.TextChoices):
-        LOCAL = "local", "Local"
-        DOCKER = "docker", "Docker"
+        LOCAL      = "local",      "Local"
+        DOCKER     = "docker",     "Docker"
         KUBERNETES = "kubernetes", "Kubernetes"
-        REMOTE = "remote", "Remote"
-        HOSTED = "hosted", "Hosted / Online"
+        REMOTE     = "remote",     "Remote"
+        HOSTED     = "hosted",     "Hosted / Online"
 
     class Transport(models.TextChoices):
-        STDIO = "stdio", "STDIO"
-        HTTP = "http", "HTTP"
-        SSE = "sse", "SSE"
+        STDIO     = "stdio",     "STDIO"
+        HTTP      = "http",      "HTTP"
+        SSE       = "sse",       "SSE"
         WEBSOCKET = "websocket", "WebSocket"
 
     name = models.CharField(max_length=255)
@@ -419,4 +586,3 @@ class MCPServer(TenantBaseModel):
 
     def __str__(self):
         return self.name
-    

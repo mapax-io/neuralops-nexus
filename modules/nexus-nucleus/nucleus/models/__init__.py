@@ -18,10 +18,17 @@ from .governance import (
 )
 
 from .intelligence import (
+    CompanyAIConfig,
     AIModel,
     MCPServer,
     AIAgent,
     Persona,
+    AIRequestLog,
+)
+
+from .prompt import (
+    PromptTemplate,
+    Prompt,
 )
 
 from .workspace import (
@@ -35,6 +42,7 @@ from .workspace import (
     KnowledgeBase,
     KnowledgeFile,
 )
+
 from .extended import (
     Invitation,
     ProjectMember,
@@ -54,5 +62,4 @@ from .extended import (
     AgentApproval,
     SavedSearch,
     SearchLog,
-
 )

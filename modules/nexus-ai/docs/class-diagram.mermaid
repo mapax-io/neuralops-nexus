@@ -1,0 +1,284 @@
+classDiagram
+
+    %% ─────────────────────────────────────────────
+    %% INTERFACES
+    %% ─────────────────────────────────────────────
+
+    class LLMModel {
+        <<interface>>
+        +stream(messages, max_tokens, temperature) AsyncIterator~str~
+    }
+
+    class AgentRunner {
+        <<interface>>
+        +run_stream(job TriggerJob, messages list) AsyncIterator~AgentEvent~
+    }
+
+    class EmbeddingModel {
+        <<interface>>
+        +embed(texts list~str~) list~list~float~~
+        +embed_query(text str) list~float~
+    }
+
+    class VectorStore {
+        <<interface>>
+        +store(texts, vectors, metadatas, collection_id)
+        +search(query_vector, collection_id, top_k, filter) list~Chunk~
+        +delete_collection(collection_id)
+    }
+
+    class ContextAdapter {
+        <<interface>>
+        +extract(content str, metadata dict) list~str~
+    }
+
+    class MCPClient {
+        <<interface>>
+        +list_tools() list~dict~
+        +call_tool(tool_name str, args dict) str
+        +close()
+    }
+
+    %% ─────────────────────────────────────────────
+    %% IMPLEMENTATIONS
+    %% ─────────────────────────────────────────────
+
+    class LiteLLMModel {
+        +model_id str
+        +stream(messages, max_tokens, temperature) AsyncIterator~str~
+    }
+
+    class LiteLLMEmbedding {
+        +model str
+        -_api_base str
+        +embed(texts) list~list~float~~
+        +embed_query(text) list~float~
+    }
+
+    class PydanticAIRunner {
+        +run_stream(job, messages) AsyncIterator~AgentEvent~
+        -_get_pydantic_ai_model(persona_model)
+        -_to_pydantic_history(messages) list
+    }
+
+    class ChromaStore {
+        +client HttpClient
+        +store(texts, vectors, metadatas, collection_id)
+        +search(query_vector, collection_id, top_k, filter) list~Chunk~
+        +delete_collection(collection_id)
+        -_collection(collection_id)
+    }
+
+    class DocAdapter {
+        +MIN_CHUNK int
+        +MAX_CHUNK int
+        +extract(content, metadata) list~str~
+    }
+
+    class CodeAdapter {
+        +MAX_CHUNK int
+        +extract(content, metadata) list~str~
+        -_split_by_definitions(content) list~str~
+        -_split_fixed(content, size) list~str~
+    }
+
+    %% ─────────────────────────────────────────────
+    %% FACTORIES
+    %% ─────────────────────────────────────────────
+
+    class LLMFactory {
+        +get(provider, model_id)$ LLMModel
+    }
+
+    class AgentFactory {
+        +get(backend)$ AgentRunner
+    }
+
+    class EmbeddingFactory {
+        +get(provider)$ EmbeddingModel
+    }
+
+    class VectorStoreFactory {
+        +get(backend)$ VectorStore
+    }
+
+    class AdapterFactory {
+        +get(type)$ ContextAdapter
+    }
+
+    %% ─────────────────────────────────────────────
+    %% MANAGERS
+    %% ─────────────────────────────────────────────
+
+    class AgenticManager {
+        +runner AgentRunner
+        +context_manager ContextManager
+        +prompt_builder PromptBuilder
+        +run(job TriggerJob) AsyncIterator~AgentEvent~
+    }
+
+    class ContextManager {
+        +embedder EmbeddingModel
+        +store VectorStore
+        +retrieve(message, history, context_sources, top_k) list~Chunk~
+    }
+
+    class PromptBuilder {
+        +build(job TriggerJob, context_chunks list~Chunk~) list~dict~
+        -_format_chunks(chunks) str
+    }
+
+    class EmbeddingManager {
+        +embedder EmbeddingModel
+        +store VectorStore
+        +ingest(req EmbedRequest) EmbedResponse
+    }
+
+    %% ─────────────────────────────────────────────
+    %% SCHEMAS
+    %% ─────────────────────────────────────────────
+
+    class TriggerJob {
+        +job_id str
+        +msg_id str
+        +persona PersonaConfig
+        +message str
+        +history list~HistoryMessage~
+        +context_sources list~ContextSourceRef~
+    }
+
+    class PersonaConfig {
+        +id str
+        +name str
+        +system_prompt str
+        +model ModelConfig
+    }
+
+    class ModelConfig {
+        +provider str
+        +model_id str
+        +max_tokens int
+        +temperature float
+        +supports_vision bool
+    }
+
+    class AgentEvent {
+        +type str
+        +id str
+        +created_at str
+        +delta str
+        +content str
+    }
+
+    class HistoryMessage {
+        +role str
+        +content str
+        +sender_name str
+    }
+
+    class ContextSourceRef {
+        +source_id str
+        +type str
+        +label str
+        +language str
+        +collection_id str
+    }
+
+    class EmbedRequest {
+        +source_id str
+        +type str
+        +label str
+        +content str
+        +language str
+    }
+
+    class EmbedResponse {
+        +source_id str
+        +collection_id str
+        +chunks_count int
+    }
+
+    class Chunk {
+        +text str
+        +score float
+        +metadata dict
+    }
+
+    %% ─────────────────────────────────────────────
+    %% CONFIG
+    %% ─────────────────────────────────────────────
+
+    class Settings {
+        +AGENT_BACKEND str
+        +LLM_PROVIDER str
+        +LLM_MODEL str
+        +EMBEDDING_PROVIDER str
+        +EMBEDDING_MODEL str
+        +VECTOR_STORE str
+        +CHROMA_HOST str
+        +CHROMA_PORT int
+        +OLLAMA_BASE_URL str
+        +INTERNAL_API_KEY str
+    }
+
+    %% ─────────────────────────────────────────────
+    %% INHERITANCE — Interfaces → Implementations
+    %% ─────────────────────────────────────────────
+
+    LLMModel          <|.. LiteLLMModel
+    EmbeddingModel    <|.. LiteLLMEmbedding
+    AgentRunner       <|.. PydanticAIRunner
+    VectorStore       <|.. ChromaStore
+    ContextAdapter    <|.. DocAdapter
+    ContextAdapter    <|.. CodeAdapter
+
+    %% ─────────────────────────────────────────────
+    %% FACTORY → INTERFACE (creates)
+    %% ─────────────────────────────────────────────
+
+    LLMFactory        ..> LLMModel         : creates
+    AgentFactory      ..> AgentRunner      : creates
+    EmbeddingFactory  ..> EmbeddingModel   : creates
+    VectorStoreFactory ..> VectorStore     : creates
+    AdapterFactory    ..> ContextAdapter   : creates
+
+    %% ─────────────────────────────────────────────
+    %% FACTORY reads Settings
+    %% ─────────────────────────────────────────────
+
+    LLMFactory        ..> Settings : reads
+    AgentFactory      ..> Settings : reads
+    EmbeddingFactory  ..> Settings : reads
+    VectorStoreFactory ..> Settings : reads
+
+    %% ─────────────────────────────────────────────
+    %% MANAGER DEPENDENCIES
+    %% ─────────────────────────────────────────────
+
+    AgenticManager    --> AgentRunner    : uses
+    AgenticManager    --> ContextManager : owns
+    AgenticManager    --> PromptBuilder  : owns
+    AgenticManager    ..> TriggerJob     : receives
+    AgenticManager    ..> AgentEvent     : yields
+
+    ContextManager    --> EmbeddingModel : uses
+    ContextManager    --> VectorStore    : uses
+    ContextManager    ..> Chunk          : returns
+
+    PromptBuilder     ..> TriggerJob     : reads
+    PromptBuilder     ..> Chunk          : reads
+
+    EmbeddingManager  --> EmbeddingModel : uses
+    EmbeddingManager  --> VectorStore    : uses
+    EmbeddingManager  ..> EmbedRequest   : receives
+    EmbeddingManager  ..> EmbedResponse  : returns
+    EmbeddingManager  ..> AdapterFactory : calls
+
+    %% ─────────────────────────────────────────────
+    %% SCHEMA COMPOSITION
+    %% ─────────────────────────────────────────────
+
+    TriggerJob        *-- PersonaConfig
+    TriggerJob        *-- HistoryMessage
+    TriggerJob        *-- ContextSourceRef
+    PersonaConfig     *-- ModelConfig

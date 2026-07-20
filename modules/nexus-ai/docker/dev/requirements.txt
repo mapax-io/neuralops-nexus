@@ -1,23 +1,27 @@
-# Web Framework & Server
+# ── Web Framework & Server ────────────────────────────────────────────────────
 fastapi[standard]
 pydantic-settings
+uvicorn[standard]
 
-# Database & ORM
-sqlmodel
-sqladmin[bootstrap]
-asyncpg
-psycopg2-binary
-alembic
-chromadb                # MUST ADD: The client to talk to your vector DB
+# ── AI Agent Framework ────────────────────────────────────────────────────────
+# openai extra = pydantic-ai talks to LiteLLM via OpenAI-compatible API.
+# anthropic extra removed — LiteLLM handles Anthropic, no direct SDK needed.
+pydantic-ai-slim[openai,mcp,litellm]
 
-# AI & LLM Orchestration
+# ── LLM + Embedding Provider Routing ─────────────────────────────────────────
+# Single gateway for all LLM calls (Anthropic, OpenAI, Azure, Ollama, etc.).
+# pydantic-ai → LiteLLM → provider. Swap provider via model_id string only.
 litellm
-instructor
-httpx
+
+# ── Local Embedding (ONNX, runs inside nexus-ai) ──────────────────────────────
+# FastEmbed runs nomic-embed-text-v1.5 via ONNX — no GPU, no network.
+# Switch to LiteLLM embedding (Ollama/Infinity) via EMBEDDING_PROVIDER=litellm.
 fastembed
 
-# Elite Dev Tools (Python side)
-rich                    # Beautiful logging
-ipython                 # Advanced interactive shell
-pytest                  # For testing your "Brain" logic
-pytest-asyncio          # For testing async FastAPI endpoints
+# ── Vector Store ──────────────────────────────────────────────────────────────
+chromadb                 # Phase 1 — swap via VectorStoreFactory
+
+# ── Dev & Testing ─────────────────────────────────────────────────────────────
+rich                     # Better logging
+pytest
+pytest-asyncio

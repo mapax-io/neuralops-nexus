@@ -1,0 +1,222 @@
+================================================================================
+  NEURALOPS — COMPLETE FLOW DIAGRAM
+  nexus-nucleus  ←→  nexus-ai  ←→  ChromaDB
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FLOW 1 — SETUP: Add AI Model
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [User]
+    │
+    │  POST /api/ai-models/
+    │  { provider, model_id, api_key }
+    ▼
+  [nexus-nucleus]
+    │
+    ├──► encrypt api_key
+    ├──► licence acknowledgement check
+    └──► save to PostgreSQL [AIModel]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FLOW 2 — SETUP: Add Persona + Prompt
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [User]
+    │
+    │  POST /api/personas/
+    │  { name, ai_model_id, prompt }
+    │  prompt → picked from template library OR custom written
+    │  prompt → optionally specifies context scope
+    ▼
+  [nexus-nucleus]
+    │
+    └──► save to PostgreSQL [Persona + Prompt]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FLOW 3 — SETUP: Attach Context Source to Topic
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [User]
+    │
+    │  POST /api/topics/{topic_id}/contexts/
+    │  { type: doc|code, label, content, language }
+    ▼
+  [nexus-nucleus]
+    │
+    ├──► save to PostgreSQL [ContextSource]
+    │
+    │  POST /embed/context/
+    │  { source_id, type, label, content, language }
+    ▼
+  [nexus-ai — EmbeddingManager]
+    │
+    ├──► AdapterFactory.get(type)
+    │       DocAdapter  → paragraph chunking (100–1000 chars)
+    │       CodeAdapter → fn/class boundary splitting
+    │
+    ├──► EmbeddingFactory.get() → LiteLLMEmbedding
+    │       embed all chunks via litellm.aembedding()
+    │
+    └──► VectorStoreFactory.get() → ChromaStore
+            store chunks + vectors + metadata
+            collection_id returned → saved back to PostgreSQL
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FLOW 4 — NORMAL MESSAGE (no @mention)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [React App]
+    │
+    │  send message: "just chatting"
+    ▼
+  [nexus-nucleus]
+    │
+    ├──► save message to PostgreSQL
+    ├──► publish to Centrifugo [topic-{id}]  →  [React App sees message]
+    │
+    │  has no-context flag?
+    │
+    ├── YES ──► skip embed — done
+    │
+    └── NO  ──► POST /embed/message/ (fire & forget)
+                  { message_id, topic_id, content, role, sender, tags }
+                ▼
+              [nexus-ai — /embed/message/]
+                │
+                ├──► LiteLLMEmbedding.embed(content)
+                └──► ChromaStore.store()
+                      collection: topic-{topic_id}-chat
+                      metadata: { message_id, message_number,
+                                  tags, sender, topic_id, role }
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FLOW 5 — AI TRIGGER (@mention)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [React App]
+    │
+    │  send message: "@Bot explain this no-context"
+    ▼
+  [nexus-nucleus — @Mention Detector]
+    │
+    ├──► detect @Bot → resolve to Persona
+    ├──► no-context flag? YES but @mention present → no-context IGNORED
+    │
+    ├──► save message to PostgreSQL
+    ├──► publish to Centrifugo [topic-{id}]  →  [React App sees message]
+    │
+    ├──► POST /embed/message/ (fire & forget)   ← always embeds (@mention wins)
+    │         ▼
+    │       [nexus-ai] embed + store in ChromaDB
+    │
+    │  POST /trigger/
+    │  { persona_id, topic_id, user_id }        ← only these three
+    ▼
+  [nexus-ai — /trigger/ router]
+    │
+    ├──► [Authorization]
+    │       GET /internal/personas/{persona_id}/
+    │       ◄── { persona, model_config, prompt, context_scope }
+    │       check user has rights to call this model
+    │       → 403 if not authorized
+    │
+    ├──► [AgenticManager.run(persona_id, topic_id, message)]
+    │
+    │       │
+    │       ▼
+    │     [ContextManager]  receives topic_id
+    │       │
+    │       │  GET /internal/topics/{topic_id}/contexts/
+    │       │  ◄── list of attached context sources
+    │       │       e.g. [doc:auth-docs, code:auth.py]
+    │       │
+    │       │  apply prompt context scope filter if defined
+    │       │
+    │       ├──────────────────────────────────────────┐
+    │       ▼                                          ▼
+    │   [ChatContext]                      [DocContext / CodeContext / ...]
+    │   always runs                        runs for each attached source
+    │       │                                          │
+    │       │  embed query via LiteLLM                 │  embed query via LiteLLM
+    │       │  search ChromaDB                         │  search ChromaDB
+    │       │  collection: topic-{id}-chat             │  collection: {collection_id}
+    │       │  → top-k relevant past messages          │  → top-k relevant chunks
+    │       │                                          │
+    │       └──────────────┬───────────────────────────┘
+    │                      ▼
+    │              rank + token budget
+    │              → selected chunks
+    │
+    │       ▼
+    │     [PromptBuilder.build()]
+    │       │
+    │       │  system prompt          (from persona prompt)
+    │       │  + context results      (from ContextManager)
+    │       │  + current message
+    │       │  → messages[ ]  (OpenAI format)
+    │
+    │       ▼
+    │     [LLMFactory → LiteLLMModel]
+    │       litellm.acompletion(model, messages, stream=True)
+    │       → tokens stream out
+    │
+    │  SSE stream: message_start → message_delta... → message_done
+    ▼
+  [nexus-nucleus — SSE Consumer]
+    │
+    ├── message_delta ──► publish token to Centrifugo [topic-{id}]
+    │                         ▼
+    │                     [React App]
+    │                     renders token by token
+    │
+    └── message_done  ──► save full AI response to PostgreSQL
+                              sender = persona.user (shadow user account)
+                          │
+                          └──► POST /embed/message/ (fire & forget)
+                                    embed AI response into ChromaDB
+                                    collection: topic-{topic_id}-chat
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ no-context RULES (precedence)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  message only             →  DB ✓  Centrifugo ✓  Chroma ✓
+  message + no-context     →  DB ✓  Centrifugo ✓  Chroma ✗
+  @persona only            →  DB ✓  Centrifugo ✓  Chroma ✓  AI trigger ✓
+  @persona + no-context    →  DB ✓  Centrifugo ✓  Chroma ✓  AI trigger ✓
+                                     (@persona wins, no-context ignored)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CONTEXT MANAGEMENT CONTROLS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  inline flag        →  "message text no-context"
+  per-message UI     →  Remove from context → DELETE /embed/message/{message_id}
+  context panel      →  per topic, shows all Chroma entries, add/remove any
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ nexus-ai ENDPOINTS SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  POST /api/v1/embed/context/    →  ingest doc/code context source
+  POST /api/v1/embed/message/    →  embed single chat message (fire & forget)
+  DELETE /api/v1/embed/message/  →  remove message from Chroma by message_id
+  POST /api/v1/trigger/          →  AI trigger, returns SSE stream
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ nexus-nucleus INTERNAL API (called by nexus-ai)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  GET /internal/personas/{persona_id}/          →  persona + model + prompt
+  GET /internal/topics/{topic_id}/contexts/     →  attached context sources
+
+================================================================================
