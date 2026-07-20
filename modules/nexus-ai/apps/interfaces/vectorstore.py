@@ -26,8 +26,11 @@ class VectorStore(ABC):
         vectors: list[list[float]],
         metadatas: list[dict],
         collection_id: str,
+        ids: list[str] | None = None,
     ) -> None:
-        """Store text chunks with their vectors and metadata."""
+        """Upsert text chunks with their vectors and metadata.
+        ids — optional explicit doc IDs; auto-generated if omitted.
+        """
         ...
 
     @abstractmethod

@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import {
   listMessages,
   sendMessage,
-  triggerAiSpike,        // ⚠️ SPIKE — remove when nexus-ai is wired up
   type ApiMessage,
 } from "@/services/chat.service";
 import { useCentrifugo } from "./useCentrifugo";
@@ -40,6 +39,7 @@ interface AiStartEvent {
   id: string;
   sender_id: string;
   sender_name: string;
+  sequence: number;
   created_at: string;
 }
 interface AiDeltaEvent {
@@ -50,6 +50,7 @@ interface AiDeltaEvent {
 interface AiDoneEvent {
   type: "message_done";
   id: string;
+  content?: string;
 }
 
 type CentrifugoEvent =
@@ -69,14 +70,12 @@ function toUiMessage(m: ApiMessage): ChatMessage {
     sender: {
       id: m.sender_id,
       name: m.sender_name,
-      type: "human",
+      type: m.sender_type === "persona" ? "agent" : "human",
       avatar: null,
     },
     timestamp: m.created_at,
   };
 }
-
-const AI_TEST_PREFIX = "/ai-test ";
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -112,12 +111,10 @@ export function useTopicMessages(
     const unsub = subscribe(channel, (data) => {
       const event = data as CentrifugoEvent;
 
-      // ⚠️ SPIKE DEBUG — remove after streaming is confirmed working
-      console.log("[centrifugo]", event?.type, event);
-
-      if (!event?.type || !("id" in event)) return;
+      if (!event?.type || !(("id" in event))) return;
 
       if (event.type === "message") {
+        // Human message from another user
         setMessages((prev) => {
           if (prev.some((m) => m.id === event.id)) return prev;
           if (event.sender_id !== currentUserId) playBeep();
@@ -125,6 +122,7 @@ export function useTopicMessages(
         });
 
       } else if (event.type === "message_start") {
+        // AI persona started responding
         playBeep();
         setMessages((prev) => {
           if (prev.some((m) => m.id === event.id)) return prev;
@@ -147,6 +145,7 @@ export function useTopicMessages(
         });
 
       } else if (event.type === "message_delta") {
+        // Append token to streaming message
         setMessages((prev) =>
           prev.map((m) =>
             m.id === event.id
@@ -156,6 +155,7 @@ export function useTopicMessages(
         );
 
       } else if (event.type === "message_done") {
+        // Streaming complete — mark as done
         setMessages((prev) =>
           prev.map((m) =>
             m.id === event.id ? { ...m, isStreaming: false } : m,
@@ -167,7 +167,7 @@ export function useTopicMessages(
     return unsub;
   }, [topicId, subscribe, currentUserId]);
 
-  // Polling fallback
+  // Polling fallback — catches messages from other users when WebSocket is slow
   useEffect(() => {
     if (!projectId || !channelId || !topicId) return;
     const poll = async () => {
@@ -192,18 +192,7 @@ export function useTopicMessages(
     async (content: string) => {
       if (!projectId || !channelId || !topicId) return;
 
-      if (content.startsWith(AI_TEST_PREFIX)) {
-        const query = content.slice(AI_TEST_PREFIX.length).trim();
-        if (!query) return;
-        try {
-          await triggerAiSpike(projectId, channelId, topicId, query);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : "AI spike failed";
-          toast.error(msg);
-        }
-        return;
-      }
-
+      // All messages go through sendMessage — backend detects @mention and triggers AI
       try {
         const { message } = await sendMessage(projectId, channelId, topicId, content);
         setMessages((prev) => {

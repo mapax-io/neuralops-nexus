@@ -24,11 +24,11 @@ from asgiref.sync import sync_to_async
 from ninja import Router
 from ninja.errors import HttpError
 
-from .auth import SupabaseBearer
-from .chat_schema import MessageOut, SendMessageIn, SendMessageOut
-from . import chat_services as chat_svc
-from . import workspace_services as ws_svc
-from . import intelligence_services as intel_svc
+from authn.auth import SupabaseBearer
+from chat.schema import MessageOut, SendMessageIn, SendMessageOut
+from chat import services as chat_svc
+from workspace import services as ws_svc
+from intelligence import services as intel_svc
 
 # Matches @Word or @Two_Words — first @mention in the message
 _MENTION_RE = re.compile(r'@([\w]+)')

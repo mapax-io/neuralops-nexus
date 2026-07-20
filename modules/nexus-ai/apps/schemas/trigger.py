@@ -5,8 +5,9 @@ from pydantic import BaseModel
 # ── Inbound job payload ────────────────────────────────────────────────────────
 
 class ModelConfig(BaseModel):
-    provider: str                    # "anthropic" | "openai" | "ollama"
-    model_id: str                    # "claude-haiku-4-5-20251001"
+    provider: str                    # "litellm" | "local"
+    model_id: str                    # "anthropic/claude-haiku-4-5-20251001"
+    api_key: str | None = None       # decrypted key from AIModel — passed per-call
     max_tokens: int = 4096
     temperature: float = 0.7
     supports_vision: bool = False

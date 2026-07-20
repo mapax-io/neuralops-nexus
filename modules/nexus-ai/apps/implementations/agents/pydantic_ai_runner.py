@@ -1,46 +1,34 @@
 """
-Pydantic AI implementation of AgentRunner — Phase 1.
-Swap for LangGraphRunner by changing AGENT_BACKEND env var.
+LiteLLM-based AgentRunner implementation.
+
+Uses litellm.acompletion() directly for all providers — simpler and more
+reliable than pydantic-ai model wrappers for the streaming use case.
+
+Model routing via model_id prefix (LiteLLM convention):
+    "openai/gpt-4o-mini"                    → OpenAI
+    "anthropic/claude-haiku-4-5-20251001"   → Anthropic
+    "azure/gpt-4"                            → Azure OpenAI
+    "ollama/llama3"                          → Ollama (provider=local)
+
+For M8 MCP integration: wrap with pydantic-ai Agent + mcp_servers here only.
 """
 from __future__ import annotations
 
 from typing import AsyncIterator
 
-from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.openai import OpenAIModel
+import litellm
 
 from apps.interfaces.agent import AgentRunner
-from apps.schemas.trigger import TriggerJob, AgentEvent
+from apps.schemas.trigger import TriggerJob, AgentEvent, ModelConfig
 from apps.core.config import settings
 
-
-def _get_pydantic_ai_model(persona_model):
-    """Build the correct Pydantic AI model from persona config."""
-    provider = persona_model.provider
-    model_id = persona_model.model_id
-
-    match provider:
-        case "anthropic":
-            return AnthropicModel(model_id)
-        case "openai":
-            return OpenAIModel(model_id)
-        case "ollama":
-            # Ollama exposes an OpenAI-compatible API — use the docker service URL
-            return OpenAIModel(
-                model_id,
-                base_url=f"{settings.OLLAMA_BASE_URL}/v1",
-                api_key="ollama",
-            )
-        case _:
-            # Fallback: treat model_id as a fully-qualified litellm string
-            # and use Anthropic as the wire format (most common)
-            return AnthropicModel(model_id)
+# Suppress litellm's verbose logging
+litellm.suppress_debug_info = True
 
 
 class PydanticAIRunner(AgentRunner):
     """
-    Runs the agent using Pydantic AI.
+    Streams LLM responses via LiteLLM.
     Receives the fully-assembled messages list from PromptBuilder and
     yields message_delta events.
     """
@@ -50,41 +38,42 @@ class PydanticAIRunner(AgentRunner):
         job: TriggerJob,
         messages: list[dict],
     ) -> AsyncIterator[AgentEvent]:
-        model = _get_pydantic_ai_model(job.persona.model)
+        model_config = job.persona.model
+        kwargs = _build_litellm_kwargs(model_config, messages)
 
-        agent = Agent(
-            model=model,
-            system_prompt=job.persona.system_prompt,
-        )
+        try:
+            response = await litellm.acompletion(**kwargs)
+            async for chunk in response:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    yield AgentEvent(
+                        type="message_delta",
+                        id=job.msg_id,
+                        delta=delta,
+                    )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "[runner] litellm error for job %s: %s", job.job_id, exc
+            )
+            raise
 
-        # Convert to pydantic-ai history format (excludes system + last user msg)
-        history = _to_pydantic_history(messages)
 
-        async with agent.run_stream(job.message, message_history=history) as result:
-            async for token in result.stream_text(delta=True):
-                yield AgentEvent(
-                    type="message_delta",
-                    id=job.msg_id,
-                    delta=token,
-                )
+def _build_litellm_kwargs(model_config: ModelConfig, messages: list[dict]) -> dict:
+    """Build kwargs dict for litellm.acompletion()."""
+    kwargs: dict = {
+        "model": model_config.model_id,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": model_config.max_tokens,
+        "temperature": model_config.temperature,
+    }
 
+    if model_config.provider == "local":
+        # Local runtime (Ollama, llama.cpp, LM Studio) — OpenAI-compatible API
+        kwargs["api_base"] = f"{settings.OLLAMA_BASE_URL}/v1"
+        kwargs["api_key"] = "local"
+    elif model_config.api_key:
+        kwargs["api_key"] = model_config.api_key
 
-def _to_pydantic_history(messages: list[dict]) -> list:
-    """
-    Convert our OpenAI-format messages to Pydantic AI's ModelMessage format.
-    Skips the system message (handled by Agent) and the last user message
-    (that becomes the prompt passed to run_stream).
-    """
-    from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
-
-    history = []
-    # Skip system messages; skip the final user message (it's the prompt)
-    relevant = [m for m in messages if m["role"] != "system"][:-1]
-
-    for msg in relevant:
-        if msg["role"] == "user":
-            history.append(ModelRequest(parts=[UserPromptPart(content=msg["content"])]))
-        elif msg["role"] == "assistant":
-            history.append(ModelResponse(parts=[TextPart(content=msg["content"])]))
-
-    return history
+    return kwargs

@@ -1,16 +1,18 @@
 """
-POST /api/v1/embed/
-Called by nexus-nucleus when a context source is attached to a topic.
-Chunks, embeds, stores in Chroma. Returns collection_id.
+Embedding endpoints — nexus-nucleus → nexus-ai.
+
+Routers are thin — they only verify auth and delegate to the right
+ContextSource plugin via ContextSourceFactory. No business logic here.
+
+POST /api/v1/embed/          → DocumentContextSource.ingest()
+POST /api/v1/embed/message/  → ChatContextSource.ingest()
 """
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security.api_key import APIKeyHeader
 
 from apps.core.config import settings
-from apps.schemas.embed import EmbedRequest, EmbedResponse
-from apps.managers.embedding_manager import EmbeddingManager
-from apps.factories.embedding import EmbeddingFactory
-from apps.factories.vectorstore import VectorStoreFactory
+from apps.schemas.embed import EmbedRequest, EmbedResponse, MessageEmbedRequest, MessageEmbedResponse
+from apps.factories.context_source import ContextSourceFactory
 
 router = APIRouter(prefix="/api/v1", tags=["embed"])
 
@@ -28,12 +30,14 @@ async def embed(
     req: EmbedRequest,
     _: str = Depends(_verify_key),
 ) -> EmbedResponse:
-    """
-    Chunk + embed a context source and store in Chroma.
-    Returns collection_id for nexus-nucleus to save back to ContextSource.
-    """
-    manager = EmbeddingManager(
-        embedder=EmbeddingFactory.get(),
-        store=VectorStoreFactory.get(),
-    )
-    return await manager.ingest(req)
+    """Chunk, embed, and store a document or code context source."""
+    return await ContextSourceFactory.get(req.type).ingest(req)
+
+
+@router.post("/embed/message/", response_model=MessageEmbedResponse)
+async def embed_message(
+    req: MessageEmbedRequest,
+    _: str = Depends(_verify_key),
+) -> MessageEmbedResponse:
+    """Embed a chat message into the company chat collection."""
+    return await ContextSourceFactory.get("chat").ingest(req)

@@ -23,19 +23,29 @@ class ChromaStore(VectorStore):
         vectors: list[list[float]],
         metadatas: list[dict],
         collection_id: str,
+        ids: list[str] | None = None,
     ) -> None:
-        ids = [f"{collection_id}_{i}" for i in range(len(texts))]
+        """
+        Upsert documents into a Chroma collection.
 
-        def _add():
+        ids — optional explicit document IDs.
+              If omitted, IDs are auto-generated as {collection_id}_{i}.
+              Pass explicit IDs (e.g. message UUIDs) to make upserts idempotent:
+              re-embedding the same document will overwrite the existing vector.
+        """
+        doc_ids = ids if ids else [f"{collection_id}_{i}" for i in range(len(texts))]
+
+        def _upsert():
             collection = self._collection(collection_id)
-            collection.add(
-                ids=ids,
+            # upsert = add-or-update; safe to call multiple times for the same ID
+            collection.upsert(
+                ids=doc_ids,
                 documents=texts,
                 embeddings=vectors,
                 metadatas=metadatas,
             )
 
-        await asyncio.to_thread(_add)
+        await asyncio.to_thread(_upsert)
 
     async def search(
         self,

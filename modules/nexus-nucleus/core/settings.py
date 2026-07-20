@@ -21,6 +21,10 @@ INSTALLED_APPS = [
     'ninja',
     'nucleus',
     'authn',
+    'chat',
+    'intelligence',
+    'workspace',
+    'internal',
     'guardian',
 ]
 
@@ -135,6 +139,13 @@ FIELD_ENCRYPTION_KEY = os.getenv("FIELD_ENCRYPTION_KEY", "")
 CENTRIFUGO_API_URL = os.getenv("CENTRIFUGO_API_URL", "")   # e.g. http://realtime:8000/api
 CENTRIFUGO_API_KEY = os.getenv("CENTRIFUGO_API_KEY", "")
 CENTRIFUGO_HMAC_SECRET = os.getenv("CENTRIFUGO_HMAC_SECRET", "")
+
+# =========================================================
+# Internal service communication
+# =========================================================
+
+NEXUS_AI_URL = os.getenv("NEXUS_AI_URL", "")          # e.g. http://nexus-ai:8000
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")  # shared secret with nexus-ai
 
 # =========================================================
 # Celery — Async Task Queue

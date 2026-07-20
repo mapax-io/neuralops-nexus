@@ -1,11 +1,6 @@
 """
-EmbeddingManager — DEPRECATED
-------------------------------
-Logic moved to:
-    apps/implementations/context_sources/document/document_embedding_manager.py
-
-Kept here temporarily to avoid breaking any remaining imports.
-Will be removed once all references are updated.
+DocumentEmbeddingManager — internal ingest logic for document context.
+Handles chunking, embedding, and storing documents/code files.
 """
 from __future__ import annotations
 
@@ -17,15 +12,16 @@ from apps.factories.adapter import AdapterFactory
 from apps.schemas.embed import EmbedRequest, EmbedResponse
 
 
-class EmbeddingManager:
+class DocumentEmbeddingManager:
     def __init__(self, embedder: EmbeddingModel, store: VectorStore) -> None:
         self.embedder = embedder
         self.store = store
 
     async def ingest(self, req: EmbedRequest) -> EmbedResponse:
         """
-        Full ingest pipeline for one context source.
-        Returns the collection_id to store back in nexus-nucleus.
+        Full ingest pipeline for one document/code context source.
+        content → adapter (extract + chunk) → embed → store
+        Returns collection_id to save back in nexus-nucleus ContextSource.
         """
         # 1. Extract text chunks via the right adapter
         adapter = AdapterFactory.get(req.type)

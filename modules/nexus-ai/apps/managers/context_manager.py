@@ -1,10 +1,11 @@
 """
-Context Manager
----------------
-Orchestrates retrieval at query time:
-  user message + context source refs → search Chroma → ranked chunks
+ContextManager — DEPRECATED
+-----------------------------
+Logic moved to:
+    apps/implementations/context_sources/document/document_context_manager.py
 
-Called by the Agentic Manager before building the prompt.
+Kept here temporarily to avoid breaking AgenticManager imports.
+Will be removed once all references are updated.
 """
 from __future__ import annotations
 
