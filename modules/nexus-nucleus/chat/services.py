@@ -1,12 +1,16 @@
 """
 Chat services — save/load messages + publish to Centrifugo + embed to nexus-ai.
 
-Phase 1: human-to-human only.
-Phase 2 extension: add @mention detection + nexus-ai trigger (additive, nothing here changes).
+M7 additions:
+  - extract_output_type(): parse @chart/@code/@terminal etc. from user message
+  - trigger_ai_response_async(): passes output_type to nexus-ai TriggerJob
+  - On message_done: captures output_type + render_as from nexus-ai event,
+    publishes them to Centrifugo, stores render_as in message metadata
 """
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 from django.conf import settings
@@ -14,10 +18,48 @@ from django.db.models import Max
 
 logger = logging.getLogger(__name__)
 
+# ── M7: known output type keywords ────────────────────────────────────────────
+# Must match the types registered in nexus-ai/apps/output_types/types.py
+_OUTPUT_TYPE_KEYWORDS = frozenset({
+    "text", "code", "html", "chart", "table", "diagram", "form", "terminal",
+})
 
-# ---------------------------------------------------------------------------
-# Centrifugo publish
-# ---------------------------------------------------------------------------
+# Matches @keyword where keyword is a known output type (case-insensitive)
+_OUTPUT_TYPE_RE = re.compile(
+    r"@(" + "|".join(_OUTPUT_TYPE_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def extract_output_type(message: str) -> tuple[str, str]:
+    """
+    Detect @output_type directives in the user message.
+
+    Returns:
+        (output_type, clean_message)
+
+    If no directive found, returns ("auto", original_message).
+    If found, the directive is stripped from the message before it's sent to the AI.
+
+    Examples:
+        "Show me sales @chart for Q4"
+            → ("chart", "Show me sales  for Q4")
+        "@Nova explain the code @code"
+            → ("code", "@Nova explain the code ")
+        "@Nova explain the code"
+            → ("auto", "@Nova explain the code")
+    """
+    m = _OUTPUT_TYPE_RE.search(message)
+    if not m:
+        return "auto", message
+
+    output_type = m.group(1).lower()
+    # Strip the @directive from the message text sent to the LLM
+    clean = message[:m.start()] + message[m.end():]
+    return output_type, clean.strip()
+
+
+# ── Centrifugo publish ─────────────────────────────────────────────────────────
 
 def publish(channel: str, data: dict) -> None:
     """
@@ -74,9 +116,7 @@ def topic_channel(topic_id: str) -> str:
     return f"topic-{topic_id}"
 
 
-# ---------------------------------------------------------------------------
-# Embed fire-and-forget (nexus-ai)
-# ---------------------------------------------------------------------------
+# ── Embed fire-and-forget (nexus-ai) ──────────────────────────────────────────
 
 async def embed_message_async(
     *,
@@ -142,11 +182,9 @@ async def embed_message_async(
         logger.warning("[embed] embed_message_async failed message=%s: %s", message_id, exc)
 
 
-# ---------------------------------------------------------------------------
-# AI trigger — fire-and-forget (M3)
-# ---------------------------------------------------------------------------
+# ── AI trigger — fire-and-forget (M3 + M7) ────────────────────────────────────
 
-def create_ai_message(company, project, topic, persona) -> dict:
+def create_ai_message(company, project, topic, persona, render_as: str = "text") -> dict:
     """Pre-create a PENDING ChatMessage for the AI response."""
     from nucleus.models import ChatMessage
 
@@ -164,17 +202,38 @@ def create_ai_message(company, project, topic, persona) -> dict:
         message_type=ChatMessage.MessageType.TEXT,
         status=ChatMessage.Status.PENDING,
         sequence=max_seq + 1,
-        metadata={"role": "assistant", "persona_id": str(persona.id)},
+        metadata={
+            "role": "assistant",
+            "persona_id": str(persona.id),
+            "persona_name": persona.name,   # display name for serializer
+            "render_as": render_as,
+        },
     )
     return _serialise(msg)
 
 
-def update_ai_message(message_id: str, content: str) -> None:
+def update_ai_message(
+    message_id: str,
+    content: str,
+    render_as: str = "text",
+    output_type: str = "text",
+) -> None:
     """Update the AI message content and mark COMPLETED."""
     from nucleus.models import ChatMessage
+
+    msg = ChatMessage.objects.filter(id=message_id).first()
+    if not msg:
+        return
+
+    # Merge render_as into existing metadata
+    metadata = dict(msg.metadata or {})
+    metadata["render_as"] = render_as
+    metadata["output_type"] = output_type
+
     ChatMessage.objects.filter(id=message_id).update(
         content=content,
         status=ChatMessage.Status.COMPLETED,
+        metadata=metadata,
     )
 
 
@@ -187,16 +246,23 @@ async def trigger_ai_response_async(
     user_message: str,
     history: list[dict],
     topic_id: str,
+    output_type: str = "auto",
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
+
+    M7 additions:
+    - Passes output_type to nexus-ai TriggerJob
+    - Captures output_type + render_as from message_done event
+    - Publishes both to Centrifugo on message_done
+    - Stores render_as in ChatMessage.metadata for history replay
 
     Flow:
         1. Pre-create AI message in DB (status=PENDING)
         2. Publish message_start to Centrifugo
         3. Call nexus-ai POST /api/v1/trigger/ — SSE stream
         4. For each message_delta: publish token to Centrifugo
-        5. On message_done: update DB message (status=COMPLETED), publish message_done
+        5. On message_done: update DB message, publish message_done + output_type + render_as
 
     Errors are logged and swallowed — AI failure must never affect chat.
     """
@@ -240,10 +306,12 @@ async def trigger_ai_response_async(
     model = persona.model
     api_key = model.get_api_key() if model else None
 
-    # Get system prompt — Prompt model uses system_prompt field
     system_prompt = ""
     if hasattr(persona, "prompt") and persona.prompt:
         system_prompt = persona.prompt.system_prompt or ""
+
+    # _build_context_sources does sync ORM queries — must be wrapped for async context
+    context_sources = await sync_to_async(_build_context_sources)(topic, company)
 
     job_payload = {
         "job_id": str(uuid.uuid4()),
@@ -262,11 +330,15 @@ async def trigger_ai_response_async(
         },
         "message": user_message,
         "history": history,
-        "context_sources": [],
+        "context_sources": context_sources,
+        "output_type": output_type,  # M7: "auto" | "chart" | "code" | "terminal" | ...
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
-    full_content: list[str] = []
+    streamed_content: list[str] = []
+    final_output_type = "text"
+    final_render_as = "text"
+    final_clean_content: str | None = None
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -298,7 +370,7 @@ async def trigger_ai_response_async(
                         if event_type == "message_delta":
                             delta = event.get("delta") or ""
                             if delta:
-                                full_content.append(delta)
+                                streamed_content.append(delta)
                                 await publish_async(channel, {
                                     "type": "message_delta",
                                     "id": msg_id,
@@ -306,6 +378,11 @@ async def trigger_ai_response_async(
                                 })
 
                         elif event_type == "message_done":
+                            # M7: capture resolved output type from nexus-ai
+                            final_output_type = event.get("output_type") or "text"
+                            final_render_as = event.get("render_as") or "text"
+                            # Use nexus-ai's clean content (markers stripped)
+                            final_clean_content = event.get("content")
                             break
 
                     except (json.JSONDecodeError, KeyError):
@@ -314,23 +391,34 @@ async def trigger_ai_response_async(
     except Exception as exc:
         logger.warning("[trigger] streaming error for msg %s: %s", msg_id, exc)
 
+    # Use nexus-ai's clean content if available, else fall back to streamed
+    save_content = (
+        final_clean_content
+        if final_clean_content is not None
+        else "".join(streamed_content)
+    )
+
     # 5. Save full content to DB + publish message_done
-    final_content = "".join(full_content)
     try:
-        await _update_ai_message(msg_id, final_content)
+        await _update_ai_message(
+            msg_id,
+            save_content,
+            render_as=final_render_as,
+            output_type=final_output_type,
+        )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
 
     await publish_async(channel, {
         "type": "message_done",
         "id": msg_id,
-        "content": final_content,
+        "content": save_content,
+        "output_type": final_output_type,   # M7: e.g. "chart"
+        "render_as": final_render_as,        # M7: e.g. "html"
     })
 
 
-# ---------------------------------------------------------------------------
-# Read messages
-# ---------------------------------------------------------------------------
+# ── Read messages ──────────────────────────────────────────────────────────────
 
 def list_messages(topic_id: str, limit: int = 100) -> list[dict]:
     """Return the last *limit* messages in a topic, oldest first."""
@@ -344,15 +432,35 @@ def list_messages(topic_id: str, limit: int = 100) -> list[dict]:
     return [_serialise(m) for m in reversed(list(qs))]
 
 
-# ---------------------------------------------------------------------------
-# Write messages
-# ---------------------------------------------------------------------------
+# ── Write messages ─────────────────────────────────────────────────────────────
+
+def save_system_message(company, project, topic, content: str) -> dict:
+    """Save a system event message (no sender) and return its serialised form."""
+    from nucleus.models import ChatMessage
+
+    max_seq = (
+        ChatMessage.objects.filter(topic_id=topic.id)
+        .aggregate(Max("sequence"))["sequence__max"] or 0
+    )
+
+    msg = ChatMessage.objects.create(
+        company=company,
+        project=project,
+        topic=topic,
+        sender=None,
+        content=content,
+        message_type=ChatMessage.MessageType.SYSTEM,
+        status=ChatMessage.Status.COMPLETED,
+        sequence=max_seq + 1,
+        metadata={"role": "system"},
+    )
+    return _serialise(msg)
+
 
 def save_user_message(company, project, topic, user, content: str) -> dict:
     """Save a human message and return its serialised form."""
     from nucleus.models import ChatMessage
 
-    # Auto-increment sequence within the topic
     max_seq = (
         ChatMessage.objects.filter(topic_id=topic.id)
         .aggregate(Max("sequence"))["sequence__max"] or 0
@@ -372,24 +480,65 @@ def save_user_message(company, project, topic, user, content: str) -> dict:
     return _serialise(msg)
 
 
-# ---------------------------------------------------------------------------
-# Serialiser
-# ---------------------------------------------------------------------------
+# ── Context sources for TriggerJob ────────────────────────────────────────────
+
+def _build_context_sources(topic, company) -> list[dict]:
+    """
+    Build the context_sources list for TriggerJob.
+
+    Always includes a ChatContext ref (semantic search over past messages).
+    Plus any file/web sources attached to the topic that are ready.
+    """
+    sources = []
+
+    # 1. ChatContext — always included so nexus-ai can search past messages
+    sources.append({
+        "source_id": str(topic.id),
+        "type": "chat",
+        "label": "Chat History",
+        "collection_id": f"company_{company.id}_chat",
+    })
+
+    # 2. Attached file / web sources (only ready ones)
+    from nucleus.models import ContextSource
+    attached = ContextSource.objects.filter(
+        topic_id=topic.id,
+        is_active=True,
+        status=ContextSource.Status.READY,
+    )
+    for src in attached:
+        sources.append({
+            "source_id": str(src.id),
+            "type": "file",
+            "label": src.name,
+            "collection_id": src.collection_id,
+        })
+
+    return sources
+
+
+# ── Serialiser ────────────────────────────────────────────────────────────────
 
 def _serialise(msg) -> dict:
-    sender_name = (
-        getattr(msg.sender, "display_name", None)
-        or getattr(msg.sender, "username", None)
-        or getattr(msg.sender, "email", None)
-        or str(msg.sender_id)
-    )
+    metadata = msg.metadata or {}
+    # For AI persona messages, use the stored persona_name rather than the
+    # shadow user's auto-generated username (e.g. "user_28").
+    if msg.sender and metadata.get("persona_name"):
+        sender_name = metadata["persona_name"]
+    elif msg.sender:
+        sender_name = msg.sender.get_display_name()
+    else:
+        sender_name = None
     return {
         "id": str(msg.id),
         "type": "message",
+        "message_type": msg.message_type,
         "content": msg.content or "",
+        "render_as": metadata.get("render_as", "text"),    # M7: renderer hint for frontend
+        "output_type": metadata.get("output_type", "text"), # M7: semantic type name
         "sender_name": sender_name,
-        "sender_id": str(msg.sender_id),
-        "sender_type": getattr(msg.sender, "user_type", "human"),
+        "sender_id": str(msg.sender_id) if msg.sender_id else None,
+        "sender_type": getattr(msg.sender, "user_type", "human") if msg.sender else "system",
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }

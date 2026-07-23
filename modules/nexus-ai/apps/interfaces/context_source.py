@@ -12,8 +12,8 @@ Plugin structure:
 
 To add a new context type:
     1. Drop a folder under implementations/context_sources/
-    2. Implement ContextSource
-    3. Register one line in ContextSourceFactory
+    2. Implement ContextSource — set directive, help, and the three methods
+    3. Decorate with @ContextSourceFactory.register — done
 """
 from __future__ import annotations
 
@@ -27,7 +27,14 @@ class ContextSource(ABC):
     """
     Abstract base for all context source plugins.
     Each plugin owns its full lifecycle: ingest, retrieve, delete.
+
+    Class attributes (required on every subclass):
+        directive: str  — the @command users type, e.g. "file", "chat", "url"
+        help: str       — one-line description shown in the status bar
     """
+
+    directive: str = ""
+    help: str = ""
 
     @abstractmethod
     async def ingest(self, req: Any) -> Any:

@@ -16,6 +16,9 @@ from .chat_context_manager import ChatContextManager
 
 
 class ChatContextSource(ContextSource):
+    directive = "chat"
+    help = "Search past conversation — @chat (always active by default)"
+
     def __init__(self, embedder: EmbeddingModel, store: VectorStore) -> None:
         self._ingestor = ChatEmbeddingManager(embedder=embedder, store=store)
         self._retriever = ChatContextManager(embedder=embedder, store=store)
@@ -39,6 +42,11 @@ class ChatContextSource(ContextSource):
             top_k=top_k,
             filter=filter,
         )
+
+    async def delete_message(self, message_id: str, company_id: str) -> None:
+        """Remove a single chat message vector from the company chat collection."""
+        collection_name = f"company_{company_id}_chat"
+        await self._store.delete_by_ids(collection_name, [message_id])
 
     async def delete(self, collection_id: str) -> None:
         """Remove all chat vectors for a company (used during teardown)."""

@@ -25,8 +25,15 @@ INSTALLED_APPS = [
     'intelligence',
     'workspace',
     'internal',
+    'context',
     'guardian',
 ]
+
+# =========================================================
+# Media files — uploaded context sources, attachments, etc.
+# =========================================================
+MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = "/media/"
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',

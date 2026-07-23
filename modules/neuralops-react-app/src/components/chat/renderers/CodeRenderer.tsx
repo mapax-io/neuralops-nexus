@@ -56,7 +56,10 @@ export function CodeRenderer({
           )}
         </Button>
       </div>
-      <div className="overflow-x-auto text-sm [&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:p-4">
+      <div
+        className="overflow-x-auto text-sm [&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:p-4"
+        style={{ color: "var(--code-text)" }}
+      >
         <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{md}</ReactMarkdown>
       </div>
     </div>

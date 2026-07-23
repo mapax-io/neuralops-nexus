@@ -17,6 +17,7 @@ litellm
 # FastEmbed runs nomic-embed-text-v1.5 via ONNX — no GPU, no network.
 # Switch to LiteLLM embedding (Ollama/Infinity) via EMBEDDING_PROVIDER=litellm.
 fastembed
+numpy                    # Used by M7 cosine similarity classifier (also a fastembed dep)
 
 # ── Vector Store ──────────────────────────────────────────────────────────────
 chromadb                 # Phase 1 — swap via VectorStoreFactory

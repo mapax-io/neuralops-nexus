@@ -1,9 +1,8 @@
-import type { ChatMessage } from "./types";
+import type { ChatMessage, MessageRenderType } from "./types";
 import { TextRenderer } from "./renderers/TextRenderer";
 import { CodeRenderer } from "./renderers/CodeRenderer";
+import { HtmlRenderer } from "./renderers/HtmlRenderer";
 import { TerminalRenderer } from "./renderers/TerminalRenderer";
-import { ChartRenderer } from "./renderers/ChartRenderer";
-import { FormRenderer } from "./renderers/FormRenderer";
 import { ImageRenderer } from "./renderers/ImageRenderer";
 import { WebRenderer } from "./renderers/WebRenderer";
 
@@ -99,26 +98,38 @@ export function MessageItem({ message }: { message: ChatMessage }) {
   );
 }
 
+/**
+ * Renderer — delegates to the correct renderer based on message.type (render_as).
+ *
+ * Renderer selection:
+ *   "html"     → HtmlRenderer (sandboxed iframe — for chart, table, diagram, form, html)
+ *   "code"     → CodeRenderer (syntax-highlighted)
+ *   "terminal" → TerminalRenderer (monospace pre)
+ *   "image"    → ImageRenderer
+ *   "web"      → WebRenderer (URL iframe)
+ *   "text" | * → TextRenderer (markdown)
+ */
 function Renderer({ message }: { message: ChatMessage }) {
-  switch (message.type) {
+  const type: MessageRenderType = message.type ?? "text";
+
+  switch (type) {
+    case "html":
+      return <HtmlRenderer content={message.content} />;
+
     case "code":
       return (
         <CodeRenderer content={message.content} language={message.language} />
       );
+
     case "terminal":
       return <TerminalRenderer content={message.content} />;
-    case "chart":
-      return (
-        <ChartRenderer content={message.content} metadata={message.metadata} />
-      );
-    case "form":
-      return (
-        <FormRenderer content={message.content} metadata={message.metadata} />
-      );
+
     case "image":
       return <ImageRenderer content={message.content} />;
+
     case "web":
       return <WebRenderer content={message.content} />;
+
     case "text":
     default:
       return <TextRenderer content={message.content} />;

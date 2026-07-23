@@ -45,6 +45,10 @@ class DocumentEmbeddingManager:
                 "label": req.label,
                 "language": req.language,
                 "chunk_index": i,
+                "topic_id": req.topic_id or "",
+                "channel_id": req.channel_id or "",
+                "project_id": req.project_id or "",
+                "company_id": req.company_id or "",
             }
             for i in range(len(chunks))
         ]

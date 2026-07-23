@@ -43,6 +43,10 @@ from .workspace import (
     KnowledgeFile,
 )
 
+from .context import (
+    ContextSource,
+)
+
 from .extended import (
     Invitation,
     ProjectMember,

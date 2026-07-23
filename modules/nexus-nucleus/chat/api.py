@@ -1,5 +1,5 @@
 """
-Chat API — human-to-human messaging (Phase 1).
+Chat API — human-to-human messaging + AI trigger (M3 + M7).
 
 Flow:
     POST /messages/
@@ -7,18 +7,19 @@ Flow:
         2. Save message to DB (sender = authenticated user)
         3. Fire-and-forget async publish to Centrifugo topic:{topic_id}
         4. Fire-and-forget async embed to nexus-ai (M2)
-        5. Return immediately — React receives the message via WebSocket
+        5. Detect @output_type directive (M7) — strip from message, pass to trigger
+        6. Detect @persona mention (M3) — trigger AI response fire-and-forget
+        7. Return immediately — React receives the message via WebSocket
 
     GET /messages/
         Return last 100 messages (history) when a topic is opened.
-
-Phase 2 extension (AI-to-human) — additive, nothing here changes:
-    After step 2, detect @persona mentions → asyncio.create_task(generate_ai_response())
-    nexus-ai streams tokens back → publish { type:"token" / "done" } to Centrifugo
 """
 import asyncio
+import logging
 import re
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 from asgiref.sync import sync_to_async
 from ninja import Router
@@ -30,15 +31,13 @@ from chat import services as chat_svc
 from workspace import services as ws_svc
 from intelligence import services as intel_svc
 
-# Matches @Word or @Two_Words — first @mention in the message
+# Matches @Word — finds the first @mention in the message
 _MENTION_RE = re.compile(r'@([\w]+)')
 
 router = Router(tags=["Chat"], auth=SupabaseBearer())
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _resolve_topic_sync(request, project_id: str, channel_id: str, topic_id: str):
     """Resolve and validate all path params — raises HttpError on any miss."""
@@ -62,7 +61,6 @@ def _resolve_topic_sync(request, project_id: str, channel_id: str, topic_id: str
     return company, user, project, channel, topic
 
 
-# Async-safe wrappers for sync DB calls
 _resolve_topic = sync_to_async(_resolve_topic_sync)
 _list_messages = sync_to_async(chat_svc.list_messages)
 _save_user_message = sync_to_async(chat_svc.save_user_message)
@@ -70,9 +68,7 @@ _get_persona_by_mention = sync_to_async(intel_svc.get_persona_by_mention)
 _list_messages_sync = sync_to_async(chat_svc.list_messages)
 
 
-# ---------------------------------------------------------------------------
-# GET  /messages/  — load history
-# ---------------------------------------------------------------------------
+# ── GET /messages/ — load history ─────────────────────────────────────────────
 
 @router.get(
     "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/",
@@ -92,9 +88,7 @@ async def list_messages(
     return await _list_messages(topic_id)
 
 
-# ---------------------------------------------------------------------------
-# POST /messages/  — send message
-# ---------------------------------------------------------------------------
+# ── POST /messages/ — send message ────────────────────────────────────────────
 
 @router.post(
     "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/",
@@ -108,7 +102,7 @@ async def send_message(
     payload: SendMessageIn,
 ):
     """
-    Save a human message, broadcast via Centrifugo, and embed via nexus-ai.
+    Save a human message, broadcast via Centrifugo, embed, and trigger AI if mentioned.
 
     Both publish and embed are fire-and-forget (asyncio.create_task) so this
     endpoint returns immediately — latency stays low regardless of AI/Centrifugo.
@@ -123,7 +117,7 @@ async def send_message(
         request, project_id, channel_id, topic_id
     )
 
-    # 1. Save to DB
+    # 1. Save to DB (original message with @directives intact for display)
     msg = await _save_user_message(
         company=company,
         project=project,
@@ -153,35 +147,65 @@ async def send_message(
         )
     )
 
-    # 4. Detect @mention — trigger AI response fire-and-forget (M3)
-    mention_match = _MENTION_RE.search(payload.content)
+    # 4. M7: Extract @output_type directive before persona detection
+    #    e.g. "@Nova show me sales @chart" → output_type="chart", clean="@Nova show me sales"
+    output_type, clean_message = chat_svc.extract_output_type(payload.content.strip())
+
+    # 5. Detect @persona mention — trigger AI response fire-and-forget (M3)
+    mention_match = _MENTION_RE.search(clean_message)
     if mention_match:
         mention_name = mention_match.group(1)
         persona = await _get_persona_by_mention(company, mention_name)
+        logger.info("[chat/api] mention=%s persona=%s model=%s", mention_name, persona, getattr(persona, 'model', None))
         if persona and persona.model:
-            # Pass recent history for context (last 20 messages)
-            history = await _list_messages_sync(topic_id, limit=20)
-            # Convert to simple role/content dicts for nexus-ai
-            ai_history = [
-                {"role": "user" if m["sender_type"] == "human" else "assistant",
-                 "content": m["content"],
-                 "sender_name": m["sender_name"]}
-                for m in history
-                if m["content"]  # skip empty (PENDING AI messages)
-            ]
+            raw_history = await _list_messages_sync(topic_id, limit=20)
+            ai_history = []
+            for m in raw_history:
+                # Skip the message we just saved (passed separately as user_message,
+                # so including it here would send it to the LLM twice).
+                if m["id"] == msg["id"]:
+                    continue
+                # Skip empty / PENDING AI messages
+                if not m["content"]:
+                    continue
+                role = "user" if m["sender_type"] == "human" else "assistant"
+                render_as = m.get("render_as", "text")
+                output_type_val = m.get("output_type", "text")
+                content = m["content"].strip()
+                # Skip botched AI responses — they poison the LLM context and
+                # cause it to keep reproducing the same wrong pattern.
+                if role == "assistant":
+                    _VISUAL_TYPES = {"chart", "table", "diagram", "html", "form"}
+                    # Case 1: Expected HTML but got plain text (old behaviour before
+                    # our "no markers → text" rule)
+                    if render_as == "html" and not (
+                        content.startswith("<!DOCTYPE") or content.startswith("<html")
+                    ):
+                        continue
+                    # Case 2: Visual output type but no markers found — fell back to
+                    # render_as="text" (our new rule). The content is a conversational
+                    # failure like "I've reviewed the provided request.".
+                    if output_type_val in _VISUAL_TYPES and render_as == "text":
+                        continue
+                ai_history.append({
+                    "role": role,
+                    "content": m["content"],
+                    "sender_name": m["sender_name"],
+                })
             asyncio.create_task(
                 chat_svc.trigger_ai_response_async(
                     company=company,
                     project=project,
                     topic=topic,
                     persona=persona,
-                    user_message=payload.content.strip(),
+                    user_message=clean_message,  # @output_type stripped
                     history=ai_history,
                     topic_id=topic_id,
+                    output_type=output_type,     # M7: "auto" | "chart" | "code" | ...
                 )
             )
 
-    # 5. Return immediately
+    # 6. Return immediately
     return {
         "message": msg,
         "channel": centrifugo_channel,
