@@ -5,10 +5,28 @@ export interface MessageSender {
   avatar: string | null;
 }
 
+/**
+ * render_as → type mapping used by MessageItem:
+ *   "text"     → TextRenderer   (markdown)
+ *   "code"     → CodeRenderer   (syntax-highlighted block)
+ *   "html"     → HtmlRenderer   (sandboxed iframe — chart, table, diagram, form, html)
+ *   "terminal" → TerminalRenderer (monospace pre with $ styling)
+ *   "image"    → ImageRenderer
+ *   "web"      → WebRenderer    (URL in iframe)
+ */
+export type MessageRenderType =
+  | "text"
+  | "code"
+  | "html"
+  | "terminal"
+  | "image"
+  | "web";
+
 export interface ChatMessage {
   id: string;
-  type: "text" | "code" | "terminal" | "chart" | "form" | "image" | "web";
-  message_type?: "text" | "system" | "markdown" | string;
+  type: MessageRenderType;
+  message_type?: string;
+  output_type?: string;           // M7: semantic type ("chart", "diagram", "table", etc.)
   content: string;
   language?: string;
   metadata?: Record<string, unknown>;

@@ -11,6 +11,8 @@ class MessageOut(Schema):
     type: str
     message_type: Optional[str] = None
     content: str
+    render_as: str = "text"       # M7: "text" | "code" | "html" | "terminal"
+    output_type: str = "text"     # M7: "text" | "chart" | "code" | "table" | ...
     sender_name: Optional[str] = None
     sender_id: Optional[str] = None
     sender_type: str

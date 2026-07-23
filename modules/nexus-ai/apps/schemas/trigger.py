@@ -43,6 +43,11 @@ class TriggerJob(BaseModel):
     history: list[HistoryMessage] = []
     context_sources: list[ContextSourceRef] = []
 
+    # M7: output type — resolved in nexus-nucleus from @mention detection.
+    # "auto" = nexus-ai should classify intent via cosine similarity.
+    # Any other value = explicit override (e.g. "chart", "terminal", "code").
+    output_type: str = "auto"
+
 
 # ── Outbound SSE events (nexus-ai → nexus-nucleus) ────────────────────────────
 
@@ -57,4 +62,8 @@ class AgentEvent(BaseModel):
     delta: str | None = None
 
     # message_done only
-    content: str | None = None       # full assembled response for DB save
+    content: str | None = None       # full assembled response (markers stripped) for DB save
+
+    # M7: output type metadata — populated in message_done
+    output_type: str | None = None   # resolved type: "chart", "terminal", "text", etc.
+    render_as: str | None = None     # renderer hint: "html" | "code" | "text" | "terminal"

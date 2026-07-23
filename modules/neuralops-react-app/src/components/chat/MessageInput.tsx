@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Paperclip, Send, X, UserPlus, FileText } from "lucide-react";
+import {
+  Paperclip, Send, X, UserPlus, FileText,
+  BarChart2, Code, Globe, Terminal, Table2, GitBranch, ClipboardList, AlignLeft,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { inviteToProject } from "@/services/workspace.service";
 import { changeUsername } from "@/services/auth.service";
 import { attachFileContext } from "@/services/context.service";
-
-const MOCK_PERSONAS = [
-  { id: "p1", name: "Nova" },
-  { id: "p2", name: "Sara" },
-  { id: "p3", name: "Atlas" },
-];
+import { listPersonas } from "@/services/personas.service";
 
 // Context directives shown in the @mention dropdown
 const CONTEXT_DIRECTIVES = [
@@ -20,6 +18,18 @@ const CONTEXT_DIRECTIVES = [
     help: "Attach a file to context — @file report.pdf",
     icon: FileText,
   },
+];
+
+// M7: Output type directives — user can force AI to respond in a specific format
+const OUTPUT_TYPE_DIRECTIVES = [
+  { directive: "chart",    label: "@chart",    help: "Respond with a Chart.js chart",    icon: BarChart2 },
+  { directive: "table",    label: "@table",    help: "Respond with a data table",        icon: Table2 },
+  { directive: "diagram",  label: "@diagram",  help: "Respond with a Mermaid diagram",   icon: GitBranch },
+  { directive: "form",     label: "@form",     help: "Respond with an interactive form", icon: ClipboardList },
+  { directive: "code",     label: "@code",     help: "Respond with code only",           icon: Code },
+  { directive: "terminal", label: "@terminal", help: "Respond as terminal output",       icon: Terminal },
+  { directive: "html",     label: "@html",     help: "Respond as an HTML page",          icon: Globe },
+  { directive: "text",     label: "@text",     help: "Respond as plain text",            icon: AlignLeft },
 ];
 
 // Slash commands available in chat
@@ -59,9 +69,16 @@ export function MessageInput({
   const [slashQuery, setSlashQuery] = useState("");
   const [inviting, setInviting] = useState(false);
   const [uploadingContext, setUploadingContext] = useState(false);
+  const [personas, setPersonas] = useState<{ id: string; name: string }[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contextFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    listPersonas()
+      .then((ps) => setPersonas(ps.map((p) => ({ id: p.id, name: p.name }))))
+      .catch(() => {/* silently ignore — mention dropdown just stays empty */});
+  }, []);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -262,11 +279,16 @@ export function MessageInput({
     );
   }
 
-  const personaSuggestions = MOCK_PERSONAS.filter((p) =>
+  const personaSuggestions = personas.filter((p) =>
     p.name.toLowerCase().startsWith(mentionQuery),
   );
 
   const directiveSuggestions = CONTEXT_DIRECTIVES.filter((d) =>
+    d.directive.startsWith(mentionQuery),
+  );
+
+  // M7: filter output type directives by current @query
+  const outputTypeSuggestions = OUTPUT_TYPE_DIRECTIVES.filter((d) =>
     d.directive.startsWith(mentionQuery),
   );
 
@@ -333,8 +355,12 @@ export function MessageInput({
       )}
 
       {/* @mention + @directive picker */}
-      {mentionOpen && (personaSuggestions.length > 0 || directiveSuggestions.length > 0) && (
-        <div className="absolute bottom-full left-3 mb-2 w-64 rounded-md border border-border bg-popover p-1 shadow-md">
+      {mentionOpen && (
+        personaSuggestions.length > 0 ||
+        directiveSuggestions.length > 0 ||
+        outputTypeSuggestions.length > 0
+      ) && (
+        <div className="absolute bottom-full left-3 mb-2 w-72 rounded-md border border-border bg-popover p-1 shadow-md">
           {/* Personas */}
           {personaSuggestions.length > 0 && (
             <>
@@ -368,6 +394,29 @@ export function MessageInput({
                   key={d.directive}
                   type="button"
                   onClick={() => pickFileDirective()}
+                  className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+                >
+                  <d.icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <div>
+                    <div className="text-sm font-medium">{d.label}</div>
+                    <div className="text-xs text-muted-foreground">{d.help}</div>
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
+
+          {/* M7: Output type directives */}
+          {outputTypeSuggestions.length > 0 && (
+            <>
+              <div className="mt-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Output Format
+              </div>
+              {outputTypeSuggestions.map((d) => (
+                <button
+                  key={d.directive}
+                  type="button"
+                  onClick={() => pickMention(d.directive)}
                   className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
                 >
                   <d.icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />

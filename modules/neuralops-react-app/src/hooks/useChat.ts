@@ -7,7 +7,7 @@ import {
 } from "@/services/chat.service";
 import { useCentrifugo } from "./useCentrifugo";
 import { useAuthStore } from "@/store/auth.store";
-import type { ChatMessage } from "@/components/chat/types";
+import type { ChatMessage, MessageRenderType } from "@/components/chat/types";
 
 // ---------------------------------------------------------------------------
 // Beep
@@ -51,6 +51,8 @@ interface AiDoneEvent {
   type: "message_done";
   id: string;
   content?: string;
+  output_type?: string;    // M7: e.g. "chart", "text"
+  render_as?: string;      // M7: e.g. "html", "text", "code", "terminal"
 }
 
 type CentrifugoEvent =
@@ -62,10 +64,29 @@ type CentrifugoEvent =
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Map render_as string from the API → MessageRenderType used by the frontend.
+ * Defaults to "text" for unknown values.
+ */
+function toRenderType(renderAs: string | undefined): MessageRenderType {
+  switch (renderAs) {
+    case "html":
+    case "code":
+    case "terminal":
+    case "image":
+    case "web":
+      return renderAs;
+    default:
+      return "text";
+  }
+}
+
 function toUiMessage(m: ApiMessage): ChatMessage {
   return {
     id: m.id,
-    type: "text",
+    type: toRenderType(m.render_as),
+    output_type: m.output_type,
     message_type: m.message_type,
     content: m.content,
     sender: {
@@ -112,7 +133,7 @@ export function useTopicMessages(
     const unsub = subscribe(channel, (data) => {
       const event = data as CentrifugoEvent;
 
-      if (!event?.type || !(("id" in event))) return;
+      if (!event?.type || !("id" in event)) return;
 
       if (event.type === "message") {
         // Human message from another user
@@ -123,7 +144,7 @@ export function useTopicMessages(
         });
 
       } else if (event.type === "message_start") {
-        // AI persona started responding
+        // AI persona started responding — placeholder with streaming cursor
         playBeep();
         setMessages((prev) => {
           if (prev.some((m) => m.id === event.id)) return prev;
@@ -131,7 +152,8 @@ export function useTopicMessages(
             ...prev,
             {
               id: event.id,
-              type: "text",
+              type: "text",          // placeholder — updated on message_done
+              output_type: "text",
               content: "",
               sender: {
                 id: event.sender_id,
@@ -146,7 +168,7 @@ export function useTopicMessages(
         });
 
       } else if (event.type === "message_delta") {
-        // Append token to streaming message
+        // Append streaming token
         setMessages((prev) =>
           prev.map((m) =>
             m.id === event.id
@@ -156,10 +178,20 @@ export function useTopicMessages(
         );
 
       } else if (event.type === "message_done") {
-        // Streaming complete — mark as done
+        // Streaming complete — replace content with clean version + set renderer
+        const renderType = toRenderType(event.render_as);
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === event.id ? { ...m, isStreaming: false } : m,
+            m.id === event.id
+              ? {
+                  ...m,
+                  isStreaming: false,
+                  type: renderType,
+                  output_type: event.output_type ?? "text",
+                  // Replace with nexus-ai's clean content (markers stripped)
+                  content: event.content !== undefined ? event.content : m.content,
+                }
+              : m,
           ),
         );
       }
@@ -193,7 +225,6 @@ export function useTopicMessages(
     async (content: string) => {
       if (!projectId || !channelId || !topicId) return;
 
-      // All messages go through sendMessage — backend detects @mention and triggers AI
       try {
         const { message } = await sendMessage(projectId, channelId, topicId, content);
         setMessages((prev) => {
@@ -201,6 +232,7 @@ export function useTopicMessages(
           return [...prev, toUiMessage(message)];
         });
       } catch (err: unknown) {
+        console.error("[useChat] sendMessage failed:", err);
         const msg = err instanceof Error ? err.message : "Failed to send";
         toast.error(msg);
         throw err;

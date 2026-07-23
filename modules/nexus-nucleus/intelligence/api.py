@@ -248,3 +248,25 @@ def update_ai_config(request, payload: CompanyAIConfigIn):
         embedding_base_url=config.embedding_base_url,
         default_llm_model=config.default_llm_model,
     )
+
+
+# ── Output Types (M7) ─────────────────────────────────────────────────────────
+
+@router.get("/output-types/")
+def list_output_types(request):
+    """
+    Return all available AI output types.
+    Used by the frontend @mention picker to show output type directives.
+    These match the types registered in nexus-ai/apps/output_types/types.py.
+    """
+    _company(request)  # auth check
+    return [
+        {"name": "text",     "label": "Text",      "icon": "align-left",    "render_as": "text"},
+        {"name": "code",     "label": "Code",      "icon": "code-2",        "render_as": "code"},
+        {"name": "chart",    "label": "Chart",     "icon": "bar-chart-2",   "render_as": "html"},
+        {"name": "table",    "label": "Table",     "icon": "table",         "render_as": "html"},
+        {"name": "diagram",  "label": "Diagram",   "icon": "git-branch",    "render_as": "html"},
+        {"name": "form",     "label": "Form",      "icon": "clipboard-list","render_as": "html"},
+        {"name": "html",     "label": "HTML Page", "icon": "globe",         "render_as": "html"},
+        {"name": "terminal", "label": "Terminal",  "icon": "terminal",      "render_as": "terminal"},
+    ]
