@@ -16,6 +16,9 @@ from .document_context_manager import DocumentContextManager
 
 
 class DocumentContextSource(ContextSource):
+    directive = "file"
+    help = "Search an attached file — @file report.pdf"
+
     def __init__(self, embedder: EmbeddingModel, store: VectorStore) -> None:
         self._ingestor = DocumentEmbeddingManager(embedder=embedder, store=store)
         self._retriever = DocumentContextManager(embedder=embedder, store=store)

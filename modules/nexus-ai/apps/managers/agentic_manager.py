@@ -15,7 +15,7 @@ from typing import AsyncIterator
 from apps.interfaces.agent import AgentRunner
 from apps.interfaces.embedding import EmbeddingModel
 from apps.interfaces.vectorstore import VectorStore, Chunk
-from apps.implementations.context_sources.document.document_context_manager import DocumentContextManager
+from apps.factories.context_source import ContextSourceFactory
 from apps.managers.prompt_builder import PromptBuilder
 from apps.schemas.trigger import TriggerJob, AgentEvent
 
@@ -28,23 +28,37 @@ class AgenticManager:
         store: VectorStore,
     ) -> None:
         self.runner = runner
-        self.context_manager = DocumentContextManager(embedder=embedder, store=store)
+        self.embedder = embedder
+        self.store = store
         self.prompt_builder = PromptBuilder()
 
     async def run(self, job: TriggerJob) -> AsyncIterator[AgentEvent]:
         """
         Full pipeline: retrieve context → build prompt → run agent → yield events.
         """
-        # 1. Retrieve relevant context chunks (one search per context source)
-        # M3: context_sources is always empty — skip retrieval entirely.
+        # 1. Retrieve relevant context chunks via the appropriate plugin per source type
         chunks: list[Chunk] = []
         for source in job.context_sources:
-            source_chunks = await self.context_manager.retrieve(
-                query=job.message,
-                collection_id=source.collection_id,
-                history=job.history,
-            )
-            chunks.extend(source_chunks)
+            try:
+                plugin = ContextSourceFactory.get(source.type)
+                # Chat sources filter by topic_id; doc sources filter by source_id
+                if source.type == "chat":
+                    filter_dict = {"topic_id": source.source_id}
+                else:
+                    filter_dict = {"source_id": source.source_id}
+                source_chunks = await plugin.retrieve(
+                    query=job.message,
+                    collection_id=source.collection_id,
+                    top_k=5,
+                    filter=filter_dict,
+                )
+                chunks.extend(source_chunks)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "[agentic] context retrieval failed for source %s (%s): %s",
+                    source.source_id, source.type, exc,
+                )
 
         # 2. Build the messages array (system + context + history + message)
         messages = self.prompt_builder.build(job=job, context_chunks=chunks)

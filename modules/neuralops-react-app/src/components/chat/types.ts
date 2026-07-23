@@ -8,6 +8,7 @@ export interface MessageSender {
 export interface ChatMessage {
   id: string;
   type: "text" | "code" | "terminal" | "chart" | "form" | "image" | "web";
+  message_type?: "text" | "system" | "markdown" | string;
   content: string;
   language?: string;
   metadata?: Record<string, unknown>;

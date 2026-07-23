@@ -27,6 +27,13 @@ class User(AbstractUser):
         blank=True,
     )
 
+    display_name = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Per-server display name. Auto-assigned from email on join; editable later.",
+        db_index=True,
+    )
+
     current_company = models.ForeignKey(
         "nucleus.Company",
         on_delete=models.SET_NULL,
@@ -42,8 +49,14 @@ class User(AbstractUser):
             models.Index(fields=["google_sso_id"]),
         ]
 
+    def get_display_name(self) -> str:
+        """Returns display_name if set, otherwise derives from email."""
+        if self.display_name:
+            return self.display_name
+        return (self.email or self.username or "").split("@")[0]
+
     def __str__(self):
-        return self.username
+        return self.get_display_name()
 
     # def clean(self):
     #     super().clean()

@@ -4,9 +4,10 @@ import { apiJson } from "./api-client";
 export interface ApiMessage {
   id: string;
   type: string;
+  message_type?: string;
   content: string;
   sender_name: string;
-  sender_id: string;
+  sender_id: string | null;
   sender_type: string;
   sequence: number;
   created_at: string;

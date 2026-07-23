@@ -29,9 +29,20 @@ export function MessageList({ messages }: { messages: ChatMessage[] }) {
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto py-4">
-      {messages.map((m) => (
-        <MessageItem key={m.id} message={m} />
-      ))}
+      {messages.map((m) =>
+        m.message_type === "system" ? (
+          <div
+            key={m.id}
+            className="flex items-center gap-2 px-6 py-1 text-xs text-muted-foreground"
+          >
+            <div className="h-px flex-1 bg-border" />
+            <span>{m.content}</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+        ) : (
+          <MessageItem key={m.id} message={m} />
+        )
+      )}
     </div>
   );
 }

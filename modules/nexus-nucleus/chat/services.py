@@ -262,7 +262,7 @@ async def trigger_ai_response_async(
         },
         "message": user_message,
         "history": history,
-        "context_sources": [],
+        "context_sources": _build_context_sources(topic, company),
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
@@ -348,6 +348,29 @@ def list_messages(topic_id: str, limit: int = 100) -> list[dict]:
 # Write messages
 # ---------------------------------------------------------------------------
 
+def save_system_message(company, project, topic, content: str) -> dict:
+    """Save a system event message (no sender) and return its serialised form."""
+    from nucleus.models import ChatMessage
+
+    max_seq = (
+        ChatMessage.objects.filter(topic_id=topic.id)
+        .aggregate(Max("sequence"))["sequence__max"] or 0
+    )
+
+    msg = ChatMessage.objects.create(
+        company=company,
+        project=project,
+        topic=topic,
+        sender=None,
+        content=content,
+        message_type=ChatMessage.MessageType.SYSTEM,
+        status=ChatMessage.Status.COMPLETED,
+        sequence=max_seq + 1,
+        metadata={"role": "system"},
+    )
+    return _serialise(msg)
+
+
 def save_user_message(company, project, topic, user, content: str) -> dict:
     """Save a human message and return its serialised form."""
     from nucleus.models import ChatMessage
@@ -373,23 +396,62 @@ def save_user_message(company, project, topic, user, content: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Context sources for TriggerJob
+# ---------------------------------------------------------------------------
+
+def _build_context_sources(topic, company) -> list[dict]:
+    """
+    Build the context_sources list for TriggerJob.
+
+    Always includes a ChatContext ref (semantic search over past messages).
+    Plus any file/web sources attached to the topic that are ready.
+    """
+    sources = []
+
+    # 1. ChatContext — always included so nexus-ai can search past messages
+    sources.append({
+        "source_id": str(topic.id),
+        "type": "chat",
+        "label": "Chat History",
+        "collection_id": f"company_{company.id}_chat",
+    })
+
+    # 2. Attached file / web sources (only ready ones)
+    from nucleus.models import ContextSource
+    attached = ContextSource.objects.filter(
+        topic_id=topic.id,
+        is_active=True,
+        status=ContextSource.Status.READY,
+    )
+    for src in attached:
+        sources.append({
+            "source_id": str(src.id),
+            "type": "file",
+            "label": src.name,
+            "collection_id": src.collection_id,
+        })
+
+    return sources
+
+
+# ---------------------------------------------------------------------------
 # Serialiser
 # ---------------------------------------------------------------------------
 
 def _serialise(msg) -> dict:
     sender_name = (
-        getattr(msg.sender, "display_name", None)
-        or getattr(msg.sender, "username", None)
-        or getattr(msg.sender, "email", None)
-        or str(msg.sender_id)
+        msg.sender.get_display_name()
+        if msg.sender
+        else None
     )
     return {
         "id": str(msg.id),
         "type": "message",
+        "message_type": msg.message_type,
         "content": msg.content or "",
         "sender_name": sender_name,
-        "sender_id": str(msg.sender_id),
-        "sender_type": getattr(msg.sender, "user_type", "human"),
+        "sender_id": str(msg.sender_id) if msg.sender_id else None,
+        "sender_type": getattr(msg.sender, "user_type", "human") if msg.sender else "system",
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }

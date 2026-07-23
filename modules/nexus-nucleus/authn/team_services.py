@@ -18,12 +18,12 @@ def _format_member(member) -> dict:
     user = member.user
     if user.user_type == "persona":
         profile = getattr(user, "persona_profile", None)
-        name = profile.name if profile else user.username
+        name = profile.name if profile else user.display_name
         avatar = profile.avatar.url if (profile and profile.avatar) else None
         email = ""
     else:
         profile = getattr(user, "human_profile", None)
-        name = profile.full_name if profile else user.email
+        name = user.get_display_name()
         email = profile.email if profile else user.email
         avatar = profile.avatar.url if (profile and profile.avatar) else None
 

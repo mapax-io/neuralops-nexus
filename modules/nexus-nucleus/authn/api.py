@@ -1,4 +1,5 @@
 import hashlib
+import re
 
 from django.conf import settings
 from django.utils import timezone
@@ -10,6 +11,7 @@ from .services import DeviceAuthError, SignInError, auth_init, auth_status, auth
 from .supabase import SupabaseTokenError
 from . import workspace_services as ws_svc
 from . import team_services as team_svc
+from authn.auth import SupabaseBearer
 
 
 router = Router(tags=["Authentication"])
@@ -77,3 +79,55 @@ def verify(request):
         raise HttpError(401, str(exc))
     except PermissionError as exc:
         raise HttpError(403, str(exc))
+
+
+# ── Change display name ───────────────────────────────────────────────────────
+
+class ChangeUsernameIn(Schema):
+    new_name: str
+    topic_id: str
+
+
+class ChangeUsernameOut(Schema):
+    ok: bool
+    display_name: str
+
+
+_USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{2,30}$')
+
+
+@router.post("/change-username/", response=ChangeUsernameOut, auth=SupabaseBearer())
+def change_username(request, payload: ChangeUsernameIn):
+    from django.contrib.auth import get_user_model
+    from chat.services import save_system_message, publish, topic_channel
+    from nucleus.models import ChatTopic, Company
+
+    User = get_user_model()
+    user = request.auth
+
+    name = payload.new_name.strip()
+
+    if not _USERNAME_RE.match(name):
+        raise HttpError(400, "Username must be 2-30 characters, letters/numbers/underscore only.")
+
+    if User.objects.filter(display_name=name).exclude(pk=user.pk).exists():
+        raise HttpError(409, f"'{name}' is already taken on this server.")
+
+    old_name = user.get_display_name()
+    user.display_name = name
+    user.save(update_fields=["display_name"])
+
+    try:
+        topic = ChatTopic.objects.get(id=payload.topic_id, is_active=True)
+        company = Company.objects.filter(is_active=True).first()
+        sys_msg = save_system_message(
+            company=company,
+            project=topic.project,
+            topic=topic,
+            content=f"{old_name} changed their username to {name}",
+        )
+        publish(topic_channel(payload.topic_id), sys_msg)
+    except Exception:
+        pass
+
+    return {"ok": True, "display_name": name}
