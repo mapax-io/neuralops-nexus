@@ -66,10 +66,11 @@ function toUiMessage(m: ApiMessage): ChatMessage {
   return {
     id: m.id,
     type: "text",
+    message_type: m.message_type,
     content: m.content,
     sender: {
-      id: m.sender_id,
-      name: m.sender_name,
+      id: m.sender_id ?? "",
+      name: m.sender_name ?? "",
       type: m.sender_type === "persona" ? "agent" : "human",
       avatar: null,
     },

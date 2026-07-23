@@ -48,3 +48,8 @@ class VectorStore(ABC):
     async def delete_collection(self, collection_id: str) -> None:
         """Delete all vectors for a context source (when detached from topic)."""
         ...
+
+    @abstractmethod
+    async def delete_by_ids(self, collection_id: str, ids: list[str]) -> None:
+        """Delete specific documents from a collection by their IDs."""
+        ...

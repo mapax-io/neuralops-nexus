@@ -8,10 +8,14 @@ from pydantic import BaseModel
 
 class EmbedRequest(BaseModel):
     source_id: str                   # ContextSource UUID from nexus-nucleus
-    type: str                        # "doc" | "code"
+    type: str                        # "file" | "code"
     label: str                       # human-readable name ("auth.py")
     content: str                     # raw file content
     language: str | None = None      # code only ("python", "typescript", etc.)
+    topic_id: str | None = None      # ChatTopic UUID
+    channel_id: str | None = None    # ChatChannel UUID
+    project_id: str | None = None    # Project UUID
+    company_id: str | None = None    # Tenant/Company UUID
 
 
 class EmbedResponse(BaseModel):

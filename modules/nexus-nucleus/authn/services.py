@@ -1,4 +1,6 @@
 import logging
+import random
+import re
 
 import httpx
 from django.conf import settings
@@ -11,6 +13,36 @@ from .supabase import SupabaseTokenError, verify_supabase_token
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+
+def assign_display_name(user) -> str:
+    """
+    Auto-assign a unique per-server display name on the User record.
+    Derived from the local part of the user's email.
+    If already taken by another user on this server, appends a random 2-digit number.
+    """
+    # Already has one — skip
+    if user.display_name:
+        return user.display_name
+
+    # Derive base name from email local part, keep only alphanumeric + underscore
+    base = (user.email or "").split("@")[0]
+    base = re.sub(r"[^a-zA-Z0-9_]", "", base).lower() or "user"
+
+    # Find a unique name on this server
+    taken = set(
+        User.objects.filter(is_active=True)
+        .exclude(pk=user.pk)
+        .values_list("display_name", flat=True)
+    )
+
+    candidate = base
+    while candidate in taken:
+        candidate = f"{base}_{random.randint(10, 99)}"
+
+    user.display_name = candidate
+    user.save(update_fields=["display_name"])
+    return candidate
 
 
 # =========================================================
@@ -149,6 +181,7 @@ def auth_verify(access_token: str) -> dict:
             role=invitation.role,
             invited_by=invitation.invited_by,
         )
+        assign_display_name(user)
 
         # Add to corresponding Django group
         try:
@@ -166,6 +199,9 @@ def auth_verify(access_token: str) -> dict:
         _add_user_to_invited_project(company, user, invitation)
 
         logger.info("[auth_verify] invitation accepted user=%s role=%s", email, invitation.role)
+
+    # ── Assign display name if not yet set ────────────────────────────────
+    assign_display_name(user)
 
     # ── Update current_company if not set ──────────────────────────────────
     if user.current_company_id != company.id:

@@ -8,7 +8,7 @@ class AdapterFactory:
     @staticmethod
     def get(type: str) -> ContextAdapter:
         match type:
-            case "doc":
+            case "doc" | "file":  # "file" is the directive name; both map to DocAdapter
                 from apps.implementations.adapters.doc_adapter import DocAdapter
                 return DocAdapter()
 

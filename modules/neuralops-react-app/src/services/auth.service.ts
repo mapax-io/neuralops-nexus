@@ -61,6 +61,22 @@ export interface VerifyResult {
 }
 
 /** Verify the Supabase JWT against a Django NeuralOps server. */
+export interface ChangeUsernameResult {
+  ok: boolean;
+  display_name: string;
+}
+
+export async function changeUsername(
+  newName: string,
+  topicId: string,
+): Promise<ChangeUsernameResult> {
+  const { apiJson } = await import("./api-client");
+  return apiJson<ChangeUsernameResult>("/api/v1/auth/change-username/", {
+    method: "POST",
+    body: JSON.stringify({ new_name: newName, topic_id: topicId }),
+  });
+}
+
 export async function verifyServerAccess(
   serverUrl: string,
   token: string,

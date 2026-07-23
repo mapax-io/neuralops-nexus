@@ -25,6 +25,12 @@ def _verify_key(key: str = Depends(_api_key_header)):
     return key
 
 
+@router.get("/directives/")
+async def list_directives(_: str = Depends(_verify_key)) -> list[dict]:
+    """Return all registered context directives with help text."""
+    return ContextSourceFactory.get_all_directives()
+
+
 @router.post("/embed/", response_model=EmbedResponse)
 async def embed(
     req: EmbedRequest,
@@ -32,6 +38,37 @@ async def embed(
 ) -> EmbedResponse:
     """Chunk, embed, and store a document or code context source."""
     return await ContextSourceFactory.get(req.type).ingest(req)
+
+
+@router.delete("/embed/context-source/{collection_id}/")
+async def delete_context_source(
+    collection_id: str,
+    _: str = Depends(_verify_key),
+) -> dict:
+    """Delete all vectors for a context source collection from ChromaDB."""
+    await ContextSourceFactory.get("file").delete(collection_id)
+    return {"ok": True}
+
+
+@router.delete("/embed/message/{message_id}/")
+async def delete_message_vector(
+    message_id: str,
+    company_id: str,
+    _: str = Depends(_verify_key),
+) -> dict:
+    """
+    Delete a single chat message vector from ChromaDB.
+    Called by nexus-nucleus when a message is excluded from context (M6).
+    """
+    from apps.implementations.context_sources.chat.chat_context_source import ChatContextSource
+    from apps.factories.embedding import EmbeddingFactory
+    from apps.factories.vectorstore import VectorStoreFactory
+    chat_source = ChatContextSource(
+        embedder=EmbeddingFactory.get(),
+        store=VectorStoreFactory.get(),
+    )
+    await chat_source.delete_message(message_id, company_id)
+    return {"ok": True}
 
 
 @router.post("/embed/message/", response_model=MessageEmbedResponse)

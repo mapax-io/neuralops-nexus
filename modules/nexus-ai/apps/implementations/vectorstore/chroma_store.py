@@ -77,3 +77,15 @@ class ChromaStore(VectorStore):
 
     async def delete_collection(self, collection_id: str) -> None:
         await asyncio.to_thread(self.client.delete_collection, collection_id)
+
+    async def delete_by_ids(self, collection_id: str, ids: list[str]) -> None:
+        """Delete specific documents by ID from the given collection."""
+        def _delete():
+            try:
+                collection = self.client.get_collection(name=collection_id)
+                collection.delete(ids=ids)
+            except Exception:
+                # Collection may not exist — silently ignore
+                pass
+
+        await asyncio.to_thread(_delete)

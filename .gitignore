@@ -272,3 +272,4 @@ data/postgres_data
 modules/nexus-nucleus.backup
 modules/nexus-nucleus.django_backup
 
+modules/nexus-nucleus/media/

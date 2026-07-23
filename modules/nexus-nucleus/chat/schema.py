@@ -9,9 +9,10 @@ class SendMessageIn(Schema):
 class MessageOut(Schema):
     id: str
     type: str
+    message_type: Optional[str] = None
     content: str
-    sender_name: str
-    sender_id: str
+    sender_name: Optional[str] = None
+    sender_id: Optional[str] = None
     sender_type: str
     sequence: int
     created_at: str
