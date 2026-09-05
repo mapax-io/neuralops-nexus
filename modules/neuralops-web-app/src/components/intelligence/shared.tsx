@@ -146,7 +146,7 @@ export function Chip({ children, tone = "neutral" }: { children: React.ReactNode
 // dead end: models not yet attached to the project are offered under an
 // "attach & use" group (the caller attaches them on submit), and a new model
 // can be registered inline without leaving the flow.
-export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew, label = "Model", optional, noneLabel = "None", exclude, hint }: {
+export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew, registerLabel = "Register a new model", label = "Model", optional, noneLabel = "None", exclude, hint }: {
   id: string;
   projectId: string;
   models: ModelConfig[] | undefined;
@@ -154,6 +154,7 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
   onChange: (modelId: string) => void;
   // Opens the stacked CreateModelDialog; omitted when the user lacks the right.
   onRegisterNew?: () => void;
+  registerLabel?: string;
   label?: string;
   // An optional slot (the advisor) starts from a real "none" choice.
   optional?: boolean;
@@ -166,6 +167,10 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
   // A model without project_ids predates the visibility gate — usable anywhere.
   const inProject = visible?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? [];
   const attachable = visible?.filter((m) => m.project_ids && !m.project_ids.includes(projectId)) ?? [];
+  // Models exist but every one is excluded (the advisor slot with a single
+  // registered model): say why the list is empty instead of leaving a bare
+  // "No advisor" — otherwise it reads as a dead end.
+  const noneEligible = !!models?.length && (visible?.length ?? 0) === 0;
   const opt = (m: ModelConfig) => <option key={m.id} value={m.id}>{m.name} ({m.qualified_id})</option>;
   return (
     <div>
@@ -194,6 +199,8 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         {models?.length === 0 && !optional ? (
           <p className="text-[12px] text-warn">No models registered on this server yet.</p>
+        ) : noneEligible ? (
+          <p className="text-[12px] text-warn">Your only model is already the primary — register a second one to use it here.</p>
         ) : !projectId ? hint : attachable.some((m) => m.id === value) ? (
           <p className="text-[12px] text-ink2">This model gets attached to the project when you save.</p>
         ) : attachable.length > 0 && !optional ? (
@@ -201,7 +208,7 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
         ) : hint}
         {onRegisterNew && (
           <button type="button" onClick={onRegisterNew} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
-            <Plus size={12} strokeWidth={2.4} /> Register a new model
+            <Plus size={12} strokeWidth={2.4} /> {registerLabel}
           </button>
         )}
       </div>

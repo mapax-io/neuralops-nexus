@@ -366,8 +366,9 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
   // here, and named in the title so there is never any doubt.
   const [projectId, setProjectId] = useState(defaultProjectId);
   // Inline prerequisite creation — stacked dialogs, mounted fresh per open so
-  // they scope to the currently selected project.
-  const [addingModel, setAddingModel] = useState(false);
+  // they scope to the currently selected project. A model can be registered
+  // for either slot; the result lands where it was asked for.
+  const [addingModelFor, setAddingModelFor] = useState<"model" | "advisor" | null>(null);
   const [addingMcp, setAddingMcp] = useState(false);
   // Persona names are unique server-wide (the shadow user's handle), but the
   // API only lists per project — check what we can see live; the server
@@ -550,7 +551,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           models={models}
           value={backing.modelId}
           onChange={backing.pickModel}
-          onRegisterNew={() => setAddingModel(true)}
+          onRegisterNew={() => setAddingModelFor("model")}
           hint={<p className="text-[12px] text-ink2">Every answer comes from this model.</p>}
         />
         <ModelPicker
@@ -563,6 +564,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           models={models}
           value={backing.advisorId}
           onChange={backing.setAdvisorId}
+          onRegisterNew={() => setAddingModelFor("advisor")}
+          registerLabel="Register a second model"
           hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
         />
         <ToolServerPicker
@@ -626,13 +629,13 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       </form>
     </Dialog>
     {/* Stacked prerequisite dialogs — the flow never leaves this screen. */}
-    {addingModel && (
+    {addingModelFor && (
       <CreateModelDialog
         open
-        onClose={() => setAddingModel(false)}
+        onClose={() => setAddingModelFor(null)}
         attachProjectId={projectId}
         attachProjectName={projName}
-        onCreated={(m) => backing.pickModel(m.id, m)}
+        onCreated={(m) => (addingModelFor === "advisor" ? backing.setAdvisorId(m.id) : backing.pickModel(m.id, m))}
       />
     )}
     {addingMcp && (
@@ -664,7 +667,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
   const { data: servers } = useMcpServers();
   const { data: outputTypes } = useOutputTypes();
   const setProject = useSetModelConfigProject();
-  const [addingModel, setAddingModel] = useState(false);
+  const [addingModelFor, setAddingModelFor] = useState<"model" | "advisor" | null>(null);
   const [addingMcp, setAddingMcp] = useState(false);
   const [name, setName] = useState(persona.name);
   const [description, setDescription] = useState(persona.description ?? "");
@@ -795,7 +798,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           models={models}
           value={backing.modelId}
           onChange={backing.pickModel}
-          onRegisterNew={() => setAddingModel(true)}
+          onRegisterNew={() => setAddingModelFor("model")}
           hint={<p className="text-[12px] text-ink2">Every answer comes from this model.</p>}
         />
         <ModelPicker
@@ -808,6 +811,8 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           models={models}
           value={backing.advisorId}
           onChange={backing.setAdvisorId}
+          onRegisterNew={() => setAddingModelFor("advisor")}
+          registerLabel="Register a second model"
           hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
         />
         <ToolServerPicker
@@ -852,13 +857,13 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
         <FieldError>{err}</FieldError>
       </form>
     </Dialog>
-    {addingModel && (
+    {addingModelFor && (
       <CreateModelDialog
         open
-        onClose={() => setAddingModel(false)}
+        onClose={() => setAddingModelFor(null)}
         attachProjectId={persona.project_id}
         attachProjectName={projects?.find((p) => p.id === persona.project_id)?.name}
-        onCreated={(m) => backing.pickModel(m.id, m)}
+        onCreated={(m) => (addingModelFor === "advisor" ? backing.setAdvisorId(m.id) : backing.pickModel(m.id, m))}
       />
     )}
     {addingMcp && (
