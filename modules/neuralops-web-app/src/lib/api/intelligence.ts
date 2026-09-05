@@ -149,6 +149,9 @@ export interface MCPServerCreate {
   transport?: string; // fixed after creation — the server's PATCH has no transport field
   timeout_seconds?: number;
   max_retries?: number;
+  config?: Record<string, unknown>;
+  is_first_party?: boolean;
+  embed_output?: boolean;
   auth_type?: McpAuthType;
   oauth_config?: McpOAuthConfig;
   client_secret?: string; // write-only — folded into encrypted secrets server-side
@@ -164,6 +167,8 @@ export interface MCPServerPatch {
   command?: string;
   timeout_seconds?: number;
   max_retries?: number;
+  config?: Record<string, unknown>;
+  embed_output?: boolean;
   auth_type?: McpAuthType;
   oauth_config?: McpOAuthConfig;
   client_secret?: string;

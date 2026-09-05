@@ -199,6 +199,45 @@ describe("McpTab — single-project ownership (spec §3.3)", () => {
     await waitFor(() => expect(patched).not.toBeNull());
     expect(patched).toEqual({ max_retries: 5 });
   });
+
+  it("carries the runtime fields the worker reads: config JSON, first-party and embed flags", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const embed = screen.getByLabelText(/embed tool output/i) as HTMLInputElement;
+    expect(embed).toBeDisabled(); // only meaningful for a first-party server
+    fireEvent.click(screen.getByLabelText(/first-party server/i));
+    expect(embed).toBeEnabled();
+    fireEvent.click(embed);
+    fireEvent.change(screen.getByLabelText(/extra configuration/i), { target: { value: "{ not json" } });
+    fillCreate({ projectId: "p2", name: "Files", url: "http://files.internal/mcp" });
+    submitCreate();
+    await screen.findByText(/must be a JSON object/i);
+    expect(posted).toBeNull();
+    fireEvent.change(screen.getByLabelText(/extra configuration/i), { target: { value: '{"root_path": "/data"}' } });
+    submitCreate();
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ config: { root_path: "/data" }, is_first_party: true, embed_output: true });
+  });
+
+  it("edits config and the embed flag; first-party stays fixed as the server's PATCH lacks it", async () => {
+    server.use(http.get(SERVERS_URL, () => HttpResponse.json([{ ...S1, is_first_party: true, embed_output: false, config: { root_path: "/old" } }])));
+    let patched: Record<string, unknown> | null = null;
+    server.use(http.patch(`${SERVERS_URL}:id/`, async ({ request }) => { patched = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ ...S1, ...patched }); }));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Warehouse tools" }));
+    await screen.findByText("Edit Warehouse tools");
+    expect(screen.queryByLabelText(/first-party server/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/first-party/i, { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/extra configuration/i)).toHaveValue('{\n  "root_path": "/old"\n}');
+    fireEvent.click(screen.getByLabelText(/embed tool output/i));
+    fireEvent.change(screen.getByLabelText(/extra configuration/i), { target: { value: '{"root_path": "/new"}' } });
+    fireEvent.submit(document.getElementById("mce-form")!);
+    await waitFor(() => expect(patched).not.toBeNull());
+    expect(patched).toEqual({ embed_output: true, config: { root_path: "/new" } });
+  });
+
   it("offers no project control when editing — ownership is not transferable", async () => {
     renderTab();
     await screen.findByText("Warehouse tools");

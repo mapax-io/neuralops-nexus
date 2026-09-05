@@ -52,6 +52,59 @@ const endpointOf = (s: { transport: string; url: string | null; command: string 
 const validateTimeout = (v: string) => validateNumber(v, { label: "the timeout", min: 1, max: 3600, integer: true });
 const validateRetries = (v: string) => validateNumber(v, { label: "the retry count", min: 0, max: 10, integer: true });
 
+// The worker receives `config` verbatim with the server, so it must be a JSON
+// object — anything else is caught here, before a 400 or a confusing runtime.
+function parseConfig(text: string): { value?: Record<string, unknown>; error?: string } {
+  const t = text.trim();
+  if (!t) return { value: {} };
+  try {
+    const v: unknown = JSON.parse(t);
+    if (!v || typeof v !== "object" || Array.isArray(v)) return { error: "Extra configuration must be a JSON object, like {\"root_path\": \"/data\"}." };
+    return { value: v as Record<string, unknown> };
+  } catch {
+    return { error: "Extra configuration must be a JSON object, like {\"root_path\": \"/data\"}." };
+  }
+}
+const formatConfig = (c: Record<string, unknown> | null | undefined) => (c && Object.keys(c).length ? JSON.stringify(c, null, 2) : "");
+
+function RuntimeFields({ idPrefix, config, onConfig, firstParty, onFirstParty, embed, onEmbed, firstPartyFixed }: {
+  idPrefix: string;
+  config: string; onConfig: (v: string) => void;
+  firstParty: boolean; onFirstParty?: (v: boolean) => void; // absent on edit — fixed server-side
+  embed: boolean; onEmbed: (v: boolean) => void;
+  firstPartyFixed?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <Label htmlFor={`${idPrefix}-config`}>Extra configuration <span className="text-ink2">(JSON, optional)</span></Label>
+        <textarea
+          id={`${idPrefix}-config`}
+          rows={3}
+          value={config}
+          onChange={(e) => onConfig(e.target.value)}
+          placeholder={'{"root_path": "/data"}'}
+          spellCheck={false}
+          className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2 font-mono text-[12.5px] leading-relaxed outline-none focus:border-accent"
+        />
+        <p className="mt-1.5 text-[12px] text-ink2">Non-secret settings handed to the server as-is. Secrets go under Authentication.</p>
+      </div>
+      {firstPartyFixed ? (
+        <p className="text-[12px] text-ink2">{firstParty ? "First-party server (published by us)." : "Third-party server."} Fixed after creation.</p>
+      ) : (
+        <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
+          <input type="checkbox" checked={firstParty} onChange={(e) => { onFirstParty?.(e.target.checked); if (!e.target.checked) onEmbed(false); }} className="mt-0.5 accent-[var(--accent)]" />
+          First-party server (published by us) — the only kind whose tool output may be embedded
+        </label>
+      )}
+      <label className={`flex items-start gap-2.5 text-[12.5px] ${firstParty ? "text-ink2" : "text-ink2/60"}`}>
+        <input type="checkbox" checked={embed} disabled={!firstParty} onChange={(e) => onEmbed(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+        Embed tool output into the project&apos;s knowledge base
+      </label>
+    </div>
+  );
+}
+
 function CallSettings({ idPrefix, timeout, retries, onTimeout, onRetries }: {
   idPrefix: string; timeout: string; retries: string; onTimeout: (v: string) => void; onRetries: (v: string) => void;
 }) {
@@ -247,6 +300,9 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   const [description, setDescription] = useState("");
   const [timeout, setTimeout_] = useState("60");
   const [retries, setRetries] = useState("3");
+  const [config, setConfig] = useState("");
+  const [firstParty, setFirstParty] = useState(false);
+  const [embed, setEmbed] = useState(false);
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>("none");
   const [oauth, setOauth] = useState<OAuthDraft>(emptyOAuthDraft);
   const [err, setErr] = useState<string | null>(null);
@@ -277,6 +333,9 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     setDescription("");
     setTimeout_("60");
     setRetries("3");
+    setConfig("");
+    setFirstParty(false);
+    setEmbed(false);
     setAuthType("none");
     setOauth(emptyOAuthDraft());
     setErr(null);
@@ -306,6 +365,8 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     if (ne || ue) return;
     const ce = validateTimeout(timeout) ?? validateRetries(retries);
     if (ce) return setErr(ce);
+    const cfg = parseConfig(config);
+    if (cfg.error) return setErr(cfg.error);
     if (authType === "oauth2") {
       const oe = validateOAuth(oauth, { isEdit: false, hasStoredSecret: false });
       if (oe) return setErr(oe);
@@ -322,6 +383,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       ...(stdio ? { command: command.trim() } : { url: url.trim() }),
       description: description.trim() || undefined,
       timeout_seconds: Number(timeout), max_retries: Number(retries),
+      config: cfg.value, is_first_party: firstParty, embed_output: firstParty && embed,
       auth_type: authType,
       ...(authType === "oauth2" ? draftToPayload(oauth)
         : authType === "static_secrets" && oauth.client_secret.trim() ? { client_secret: oauth.client_secret.trim() }
@@ -434,6 +496,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
           <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
         <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
+        <RuntimeFields idPrefix="mcp" config={config} onConfig={setConfig} firstParty={firstParty} onFirstParty={setFirstParty} embed={embed} onEmbed={setEmbed} />
         <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
         {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
         <FieldError>{err}</FieldError>
@@ -449,6 +512,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
   const [description, setDescription] = useState(server.description ?? "");
   const [timeout, setTimeout_] = useState(String(server.timeout_seconds));
   const [retries, setRetries] = useState(String(server.max_retries));
+  const [config, setConfig] = useState(() => formatConfig(server.config));
+  const [embed, setEmbed] = useState(server.embed_output);
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>(server.auth_type);
   const stdio = isStdio(server.transport);
   const [oauth, setOauth] = useState<OAuthDraft>(() => draftFromConfig(server.oauth_config));
@@ -478,6 +543,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
     if (ne || ue) return;
     const ce = validateTimeout(timeout) ?? validateRetries(retries);
     if (ce) { setAuthErr(ce); return; }
+    const cfg = parseConfig(config);
+    if (cfg.error) { setAuthErr(cfg.error); return; }
     if (authType === "oauth2") {
       // A client_secret is already stored whenever the server was ALREADY
       // oauth2 (create/edit both require one) — regardless of whether the
@@ -509,6 +576,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       ...(description.trim() !== (server.description ?? "") ? { description: description.trim() } : {}),
       ...(Number(timeout) !== server.timeout_seconds ? { timeout_seconds: Number(timeout) } : {}),
       ...(Number(retries) !== server.max_retries ? { max_retries: Number(retries) } : {}),
+      ...(JSON.stringify(cfg.value) !== JSON.stringify(server.config ?? {}) ? { config: cfg.value } : {}),
+      ...(embed !== server.embed_output ? { embed_output: embed } : {}),
       ...authPayload,
     };
     if (Object.keys(payload).length === 0) return onClose(); // nothing changed
@@ -604,6 +673,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
         <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
+        <RuntimeFields idPrefix="mce" config={config} onConfig={setConfig} firstParty={server.is_first_party} firstPartyFixed embed={embed} onEmbed={setEmbed} />
         <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
         <FieldError>{authErr}</FieldError>
       </form>
