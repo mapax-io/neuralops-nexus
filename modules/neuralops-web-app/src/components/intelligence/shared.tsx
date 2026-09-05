@@ -63,7 +63,10 @@ export function CardGrid({ children }: { children: React.ReactNode }) {
 }
 
 // Entity card: identity + chips up top, one meta line pinned to the footer,
-// actions revealed on hover (always visible on touch).
+// actions revealed on hover (always visible on touch). The actions are a real
+// flex item, not an overlay: they take their own room in the header row, so a
+// long title or a wrapped chip never runs underneath them however many there
+// are (the models card has three).
 export function EntityCard({ icon, title, chips, body, meta, actions }: {
   icon: React.ReactNode;
   title: React.ReactNode;
@@ -78,12 +81,12 @@ export function EntityCard({ icon, title, chips, body, meta, actions }: {
         <span className="flex size-10 flex-none items-center justify-center overflow-hidden rounded-[10px] border border-line bg-surface2 text-ink2">
           {icon}
         </span>
-        <div className="min-w-0 flex-1 pr-8">
+        <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-[14px] font-semibold">{title}{chips}</p>
           {body && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink2">{body}</p>}
         </div>
         {actions && (
-          <div className="absolute right-3 top-3 flex gap-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100">
+          <div className="-mr-1 -mt-1 flex flex-none gap-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100">
             {actions}
           </div>
         )}
