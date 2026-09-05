@@ -25,7 +25,9 @@ export interface TeamMember {
   avatar?: string | null;
 }
 export interface AvailableUser { user_id: string; name: string; email: string; avatar?: string | null }
-export interface AvailablePersona { persona_id: string; user_id: string; name: string; source_type: string; avatar?: string | null }
+// No backing details here — the server dropped source_type with the agent
+// collapse; join on persona_id with the project persona list for those.
+export interface AvailablePersona { persona_id: string; user_id: string; name: string; avatar?: string | null }
 
 const base = (pid: string) => `/api/v1/projects/${pid}/team/`;
 

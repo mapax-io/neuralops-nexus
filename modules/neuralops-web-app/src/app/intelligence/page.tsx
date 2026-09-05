@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { TopBar } from "@/components/shell/top-bar";
-import { AgentsTab } from "@/components/intelligence/agents-tab";
 import { McpTab } from "@/components/intelligence/mcp-tab";
 import { ModelsTab } from "@/components/intelligence/models-tab";
 import { IntelNav, type IntelSection } from "@/components/intelligence/nav";
@@ -24,7 +23,7 @@ export default function IntelligencePage() {
   // active states and writes it from the quick-launch icons.
   const rawSection = useUiStore((u) => u.intelSection);
   const setSection = useUiStore((u) => u.setIntelSection);
-  const section: IntelSection = (["personas", "models", "mcp", "agents"] as const).includes(rawSection as IntelSection)
+  const section: IntelSection = (["personas", "models", "mcp"] as const).includes(rawSection as IntelSection)
     ? (rawSection as IntelSection)
     : "personas";
   const canManage = connection?.role === "owner" || connection?.role === "admin";
@@ -50,7 +49,6 @@ export default function IntelligencePage() {
           {section === "personas" && <PersonasTab canManage={canManage} />}
           {section === "models" && <ModelsTab canManage={canManage} />}
           {section === "mcp" && <McpTab />}
-          {section === "agents" && <AgentsTab />}
         </main>
       </div>
       <AboutDialog open={about} onClose={() => setAbout(false)} />

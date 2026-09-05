@@ -165,17 +165,6 @@ changes behavior, not just style:
 
 ---
 
-## neuralops-web-app: intelligence EDIT dialogs lack attach & use
-
-**Where:** `modules/neuralops-web-app` — `agents-tab.tsx` EditAgentDialog,
-`personas-tab.tsx` EditPersonaDialog.
-
-The 2026-09 create-flow rework gave the CREATE dialogs a ModelPicker with an
-"attach & use" group and inline register/add dialogs. The edit dialogs still
-use plain project-filtered selects: swapping an agent's model is limited to
-models already attached to its project, with no inline attach or register.
-Same treatment as create would close the gap.
-
 ## neuralops-web-app: Escape during an in-flight create still completes it
 
 **Where:** `modules/neuralops-web-app` — all intelligence create dialogs.
@@ -185,3 +174,101 @@ the window with the attach-first step): once submit fires, closing the dialog
 does not abort the mutation — the entity is still created and toasts. If
 cancel-on-close is ever wanted, it needs AbortSignal plumbing through the
 mutations; today the toast at least announces the outcome.
+
+## Backend docs still describe AIAgent / AIModel after PR #99
+
+**Where:** `docs/CONCEPTS-AND-ROLES.md` (the "Agent — AIAgent" section, the
+`ai_model.*` / `agent.*` rights tables, `visible_agents`), `docs/ARCHITECTURE.md`
+(`AIModel`, LiteLLM `provider/model` ids, "attach it to an agent"), and the
+`readme.md` feature list.
+
+PR #99 collapsed `AIAgent` into `Persona` (one model + optional advisor + 0..5
+MCP servers), renamed `AIModel` → `ModelConfig` (`/model-configs/`, bare
+`model_id` + `provider`, `qualified_id` in pydantic-ai `provider:model` form),
+renamed the rights to `model_config.*` (plus a new `model_config.update`), and
+deleted `agent.*`. None of those docs were updated in the PR. DECISIONS.md §18
+was rewritten with the web-app follow-up; the rest is the backend's to fix.
+
+**Decision needed:** whether the backend maintainer updates them in one pass or
+the sections get a "superseded by PR #99" banner until then.
+
+---
+
+## `NEURALOPS_VERSION` not bumped for the PR #99 API break
+
+**Where:** `neuralops/Dockerfile` (`NEURALOPS_VERSION="0.1.2"`), consumed by the
+web-app's `COMPATIBLE_SERVER_VERSION` drift check in `src/lib/version.ts`.
+
+PR #99 is a breaking API change for clients (`/ai-models/` → `/model-configs/`,
+`/agents/` gone, persona payloads reshaped), but the image version stayed 0.1.2
+(the dev profile reports `dev`, which the check ignores). The web-app was
+adapted to the new contract and its `COMPATIBLE_SERVER_VERSION` deliberately
+left at 0.1.2: bumping it alone would flag every 0.1.2 production server as
+"breaking" even though 0.1.2 images built from the current `dev` DO speak the
+new contract. When the image version is bumped (0.2.0 would be right under the
+"MINOR drift is breaking while MAJOR is 0" rule), move the frontend constant in
+the same change.
+
+**Decision needed:** release owner's call — when and to what.
+
+---
+
+## Backend fields the AI worker never reads (do not build UI for these yet)
+
+**Where:** `modules/nexus-nucleus/internal/api.py` (`ModelInternal`, `PromptInternal`,
+`MCPServerInternal`) vs `modules/nexus-ai/apps/managers/nucleus_client.py` /
+`apps/schemas/trigger.py`.
+
+While aligning every web-app dialog with the backend input schemas (2026-09-06),
+these accepted-and-stored fields turned out to have no consumer at runtime, so
+the web app deliberately does NOT expose them (a control that changes nothing
+is worse than none):
+
+- `ModelConfig.config` (provider-specific JSON): not in `ModelInternal`, so
+  nexus-ai never sees it.
+- `MCPServer.server_type` beyond local/remote, `docker_image`, `docker_command`,
+  `kubernetes_service`: not in `MCPServerInternal`; the runner only knows
+  transport + url/command.
+- `MCPServer.timeout_seconds` / `max_retries`: nexus-ai's `MCPServerConfig` has
+  a `timeout_seconds` slot, but nucleus's `MCPServerInternal` does not forward
+  either field — the web app now lets admins set them (the API accepts them),
+  and they will take effect once nucleus forwards them.
+- `Prompt.context_scope` (`['chat', 'doc']`): forwarded in `PromptInternal` but
+  nothing in nexus-ai reads it.
+- `Prompt.template_id` (DB `PromptTemplate`): no list endpoint is mounted
+  (`list_prompt_templates` exists in services only; `/prompt-templates` serves
+  files), so a client cannot offer a choice.
+- `CompanyAIConfig` (`GET/PUT /ai-config/`): nucleus exposes it internally at
+  `/companies/{id}/ai-config/`, but nexus-ai never calls it — it reads
+  `EMBEDDING_MODEL` etc. from env (`apps/core/config.py`). Also note the public
+  `PUT /ai-config/` has no permission check.
+
+**Decision needed:** which of these the backend intends to honor (forward in the
+internal payload / read in nexus-ai), and which should be dropped from the
+schemas. The web app will follow once they are real.
+
+---
+
+## Migrations 0009/0010 stop on legacy dev data (orphan and duplicate soft-deleted MCP rows)
+
+**Where:** `modules/nexus-nucleus/nucleus/migrations/0009_mcpserver_project_data.py`,
+`0010_mcpserver_project_finalize.py`.
+
+Seen migrating a long-lived dev database to the #99 schema (2026-09-06):
+
+- 0009 refuses when any `MCPServer` has no project in the old M2M — on this
+  database six inactive "Legacy MCP Test Flow" rows left behind by the old
+  nested `/ai-models/{id}/mcp-servers/` path. Fixed by deleting exactly those
+  six (after nulling the `AIAgent.mcp_server` FKs of the test agents that
+  referenced them).
+- 0010 then fails to build `uniq_mcp_server_name_per_project` because
+  soft-deleted rows keep their names: five inactive "Search MCP Test Flow v2"
+  copies in one project and an inactive "GitHub" beside the live one. Fixed by
+  renaming the inactive duplicates `name_deleted_<8-char id>` — the same scheme
+  `delete_persona()` uses to free a name.
+
+**Decision needed:** whether 0009/0010 should do this themselves (skip or
+mangle soft-deleted rows, drop project-less inactive rows) so a self-hoster's
+upgrade does not stop with a traceback, and whether `delete_mcp_server_standalone`
+should mangle the name on soft delete like `delete_persona` does.
+

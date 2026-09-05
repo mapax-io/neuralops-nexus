@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarClock, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
@@ -9,7 +9,7 @@ import { validateName as vName } from "@/lib/validation";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Skeleton } from "@/components/ui/surfaces";
 import { usePersonas } from "@/hooks/use-intelligence";
-import { useCreateSchedule, useDeleteSchedule, useSchedules, useToggleSchedule } from "@/hooks/use-schedules";
+import { useCreateSchedule, useDeleteSchedule, useEditSchedule, useSchedules, useToggleSchedule } from "@/hooks/use-schedules";
 import type { Schedule } from "@/lib/api/schedules";
 import { isCompanyAdmin } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
@@ -26,6 +26,7 @@ export function SchedulesPanel({ pid, cid, tid }: { pid: string; cid: string; ti
   const canCreate = role !== "viewer";
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<Schedule | null>(null);
+  const [editing, setEditing] = useState<Schedule | null>(null);
   const toggle = useToggleSchedule(pid, cid, tid);
   const del = useDeleteSchedule(pid, cid, tid);
   // Members may manage only schedules they created (ownership check server-side).
@@ -107,6 +108,14 @@ export function SchedulesPanel({ pid, cid, tid }: { pid: string; cid: string; ti
                 {canTouch(s) && (
                   <span className="flex flex-none gap-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100">
                     <button
+                      aria-label={`Edit schedule for ${s.persona_name}`}
+                      title="Edit instruction and label"
+                      onClick={() => setEditing(s)}
+                      className="flex size-8 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
+                    >
+                      <Pencil size={14} strokeWidth={2} />
+                    </button>
+                    <button
                       aria-label={s.is_paused ? `Resume schedule for ${s.persona_name}` : `Pause schedule for ${s.persona_name}`}
                       title={s.is_paused ? "Resume" : "Pause"}
                       disabled={toggle.isPending}
@@ -131,6 +140,7 @@ export function SchedulesPanel({ pid, cid, tid }: { pid: string; cid: string; ti
         )}
       </div>
       <CreateScheduleDialog open={creating} onClose={() => setCreating(false)} pid={pid} cid={cid} tid={tid} />
+      {editing && <EditScheduleDialog key={editing.id} schedule={editing} pid={pid} cid={cid} tid={tid} onClose={() => setEditing(null)} />}
       <ConfirmDialog
         open={!!removing}
         onClose={() => setRemoving(null)}
@@ -152,7 +162,9 @@ export function SchedulesPanel({ pid, cid, tid }: { pid: string; cid: string; ti
   );
 }
 
-type Mode = "interval" | "daily" | "once";
+type Mode = "interval" | "daily" | "weekly" | "monthly" | "once";
+// Cron numbering: 0 = Sunday … 6 = Saturday.
+const WEEKDAYS: { n: number; label: string }[] = [1, 2, 3, 4, 5, 6, 0].map((n) => ({ n, label: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n] }));
 
 function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean; onClose: () => void; pid: string; cid: string; tid: string }) {
   const { data: personas } = usePersonas(pid);
@@ -163,7 +175,13 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
   const [every, setEvery] = useState(1);
   const [period, setPeriod] = useState<"minutes" | "hours" | "days" | "weeks">("hours");
   const [dailyTime, setDailyTime] = useState("09:00");
+  const [weekdays, setWeekdays] = useState<number[]>([]);
+  const [monthDay, setMonthDay] = useState("1");
   const [onceAt, setOnceAt] = useState("");
+  // Server defaults: announce each run in the chat; make up a run missed
+  // while the server was down.
+  const [triggerVisible, setTriggerVisible] = useState(true);
+  const [catchUpMissed, setCatchUpMissed] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const reset = () => {
@@ -174,7 +192,11 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
     setEvery(1);
     setPeriod("hours");
     setDailyTime("09:00");
+    setWeekdays([]);
+    setMonthDay("1");
     setOnceAt("");
+    setTriggerVisible(true);
+    setCatchUpMissed(true);
     setErr(null);
   };
   const close = () => {
@@ -191,7 +213,10 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
     if (!query.trim()) return setErr("Say what they should do each run — it's sent as their instruction.");
     if (label.trim()) { const le = vName(label, { label: "label", max: 80 }); if (le) return setErr(le); }
     if (mode === "interval" && (!Number.isFinite(every) || every < 1)) return setErr("Repeat interval must be at least 1.");
-    if (mode === "daily" && !/^\d{2}:\d{2}$/.test(dailyTime)) return setErr("Pick a time of day.");
+    const clocked = mode === "daily" || mode === "weekly" || mode === "monthly";
+    if (clocked && !/^\d{2}:\d{2}$/.test(dailyTime)) return setErr("Pick a time of day.");
+    if (mode === "weekly" && weekdays.length === 0) return setErr("Pick at least one day of the week.");
+    if (mode === "monthly" && !/^([1-9]|[12]\d|3[01])$/.test(monthDay)) return setErr("Day of month must be between 1 and 31.");
     if (mode === "once") {
       if (!onceAt) return setErr("Pick when it should fire.");
       if (new Date(onceAt).getTime() <= Date.now()) return setErr("That time is in the past.");
@@ -202,10 +227,16 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
       query_text: query.trim(),
       label: label.trim() || undefined,
       timezone: tz,
+      trigger_visible: triggerVisible,
+      catch_up_missed: catchUpMissed,
       ...(mode === "interval"
         ? { schedule_kind: "interval" as const, interval_every: every, interval_period: period }
-        : mode === "daily"
-          ? { schedule_kind: "crontab" as const, crontab_minute: String(Number(mm)), crontab_hour: String(Number(hh)) }
+        : clocked
+          ? {
+              schedule_kind: "crontab" as const, crontab_minute: String(Number(mm)), crontab_hour: String(Number(hh)),
+              ...(mode === "weekly" ? { crontab_day_of_week: [...weekdays].sort((a, b) => a - b).join(",") } : {}),
+              ...(mode === "monthly" ? { crontab_day_of_month: String(Number(monthDay)) } : {}),
+            }
           : { schedule_kind: "clocked" as const, clocked_time: new Date(onceAt).toISOString() }),
     });
   };
@@ -227,8 +258,8 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
     >
       <form id="sc-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="sc-persona">Persona</Label>
-          <select id="sc-persona" autoFocus value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
+          <Label htmlFor="sc-persona" required>Persona</Label>
+          <select id="sc-persona" required autoFocus value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
             <option value="" disabled>Choose a persona…</option>
             {personas?.map((p) => (
               <option key={p.id} value={p.id}>@{p.name}</option>
@@ -237,9 +268,10 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
           {personas?.length === 0 && <p className="mt-1.5 text-[12px] text-warn">This project has no personas yet — create one under Intelligence.</p>}
         </div>
         <div>
-          <Label htmlFor="sc-query">What should they do each run?</Label>
+          <Label htmlFor="sc-query" required>What should they do each run?</Label>
           <textarea
             id="sc-query"
+            required
             rows={3}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -261,7 +293,7 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
               next?.focus();
               next?.click();
             }} aria-label="When">
-            {([["daily", "Daily"], ["interval", "Repeating"], ["once", "Once"]] as const).map(([m, l]) => (
+            {([["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["interval", "Repeating"], ["once", "Once"]] as const).map(([m, l]) => (
               <button
                 key={m}
                 type="button"
@@ -275,17 +307,40 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
             ))}
           </div>
         </div>
-        {mode === "daily" && (
+        {mode === "weekly" && (
+          <fieldset>
+            <legend className="mb-1.5 block text-[13px] font-medium text-ink2">On these days</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map((d) => {
+                const on = weekdays.includes(d.n);
+                return (
+                  <label key={d.n} className={`flex cursor-pointer items-center gap-1.5 rounded-[10px] border px-2.5 py-1.5 text-[13px] ${on ? "border-accent bg-accent/10" : "border-line bg-surface hover:border-accent/50"}`}>
+                    <input type="checkbox" checked={on} onChange={() => setWeekdays((cur) => (cur.includes(d.n) ? cur.filter((x) => x !== d.n) : [...cur, d.n]))} className="accent-[var(--accent)]" />
+                    {d.label}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+        )}
+        {mode === "monthly" && (
           <div className="max-w-[180px]">
-            <Label htmlFor="sc-time">At</Label>
-            <Input id="sc-time" type="time" value={dailyTime} onChange={(e) => setDailyTime(e.target.value)} />
+            <Label htmlFor="sc-monthday" required>Day of month</Label>
+            <Input id="sc-monthday" type="number" required min={1} max={31} step={1} inputMode="numeric" value={monthDay} onChange={(e) => setMonthDay(e.target.value)} />
+            <p className="mt-1.5 text-[12px] text-ink2">Months without that day are skipped (e.g. the 31st).</p>
+          </div>
+        )}
+        {(mode === "daily" || mode === "weekly" || mode === "monthly") && (
+          <div className="max-w-[180px]">
+            <Label htmlFor="sc-time" required>At</Label>
+            <Input id="sc-time" type="time" required value={dailyTime} onChange={(e) => setDailyTime(e.target.value)} />
           </div>
         )}
         {mode === "interval" && (
           <div className="grid max-w-sm grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="sc-every">Every</Label>
-              <Input id="sc-every" type="number" min={1} value={every} onChange={(e) => setEvery(Number(e.target.value))} />
+              <Label htmlFor="sc-every" required>Every</Label>
+              <Input id="sc-every" type="number" required min={1} value={every} onChange={(e) => setEvery(Number(e.target.value))} />
             </div>
             <div>
               <Label htmlFor="sc-period">Period</Label>
@@ -300,13 +355,81 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
         )}
         {mode === "once" && (
           <div className="max-w-[260px]">
-            <Label htmlFor="sc-once">Fire at</Label>
-            <Input id="sc-once" type="datetime-local" value={onceAt} onChange={(e) => setOnceAt(e.target.value)} />
+            <Label htmlFor="sc-once" required>Fire at</Label>
+            <Input id="sc-once" type="datetime-local" required value={onceAt} onChange={(e) => setOnceAt(e.target.value)} />
           </div>
         )}
         <div>
           <Label htmlFor="sc-label">Label <span className="text-ink2">(optional)</span></Label>
           <Input id="sc-label" placeholder="e.g. Morning digest" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={80} />
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
+            <input type="checkbox" checked={triggerVisible} onChange={(e) => setTriggerVisible(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+            Post a visible &ldquo;Scheduled: …&rdquo; message in the chat before each run
+          </label>
+          <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
+            <input type="checkbox" checked={catchUpMissed} onChange={(e) => setCatchUpMissed(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+            If the server was down at run time, run it once on restart
+          </label>
+        </div>
+        <FieldError>{err}</FieldError>
+      </form>
+    </Dialog>
+  );
+}
+
+// What the server lets a schedule change after creation: the instruction and
+// the label. The clock is fixed — pause, or recreate with a new one.
+function EditScheduleDialog({ schedule, pid, cid, tid, onClose }: { schedule: Schedule; pid: string; cid: string; tid: string; onClose: () => void }) {
+  const [query, setQuery] = useState(schedule.query_text);
+  const [label, setLabel] = useState(schedule.label ?? "");
+  const [err, setErr] = useState<string | null>(null);
+  const edit = useEditSchedule(pid, cid, tid, onClose);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    if (!query.trim()) return setErr("Say what they should do each run — it's sent as their instruction.");
+    if (label.trim()) { const le = vName(label, { label: "label", max: 80 }); if (le) return setErr(le); }
+    const patch = {
+      ...(query.trim() !== schedule.query_text ? { query_text: query.trim() } : {}),
+      ...(label.trim() !== (schedule.label ?? "") ? { label: label.trim() } : {}),
+    };
+    if (Object.keys(patch).length === 0) return onClose(); // nothing changed
+    edit.mutate({ id: schedule.id, patch });
+  };
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Edit schedule for @${schedule.persona_name}`}
+      description={`${schedule.schedule_summary} — the clock stays; change the instruction or the label.`}
+      icon={<Pencil size={17} strokeWidth={2} />}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="se-form" size="sm" variant="primary" disabled={!query.trim()} loading={edit.isPending}>Save changes</Button>
+        </div>
+      }
+    >
+      <form id="se-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <div>
+          <Label htmlFor="se-query" required>What should they do each run?</Label>
+          <textarea
+            id="se-query"
+            required
+            autoFocus
+            rows={3}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
+          />
+        </div>
+        <div>
+          <Label htmlFor="se-label">Label <span className="text-ink2">(optional)</span></Label>
+          <Input id="se-label" placeholder="e.g. Morning digest" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={80} />
         </div>
         <FieldError>{err}</FieldError>
       </form>

@@ -33,8 +33,13 @@ export interface ScheduleCreate {
   interval_period?: "minutes" | "hours" | "days" | "weeks";
   crontab_minute?: string;
   crontab_hour?: string;
+  crontab_day_of_week?: string;   // "1,3,5" — cron numbering, 0 = Sunday
+  crontab_day_of_month?: string;  // "15"
+  crontab_month_of_year?: string;
   clocked_time?: string; // ISO 8601, one-time fire
   timezone?: string;
+  trigger_visible?: boolean; // post a visible "Scheduled: …" message before the run (server default true)
+  catch_up_missed?: boolean; // a run missed while the server was down fires once on restart (server default true)
 }
 
 export const createSchedule = (pid: string, cid: string, tid: string, payload: ScheduleCreate) =>

@@ -1,5 +1,5 @@
 export const APP_NAME = "NeuralOps Nexus";
-export const APP_VERSION = "0.13.11";
+export const APP_VERSION = "0.14.0";
 export const APP_STAGE = "Alpha";
 
 // Highest server version this app is known-compatible with. While MAJOR is 0,

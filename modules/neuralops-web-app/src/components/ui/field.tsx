@@ -1,7 +1,21 @@
 import { cn } from "@/lib/utils";
 
-export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
-  return <label className={cn("block text-[13px] font-medium text-ink2 mb-1.5", className)} {...props} />;
+// `required` draws the house asterisk. It is CSS-generated (::after) on
+// purpose: the label's text — and so every control's accessible name — stays
+// exactly the visible words. Pair it with `required` on the control itself,
+// which is what assistive tech actually announces.
+export function Label({ className, required, ...props }: React.LabelHTMLAttributes<HTMLLabelElement> & { required?: boolean }) {
+  return (
+    <label
+      data-required={required || undefined}
+      className={cn(
+        "block text-[13px] font-medium text-ink2 mb-1.5",
+        required && "after:ml-0.5 after:text-crit after:content-['*']",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {

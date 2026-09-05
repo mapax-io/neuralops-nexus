@@ -56,6 +56,7 @@ def create_model_config(company, user, data: dict):
     from nucleus.models import ModelConfig
 
     api_key = data.pop("api_key", None)
+    _reject_unknown_provider(data.get("provider"))
     _reject_prefixed_model_id(data.get("model_id"))
 
     config = ModelConfig(company=company, created_by=user, **data)
@@ -71,15 +72,20 @@ def update_model_config(company, config_id: str, data: dict):
     key used to mean delete-and-recreate, and delete is blocked by any
     persona using the row.
 
-    provider and model_id are not patchable -- see ModelConfigPatchIn.
+    provider and model_id are patchable (see ModelConfigPatchIn): every persona
+    on this config follows to the new model on save. They pass the same guards
+    as create -- a known provider and a bare model_id -- so qualified_id can
+    never be composed into something like "openai:anthropic/claude-...".
     """
     config = get_model_config(company, config_id)
     if not config:
         return None
 
     api_key = data.pop("api_key", None)
-    data.pop("provider", None)
-    data.pop("model_id", None)
+    if data.get("provider") is not None:
+        _reject_unknown_provider(data["provider"])
+    if data.get("model_id") is not None:
+        _reject_prefixed_model_id(data["model_id"])
 
     for field, value in data.items():
         if value is not None:
@@ -157,6 +163,19 @@ def delete_model_config(company, config_id: str) -> bool:
 
     config.soft_delete()
     return True
+
+
+def _reject_unknown_provider(provider) -> None:
+    """
+    Provider choices are enforced here, not by the database: Django's
+    `choices` only bite on full_clean(), which the API path never calls, so an
+    unknown value would be stored and then fail at call time with a confusing
+    pydantic-ai error.
+    """
+    from nucleus.models import ModelConfig
+    valid = [c.value for c in ModelConfig.Provider]
+    if provider not in valid:
+        raise ValueError("provider must be one of: %s." % ", ".join(valid))
 
 
 def _reject_prefixed_model_id(model_id) -> None:

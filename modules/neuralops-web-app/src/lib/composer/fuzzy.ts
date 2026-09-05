@@ -1,6 +1,6 @@
 // Fuzzy matching for the composer @/ popovers. A query matches a candidate when
-// its characters appear IN ORDER (a subsequence), so "/aget" still finds
-// "add-agent" and "@chrt" finds "chart". fuzzyScore returns a rank — lower is
+// its characters appear IN ORDER (a subsequence), so "/admcp" still finds
+// "add-mcp" and "@chrt" finds "chart". fuzzyScore returns a rank — lower is
 // better (prefix < substring < subsequence) — or null for no match. Callers drop
 // the nulls and sort ascending, so the closest matches lead.
 

@@ -40,7 +40,7 @@ export interface PillRange {
 const MENTION_RE = /(?<![\w@/])@(\w+)/g;
 // /word only after whitespace or start — skips URLs (https://…, a/b) while
 // still catching a leading /invite and a trailing /swarm. Hyphens allowed
-// (add-agent), captured without the leading slash.
+// (add-mcp), captured without the leading slash.
 const COMMAND_RE = /(?<!\S)\/(\w[\w-]*)/g;
 
 export function findPillRanges(text: string, known: KnownSets): PillRange[] {

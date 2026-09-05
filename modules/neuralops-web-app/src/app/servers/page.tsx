@@ -310,9 +310,10 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
     >
       <form id="sv-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="sname">Name</Label>
+          <Label htmlFor="sname" required>Name</Label>
           <Input
             id="sname"
+            required
             autoFocus
             placeholder="e.g. Office, Home lab"
             value={name}
@@ -329,9 +330,10 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
           <FieldError>{nameErr}</FieldError>
         </div>
         <div>
-          <Label htmlFor="surl">Address</Label>
+          <Label htmlFor="surl" required>Address</Label>
           <Input
             id="surl"
+            required
             inputMode="url"
             placeholder="http://192.168.1.90:8096"
             value={url}

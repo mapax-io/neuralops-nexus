@@ -87,6 +87,35 @@ function CodeBlock({ content, terminal }: { content: string; terminal?: boolean 
   );
 }
 
+// Text of a hast subtree — what a fenced block's <code> actually contains.
+type HastNode = { type?: string; value?: string; tagName?: string; properties?: { className?: unknown }; children?: HastNode[] };
+const hastText = (n: HastNode | undefined): string =>
+  !n ? "" : n.type === "text" ? (n.value ?? "") : (n.children ?? []).map(hastText).join("");
+
+// A fenced block inside a markdown reply, in the same chrome as the dedicated
+// code output: a slim header with the language and a Copy button, then the
+// code. A header (not an overlay) so the button never covers a long first
+// line when the block scrolls sideways on a phone, and stays reachable on touch.
+function FencedCode({ lang, code, children }: { lang: string | null; code: string; children: React.ReactNode }) {
+  return (
+    <div className="my-2 overflow-hidden rounded-lg border border-line [&>pre]:my-0 [&>pre]:rounded-none">
+      <div className="flex items-center justify-between border-b border-line bg-surface2 px-3 py-1">
+        <span className="font-mono text-[11px] text-ink2">{lang ?? "code"}</span>
+        <button
+          type="button"
+          aria-label="Copy code"
+          title="Copy code"
+          onClick={() => void copyText(code).then((ok) => (ok ? toast.success("Copied") : toast.error("Copy failed — check clipboard permissions")))}
+          className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-ink2 hover:text-ink"
+        >
+          <Copy size={12} strokeWidth={2} /> Copy
+        </button>
+      </div>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+
 function ComposingPlaceholder({ outputType }: { outputType: string }) {
   return (
     <div className="mt-1 flex items-center gap-3 rounded-xl border border-line bg-surface2/60 px-4 py-3.5">
@@ -159,13 +188,13 @@ function Body({ message }: { message: UiMessage }) {
           pre(props) {
             // A rendered mermaid diagram must not sit inside the markdown
             // <pre> chrome (grey code box) — unwrap it.
-            const { node, children } = props as {
-              node?: { children?: Array<{ tagName?: string; properties?: { className?: unknown } }> };
-              children?: React.ReactNode;
-            };
-            const cls = node?.children?.find((c) => c.tagName === "code")?.properties?.className;
+            const { node, children } = props as { node?: HastNode; children?: React.ReactNode };
+            const codeNode = node?.children?.find((c) => c.tagName === "code");
+            const cls = codeNode?.properties?.className;
             if (Array.isArray(cls) && cls.includes("language-mermaid") && !message.isStreaming) return <>{children}</>;
-            return <pre>{children}</pre>;
+            const lang = Array.isArray(cls) ? (cls.find((c) => typeof c === "string" && c.startsWith("language-")) as string | undefined)?.slice(9) ?? null : null;
+            // Fenced text ends with the closing fence's newline — not part of the snippet.
+            return <FencedCode lang={lang} code={hastText(codeNode).replace(/\n$/, "")}>{children}</FencedCode>;
           },
         }}
       >

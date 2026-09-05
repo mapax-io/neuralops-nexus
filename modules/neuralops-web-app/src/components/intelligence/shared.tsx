@@ -6,9 +6,9 @@ import { Label } from "@/components/ui/field";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useProjects } from "@/hooks/use-workspace";
-import type { AIModel } from "@/lib/api/intelligence";
+import type { ModelConfig } from "@/lib/api/intelligence";
 
-// Shared chrome for the four intelligence tabs: consistent header, list
+// Shared chrome for the three intelligence tabs: consistent header, list
 // states, and the project selector used by project-owned resources.
 
 export function TabShell({ title, blurb, action, children, embedded }: {
@@ -63,7 +63,10 @@ export function CardGrid({ children }: { children: React.ReactNode }) {
 }
 
 // Entity card: identity + chips up top, one meta line pinned to the footer,
-// actions revealed on hover (always visible on touch).
+// actions revealed on hover (always visible on touch). The actions are a real
+// flex item, not an overlay: they take their own room in the header row, so a
+// long title or a wrapped chip never runs underneath them however many there
+// are (the models card has three).
 export function EntityCard({ icon, title, chips, body, meta, actions }: {
   icon: React.ReactNode;
   title: React.ReactNode;
@@ -78,12 +81,12 @@ export function EntityCard({ icon, title, chips, body, meta, actions }: {
         <span className="flex size-10 flex-none items-center justify-center overflow-hidden rounded-[10px] border border-line bg-surface2 text-ink2">
           {icon}
         </span>
-        <div className="min-w-0 flex-1 pr-8">
+        <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-1.5 text-[14px] font-semibold">{title}{chips}</p>
           {body && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink2">{body}</p>}
         </div>
         {actions && (
-          <div className="absolute right-3 top-3 flex gap-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100">
+          <div className="-mr-1 -mt-1 flex flex-none gap-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-within:opacity-100">
             {actions}
           </div>
         )}
@@ -139,37 +142,51 @@ export function Chip({ children, tone = "neutral" }: { children: React.ReactNode
   return <span className={`rounded-full border px-2 py-px text-[10.5px] font-semibold ${tones[tone]}`}>{children}</span>;
 }
 
-// Model picker for project-scoped builders (personas, agents). Never a dead
-// end: models not yet attached to the project are offered under an
+// Model picker for the persona builder's two slots (model, advisor). Never a
+// dead end: models not yet attached to the project are offered under an
 // "attach & use" group (the caller attaches them on submit), and a new model
 // can be registered inline without leaving the flow.
-export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew }: {
+export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew, registerLabel = "Register a new model", label = "Model", optional, noneLabel = "None", exclude, hint }: {
   id: string;
   projectId: string;
-  models: AIModel[] | undefined;
+  models: ModelConfig[] | undefined;
   value: string;
   onChange: (modelId: string) => void;
   // Opens the stacked CreateModelDialog; omitted when the user lacks the right.
   onRegisterNew?: () => void;
+  registerLabel?: string;
+  label?: string;
+  // An optional slot (the advisor) starts from a real "none" choice.
+  optional?: boolean;
+  noneLabel?: string;
+  // Ids hidden from this slot — the advisor must never be the primary model.
+  exclude?: string[];
+  hint?: React.ReactNode;
 }) {
+  const visible = models?.filter((m) => !exclude?.includes(m.id));
   // A model without project_ids predates the visibility gate — usable anywhere.
-  const inProject = models?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? [];
-  const attachable = models?.filter((m) => m.project_ids && !m.project_ids.includes(projectId)) ?? [];
-  const opt = (m: AIModel) => <option key={m.id} value={m.id}>{m.name} ({m.model_id})</option>;
+  const inProject = visible?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? [];
+  const attachable = visible?.filter((m) => m.project_ids && !m.project_ids.includes(projectId)) ?? [];
+  // Models exist but every one is excluded (the advisor slot with a single
+  // registered model): say why the list is empty instead of leaving a bare
+  // "No advisor" — otherwise it reads as a dead end.
+  const noneEligible = !!models?.length && (visible?.length ?? 0) === 0;
+  const opt = (m: ModelConfig) => <option key={m.id} value={m.id}>{m.name} ({m.qualified_id})</option>;
   return (
     <div>
-      <Label htmlFor={id}>Model</Label>
+      <Label htmlFor={id} required={!optional}>{label}{optional && <span className="text-ink2"> (optional)</span>}</Label>
       <select
         id={id}
+        required={!optional}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
       >
-        <option value="" disabled>Choose a model…</option>
+        {optional ? <option value="">{noneLabel}</option> : <option value="" disabled>Choose a model…</option>}
         {/* Without a chosen project the in/attachable split is meaningless —
             one flat list; the groups appear once the project is picked. */}
         {!projectId ? (
-          (models ?? []).map(opt)
+          (visible ?? []).map(opt)
         ) : (
           <>
             {inProject.length > 0 && <optgroup label="In this project">{inProject.map(opt)}</optgroup>}
@@ -180,16 +197,18 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
         )}
       </select>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {models?.length === 0 ? (
+        {models?.length === 0 && !optional ? (
           <p className="text-[12px] text-warn">No models registered on this server yet.</p>
-        ) : !projectId ? null : attachable.some((m) => m.id === value) ? (
-          <p className="text-[12px] text-ink2">This model gets attached to the project when you create.</p>
-        ) : attachable.length > 0 ? (
+        ) : noneEligible ? (
+          <p className="text-[12px] text-warn">Your only model is already the primary — register a second one to use it here.</p>
+        ) : !projectId ? hint : attachable.some((m) => m.id === value) ? (
+          <p className="text-[12px] text-ink2">This model gets attached to the project when you save.</p>
+        ) : attachable.length > 0 && !optional ? (
           <p className="text-[12px] text-ink2">Models from other projects are attached automatically when picked.</p>
-        ) : null}
+        ) : hint}
         {onRegisterNew && (
           <button type="button" onClick={onRegisterNew} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
-            <Plus size={12} strokeWidth={2.4} /> Register a new model
+            <Plus size={12} strokeWidth={2.4} /> {registerLabel}
           </button>
         )}
       </div>
@@ -209,9 +228,10 @@ export function ProjectSelect({ id, value, onChange, only }: {
   const projects = only ?? all;
   return (
     <div>
-      <Label htmlFor={id}>Project</Label>
+      <Label htmlFor={id} required>Project</Label>
       <select
         id={id}
+        required
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"

@@ -119,8 +119,8 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
       {canInvite && inviting && (
         <form onSubmit={submit} noValidate className="mt-4 flex flex-col gap-3 rounded-xl border border-line bg-surface2/50 p-3.5">
           <div>
-            <Label htmlFor="inv-email">Email</Label>
-            <Input id="inv-email" type="email" autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!err} onChange={(e) => setEmail(e.target.value)} />
+            <Label htmlFor="inv-email" required>Email</Label>
+            <Input id="inv-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!err} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
             <Label htmlFor="inv-role">Role</Label>

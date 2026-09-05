@@ -252,8 +252,8 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
     >
       <form id="mi-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="mi-email">Email</Label>
-          <Input id="mi-email" type="email" autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!err} onChange={(e) => setEmail(e.target.value)} />
+          <Label htmlFor="mi-email" required>Email</Label>
+          <Input id="mi-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!err} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div>
           <Label htmlFor="mi-role">Role</Label>

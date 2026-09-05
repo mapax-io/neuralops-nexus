@@ -121,7 +121,7 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
   topicTitle?: string;
   onSend: (content: string) => Promise<void>;
   onShowSchedules?: () => void;
-  onSlashDialog?: (section: "models" | "mcp" | "agents" | "personas") => void;
+  onSlashDialog?: (section: "models" | "mcp" | "personas") => void;
   disabled?: boolean;
 }) {
   const [value, setValue] = useState(() => drafts.get(topicId) ?? "");
@@ -200,7 +200,9 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
       .map((p) => ({
         id: `p:${p.id}`,
         label: p.name,
-        detail: p.source_type === "agent" ? "persona · tools" : "persona",
+        // Optional chain on purpose: a server still on the pre-#99 contract must
+        // not take the composer down — the label just degrades to "persona".
+        detail: (p.mcp_servers?.length ?? 0) > 0 ? "persona · tools" : "persona",
         avatar: p.avatar,
         kind: "persona",
         insert: p.name,
@@ -245,11 +247,11 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
   const companyAdmin = isCompanyAdmin(myRole);
   const availableCommands = SLASH_COMMANDS.filter((c) => {
     if (c.name === "invite" || c.name === "add-model" || c.name === "add-persona" ||
-        c.name === "edit-persona" || c.name === "add-agent" || c.name === "add-mcp") return companyAdmin;
+        c.name === "edit-persona" || c.name === "add-mcp") return companyAdmin;
     return true;
   });
   // Same rule as @: recency orders only the bare "/" list; a typed query ranks
-  // by fuzzy score (so "/aget" surfaces add-agent by quality, not by recency).
+  // by fuzzy score (so "/admdl" surfaces add-model by quality, not by recency).
   const slashMatches =
     slashQuery === null ? []
     : slashQuery === "" ? orderByRecency(availableCommands, (c) => c.name, recentCommands)

@@ -22,6 +22,12 @@ beforeEach(() => {
 });
 
 describe("LoginForm", () => {
+  it("marks email and password as required", () => {
+    render(<LoginForm />);
+    expect(screen.getByLabelText(/email/i)).toBeRequired();
+    expect(screen.getByLabelText(/password/i)).toBeRequired();
+  });
+
   it("validates email and password before calling the identity provider", async () => {
     const user = userEvent.setup();
     render(<LoginForm />);

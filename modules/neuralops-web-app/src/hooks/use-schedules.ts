@@ -45,6 +45,21 @@ export function useToggleSchedule(pid: string, cid: string, tid: string) {
   });
 }
 
+// The server's PATCH takes query_text and label (plus is_paused, handled by
+// useToggleSchedule); the clock itself is not editable — recreate for that.
+export function useEditSchedule(pid: string, cid: string, tid: string, onDone?: () => void) {
+  const inv = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { query_text?: string; label?: string } }) => api.updateSchedule(pid, cid, tid, id, patch),
+    onSuccess: (s) => {
+      toast.success(`Schedule for @${s.persona_name} updated.`);
+      inv();
+      onDone?.();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+}
+
 export function useDeleteSchedule(pid: string, cid: string, tid: string) {
   const inv = useInvalidate();
   return useMutation({

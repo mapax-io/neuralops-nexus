@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -67,6 +67,27 @@ describe("WorkspaceTree", () => {
     renderTree();
     // The admin render above is unmounted by rerendering fresh; query the latest DOM state:
     expect(screen.queryAllByLabelText("New project").length).toBeLessThanOrEqual(1);
+  });
+
+  it("creates a channel with the optional description the server accepts", async () => {
+    let posted: Record<string, unknown> | null = null;
+    server.use(
+      http.post(`${BASE}/api/v1/projects/p1/channels/`, async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: "c9", name: posted.name, slug: posted.name, description: posted.description ?? null });
+      }),
+    );
+    connectAs("admin");
+    renderTree();
+    fireEvent.click(await screen.findByLabelText("New channel in Demo Project"));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("Name")).toBeRequired();
+    expect(within(dialog).getByLabelText(/description/i)).not.toBeRequired();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Backend" } });
+    fireEvent.change(within(dialog).getByLabelText(/description/i), { target: { value: "APIs and services" } });
+    fireEvent.submit(document.getElementById("wc-form")!);
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toEqual({ name: "backend", description: "APIs and services" });
   });
 
   it("shows the empty state when there are no projects", async () => {
