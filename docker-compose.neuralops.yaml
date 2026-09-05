@@ -128,6 +128,12 @@ services:
     profiles: ["production"]
     container_name: neuralops-nucleus
     command: ["nucleus-env", "uvicorn", "core.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    volumes:
+      # Same bind mount nexus-ai uses -- nucleus creates each project's
+      # subfolder here (settings.PROJECTS_ROOT), nexus-ai is what actually
+      # runs the filesystem MCP server against it. Must be the SAME mount as
+      # nexus-ai's below or nucleus's created folders are invisible to it.
+      - ./projects:/nexus/projects
     env_file:
       - ./neuralops/secrets.env
       - ./neuralops/app.env
@@ -300,6 +306,12 @@ services:
     # command: ["nucleus-env", "tail", "-f", "/dev/null"]
     volumes:
       - ./modules/nexus-nucleus:/nexus/nucleus
+      # Bind mount, not a named volume -- same ./projects folder production
+      # uses (repo root, sibling to this file), so dev project files are
+      # visible/editable on the host too, not hidden inside Docker's
+      # internal volume storage. Must match nexus-ai-dev's mount below
+      # exactly -- see PROJECTS_ROOT's comment in core/settings.py.
+      - ./projects:/nexus/projects
     env_file:
       - ./neuralops/secrets.env
     environment:
@@ -400,7 +412,8 @@ services:
     volumes:
       - ./modules/nexus-ai:/nexus/ai
       - neuralops_fastembed_cache_dev:/home/nexus/.cache/fastembed
-      - neuralops_projects_dev:/nexus/projects
+      # Bind mount, not a named volume -- see nucleus-dev's comment above.
+      - ./projects:/nexus/projects
     env_file:
       - ./neuralops/secrets.env
     environment:
@@ -435,6 +448,56 @@ services:
       - neuralops-network
     depends_on:
       - redis-dev
+
+  # neuralops-web-app (Next.js frontend) -- dev only, per request. Plain
+  # node:22-alpine + bind mount, no Dockerfile build, since dev here just
+  # means "npm install && npm run dev" against live source -- mirrors
+  # modules/neuralops-web-app/docker-compose.yaml's own app-dev service so
+  # behavior is identical whether it's run standalone or from this stack.
+  # Not part of the production profile: that profile is the baked neuralops
+  # image (nucleus/nexus-ai/centrifugo only) and has no frontend baked in --
+  # the web app ships/deploys separately (its own Dockerfile builds a
+  # standalone Next.js production image, see that folder). No NEURALOPS_
+  # SERVER_URL wiring needed here either -- unlike nucleus-dev/centrifugo-
+  # dev above, the frontend doesn't need to know its own public URL at
+  # container start; the NeuralOps server it talks to is chosen at RUNTIME,
+  # in the browser, on the /servers screen (see that module's README).
+  web-app-dev:
+    image: node:22-alpine
+    profiles: ["dev"]
+    container_name: neuralops-web-app-dev
+    working_dir: /app
+    # npm install, not `npm ci` -- picks up package.json changes on restart
+    # without needing a clean lockfile-only install every time. Installs
+    # land in a NAMED volume (below), not the bind mount itself, so a
+    # Linux-built node_modules never collides with a host node_modules.
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "${DEV_WEB_APP_PORT:-3000}:3000"
+    volumes:
+      - ./modules/neuralops-web-app:/app
+      - neuralops_web_app_node_modules:/app/node_modules
+    environment:
+      # next dev's file watcher is unreliable on bind mounts without
+      # polling -- same fix the module's own docker-compose.yaml uses.
+      - WATCHPACK_POLLING=true
+      # NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY deliberately
+      # NOT set here -- this service bind-mounts the whole module folder
+      # (below), .env.local included, and `next dev` reads .env.local on its
+      # own (Next's built-in convention). Setting them again here would just
+      # be a second place to keep in sync with that file for no benefit.
+      #
+      # NEXT_DEV_ALLOWED_ORIGINS, on the other hand, IS needed here.
+      # next.config.ts auto-allows this host's own LAN IPs via
+      # os.networkInterfaces() -- that works when `next dev` runs directly on
+      # the host, but inside this container networkInterfaces() only sees the
+      # container's own Docker-bridge interface, not the host's real LAN IP
+      # browsers actually hit it on. Set explicitly to unblock cross-origin
+      # dev requests (chunks/HMR) from that IP -- add more, comma-separated,
+      # if this box is reached from other LAN IPs too.
+      - NEXT_DEV_ALLOWED_ORIGINS=192.168.1.90
+    networks:
+      - neuralops-network
 
   postgres-dev:
     image: postgres:17-alpine
@@ -505,4 +568,4 @@ volumes:
   neuralops_redis_data_dev:
   neuralops_chroma_data_dev:
   neuralops_fastembed_cache_dev:
-  neuralops_projects_dev:
+  neuralops_web_app_node_modules:

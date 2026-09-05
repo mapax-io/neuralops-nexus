@@ -1,43 +1,72 @@
 """
-Schemas for AI Model, Persona, Prompt, and PromptTemplate APIs.
+Schemas for ModelConfig, MCPServer, Persona, Prompt, and PromptTemplate APIs.
+
+── A naming constraint worth knowing about ───────────────────────────────
+Django Ninja schemas are Pydantic v2, and Pydantic RESERVES `model_config`
+-- it is BaseModel's own configuration attribute. Declaring a field with
+that name raises PydanticUserError at IMPORT time:
+
+    `model_config` cannot be used as a model field name.
+
+So the Django FK is `Persona.model` / `Persona.advisor_model`, and the
+schemas expose `model` / `advisor_model` on output. Input still uses
+`model_config_id` / `advisor_model_config_id`, which is fine -- only the
+exact name `model_config` is reserved, the `model_` prefix merely triggers
+a protected-namespace warning that these do not hit.
 """
 from typing import Optional
 from ninja import Schema
 from pydantic import Field
 
 
-# ── AIModel ───────────────────────────────────────────────────────────────────
+# ── ModelConfig ───────────────────────────────────────────────────────────────
 
-class AIModelIn(Schema):
+class ModelConfigIn(Schema):
     name: str
-    provider: str
-    model_id: str
+    provider: str          # openai | anthropic | google | ollama | openai_compatible
+    model_id: str          # BARE model name -- no provider prefix, no separator
     api_key: Optional[str] = None
     api_base: Optional[str] = None
-    secret_ref: Optional[str] = None
     description: Optional[str] = None
     licence_accepted: bool = False
-    temperature: float = 0.7
-    max_tokens: int = 4096
     context_window: int = 8192
     supports_tools: bool = False
     supports_streaming: bool = True
     supports_vision: bool = False
     supports_audio: bool = False
     config: dict = {}
+    # REMOVED: temperature, max_tokens -> now per-persona
+    # REMOVED: secret_ref              -> never read by any code path
 
 
-class AIModelOut(Schema):
+class ModelConfigPatchIn(Schema):
+    """
+    provider and model_id are deliberately absent: changing either silently
+    repoints every persona using this row at a different model. Delete and
+    recreate instead -- which the delete guard will refuse until nothing
+    references it, which is the point.
+    """
+    name: Optional[str] = None
+    api_key: Optional[str] = None      # write-only, re-encrypted on set
+    api_base: Optional[str] = None
+    description: Optional[str] = None
+    context_window: Optional[int] = None
+    supports_tools: Optional[bool] = None
+    supports_streaming: Optional[bool] = None
+    supports_vision: Optional[bool] = None
+    supports_audio: Optional[bool] = None
+    config: Optional[dict] = None
+
+
+class ModelConfigOut(Schema):
     id: str
     name: str
     provider: str
     model_id: str
+    qualified_id: str                  # "openai:gpt-4o-mini"
     api_base: Optional[str] = None
-    secret_ref: Optional[str] = None
     description: Optional[str] = None
     licence_accepted: bool
-    temperature: float
-    max_tokens: int
     context_window: int
     supports_tools: bool
     supports_streaming: bool
@@ -46,18 +75,31 @@ class AIModelOut(Schema):
     config: dict
     is_active: bool
     has_api_key: bool
-    # Projects this model is attached to (visibility gate) -- lets clients
+    # Projects this config is attached to (visibility gate) -- lets clients
     # render and manage attachments without a second endpoint.
     project_ids: list[str] = []
 
 
+class ModelConfigRef(Schema):
+    """Compact form, embedded in PersonaOut."""
+    id: str
+    name: str
+    provider: str
+    model_id: str
+    qualified_id: str
+    supports_tools: bool               # lets the UI grey out MCP attachment
+
+
+# ── MCPServer ─────────────────────────────────────────────────────────────────
+
 class MCPOAuthAuthorizeOut(Schema):
     authorize_url: str
+
 
 class MCPServerIn(Schema):
     name: str
     description: Optional[str] = None
-    project_id: str  # MCP servers are project-owned -- see nucleus/models/intelligence.py
+    project_id: str        # MCP servers are project-owned (a real FK now)
     server_type: str = "remote"
     transport: str = "http"
     url: Optional[str] = None
@@ -66,7 +108,6 @@ class MCPServerIn(Schema):
     docker_command: Optional[str] = None
     kubernetes_service: Optional[str] = None
     config: dict = {}
-    secret_ref: Optional[str] = None
     timeout_seconds: int = 60
     max_retries: int = 3
     is_first_party: bool = False
@@ -74,8 +115,8 @@ class MCPServerIn(Schema):
     # oauth configuration
     auth_type: str = "static_secrets"
     oauth_config: Optional[dict] = None
-    client_secret: Optional[str] = None  # write-only -- folded into secrets_encrypted, never echoed back
-
+    client_secret: Optional[str] = None  # write-only -- folded into secrets_encrypted
+    # REMOVED: secret_ref
 
 
 class MCPServerPatchIn(Schema):
@@ -96,12 +137,11 @@ class MCPServerPatchIn(Schema):
     client_secret: Optional[str] = None
 
 
-
 class MCPServerOut(Schema):
     id: str
     name: str
     description: Optional[str] = None
-    project_id: Optional[str] = None
+    project_id: str                    # non-null now -- it is a real FK
     server_type: str
     transport: str
     url: Optional[str] = None
@@ -122,41 +162,13 @@ class MCPServerOut(Schema):
     oauth_config: Optional[dict] = None
 
 
-# ── AIAgent ───────────────────────────────────────────────────────────────────
-
-class AIAgentIn(Schema):
-    name: str
-    description: Optional[str] = None
-    project_id: str  # Agents are project-owned -- see nucleus/models/intelligence.py
-    model_id: str
-    mcp_server_id: Optional[str] = None
-    agent_type: str = "internal"
-    safety_mode: bool = True
-    max_steps: int = 5
-
-
-class AIAgentPatchIn(Schema):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    model_id: Optional[str] = None
-    mcp_server_id: Optional[str] = None
-    safety_mode: Optional[bool] = None
-    max_steps: Optional[int] = None
-
-
-class AIAgentOut(Schema):
+class MCPServerRef(Schema):
+    """Compact form, embedded in PersonaOut."""
     id: str
     name: str
-    description: Optional[str] = None
-    project_id: Optional[str] = None
-    agent_type: str
-    model_id: Optional[str] = None
-    model_name: Optional[str] = None
-    mcp_server_id: Optional[str] = None
-    mcp_server_name: Optional[str] = None
-    safety_mode: bool
-    max_steps: int
-    is_active: bool
+    transport: str
+    auth_type: str
+    oauth_connected: bool              # so the UI can flag one needing reconnect
 
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
@@ -175,28 +187,52 @@ class PromptOut(Schema):
     context_scope: Optional[list] = None
     template_id: Optional[str] = None
 
+
 class ListTemplatePrompts(Schema):
     prompts: dict[str, str]
 
+
 class TemplatePromptContent(Schema):
     content: str
+
 
 # ── Persona ───────────────────────────────────────────────────────────────────
 
 class PersonaIn(Schema):
     name: str
     description: Optional[str] = None
-    project_id: str  # Personas are project-owned -- see nucleus/models/intelligence.py
-    source_type: str
-    model_id: Optional[str] = None
-    agent_id: Optional[str] = None
+    project_id: str
+    model_config_id: str                            # REQUIRED
+    advisor_model_config_id: Optional[str] = None   # 0..1
+    mcp_server_ids: list[str] = Field(default_factory=list)   # 0..N
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    max_steps: int = 10
     prompt: PromptIn
-
+    # REMOVED: source_type, model_id, agent_id
 
 
 class PersonaPatchIn(Schema):
+    """
+    The backing is mutable now. It was not before -- DECISIONS.md §18 said
+    "the agent/model backing the persona cannot be changed after creation --
+    delete and recreate if needed" -- which stopped being true the moment
+    AIAgent went away and a persona became a plain composition.
+
+    `clear_advisor` exists because handlers use payload.dict(exclude_none=True),
+    so None means "not sent" and there is otherwise no way to express
+    "remove the advisor". mcp_server_ids does not need the same treatment:
+    [] is a distinct, meaningful value there (detach all).
+    """
     name: Optional[str] = None
     description: Optional[str] = None
+    model_config_id: Optional[str] = None
+    advisor_model_config_id: Optional[str] = None
+    clear_advisor: bool = False
+    mcp_server_ids: Optional[list[str]] = None      # [] clears all
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    max_steps: Optional[int] = None
     prompt: Optional[PromptIn] = None
 
 
@@ -204,15 +240,20 @@ class PersonaOut(Schema):
     id: str
     name: str
     description: Optional[str] = None
-    project_id: Optional[str] = None
-    source_type: str
-    model_id: Optional[str] = None
-    agent_id: Optional[str] = None
+    project_id: str
+    # Named `model` / `advisor_model`, NOT `model_config` -- see module docstring.
+    model: ModelConfigRef
+    advisor_model: Optional[ModelConfigRef] = None
+    mcp_servers: list[MCPServerRef] = Field(default_factory=list)
+    temperature: float
+    max_tokens: int
+    max_steps: int
     prompt: Optional[PromptOut] = None
     is_active: bool
     # Server-relative media URL of the shadow user's assigned avatar --
     # personas already show it in chat; management UIs need it too.
     avatar: Optional[str] = None
+    # REMOVED: source_type, model_id, agent_id
 
 
 # ── PromptTemplate ────────────────────────────────────────────────────────────
@@ -226,8 +267,6 @@ class PromptTemplateOut(Schema):
     tags: list
     is_featured: bool
 
-
-# ── CompanyAIConfig ───────────────────────────────────────────────────────────
 
 # ── AIRequestLog ─────────────────────────────────────────────────────────────
 
@@ -247,6 +286,8 @@ class AIRequestLogOut(Schema):
     error: Optional[str] = None
     created_at: str
 
+
+# ── CompanyAIConfig ───────────────────────────────────────────────────────────
 
 class CompanyAIConfigIn(Schema):
     embedding_provider: str

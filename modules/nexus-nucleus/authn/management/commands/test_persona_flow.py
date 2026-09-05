@@ -6,15 +6,15 @@ plus the RBAC rights checks around each step, in one run. No shell
 copy-paste required; read the printed output top to bottom.
 
 Rights being verified throughout (see authn/permissions/rights.py):
-    persona.create / persona.update / persona.delete / persona.list are all
-    COMPANY scope ONLY -- deliberately NOT extended to Project Admin, unlike
-    agent.*/mcp_server.* (see USE_CASES.md UC6/UC7 and the Agent/MCPServer
-    vs Persona asymmetry noted in ROLE_STORIES.md). So this command creates
-    a second user who is Project Admin on the test project but holds NO
-    company-wide role, and asserts every persona.* check comes back False
-    for them, while list_personas() (row-visibility, not a blanket check)
-    still lets them see it -- same "list never just 403s" pattern as every
-    other resource type.
+    persona.create / persona.update / persona.delete are PROJECT scope -- a
+    persona belongs to exactly one project, and that project's own Admin
+    manages it without company-wide access, the same shape mcp_server.*
+    has. persona.list stays COMPANY scope for the blanket check. So this
+    command creates a second user who is Project Admin on the test project
+    but holds NO company-wide role: every persona write check comes back
+    True for them, persona.list comes back False, and list_personas()
+    (row-visibility, not a blanket check) still lets them see it -- same
+    "list never just 403s" pattern as every other resource type.
 """
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
@@ -22,9 +22,11 @@ from django.core.management.base import BaseCommand
 from authn.permissions.checker import PermissionChecker
 from authn.permissions.models import Role
 from intelligence import services as isvc
-from nucleus.models import AIModel, Company, Project
+from nucleus.models import Company, ModelConfig, Project
 
 User = get_user_model()
+
+_MODEL_NAME = "Test Model for Persona Flow"
 
 
 class Command(BaseCommand):
@@ -47,13 +49,23 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR("No active project found -- create one first (wsvc.create_project)."))
             return
 
-        model = AIModel.objects.filter(company=company, is_active=True).first()
+        # A throwaway ModelConfig, reused across runs: model_id is the BARE
+        # name (provider is its own column now) and
+        # uniq_model_config_name_per_company does not ignore soft-deleted
+        # rows, so recreating it blindly would be an IntegrityError.
+        model = ModelConfig.objects.filter(company=company, name=_MODEL_NAME).first()
         if not model:
-            self.stdout.write("No AIModel found -- creating a throwaway one for this test.")
-            model = AIModel.objects.create(
-                company=company, created_by=owner, name="Test Model for Persona Flow",
-                provider="litellm", model_id="openai/gpt-test", licence_accepted=True,
-            )
+            self.stdout.write("No throwaway ModelConfig found -- creating one for this test.")
+            model = isvc.create_model_config(company, owner, {
+                "name": _MODEL_NAME, "provider": "openai", "model_id": "gpt-test",
+                "licence_accepted": True,
+            })
+        elif not model.is_active:
+            model.restore()
+
+        # A persona may only use a config attached to its own project --
+        # _validate_persona_wiring refuses an unattached one.
+        isvc.attach_model_config_to_project(company, str(model.id), str(project.id))
 
         self.stdout.write(f"Company: {company.name} | Owner: {owner.email} | "
                            f"Project: {project.name} | Model: {model.name}")
@@ -79,9 +91,7 @@ class Command(BaseCommand):
             "name": "Nova Test Flow",
             "description": "Created by test_persona_flow management command.",
             "project_id": str(project.id),
-            "source_type": "model",
-            "model_id": str(model.id),
-            "agent_id": None,
+            "model_config_id": str(model.id),
             "prompt": {
                 "system_prompt": "You are Nova, a test persona.",
                 "output_type": "text",

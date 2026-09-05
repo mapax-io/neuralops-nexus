@@ -1,6 +1,11 @@
 """
 Internal API — called by nexus-ai only, not exposed to users.
 Authenticated via X-Internal-API-Key header (set in INTERNAL_API_KEY env var).
+
+nginx returns 403 for /api/v1/internal/ (see neuralops/nginx.conf): nexus-ai
+reaches these endpoints container-to-container over the Docker network and
+never through the proxy, and the responses carry decrypted API keys and raw
+chat history.
 """
 
 import os
@@ -37,17 +42,17 @@ class MCPServerInternal(Schema):
     command: Optional[str] = None
     config: dict
     # Decrypted secret env vars (e.g. GITHUB_PERSONAL_ACCESS_TOKEN) -- same
-    # trust boundary as ModelInternal.api_key above: only ever sent over the
+    # trust boundary as ModelInternal.api_key below: only ever sent over the
     # internal network to nexus-ai, which forwards them as subprocess env
     # vars when spawning a stdio MCP server, never into the command string.
     secrets: dict = Field(default_factory=dict)
     is_first_party: bool = False
     embed_output: bool = False
-    needs_reauth: bool = False  # NEW
+    needs_reauth: bool = False
     # Which auth style this server uses, and -- for oauth2 -- which key in
     # `secrets` holds the bearer access token nexus-ai should send on HTTP/
-    # SSE requests (StdioTransport already gets the whole `secrets` dict as
-    # subprocess env, so this is only consumed on the non-stdio path).
+    # SSE requests (stdio servers get the whole `secrets` dict as subprocess
+    # env instead, so this is only consumed on the non-stdio path).
     auth_type: str = "static_secrets"
     token_env_var: str = "OAUTH_ACCESS_TOKEN"
 
@@ -59,26 +64,55 @@ class PromptInternal(Schema):
 
 
 class ModelInternal(Schema):
+    """
+    One model endpoint, ready to use.
+
+    `qualified_id` is the pydantic-ai model string ("anthropic:claude-haiku-
+    4-5-20251001"), composed server-side by ModelConfig.qualified_id. It is
+    sent pre-assembled deliberately: provider and model_id are stored as
+    separate columns precisely so no consumer has to know which separator
+    the current model library expects, and that knowledge should not leak
+    across the boundary either.
+
+    temperature/max_tokens are NOT here -- they are per-persona now, not per
+    model row, and live on PersonaInternal.
+    """
     id: str
     name: str
-    provider: str
-    model_id: str
+    provider: str          # openai | anthropic | google | ollama | openai_compatible
+    model_id: str          # BARE name, no prefix
+    qualified_id: str      # "provider:model" -- hand straight to pydantic-ai
     api_base: Optional[str] = None
     api_key: Optional[str] = None  # decrypted — only sent over internal network
-    temperature: float
-    max_tokens: int
     context_window: int
     supports_tools: bool
     supports_streaming: bool
+    supports_vision: bool
 
 
 class PersonaInternal(Schema):
+    """
+    Everything nexus-ai needs to run one persona. Since AIAgent was removed,
+    this is the whole configuration -- there is no second lookup.
+
+    `advisor_model` is the model behind pydantic-ai-harness's Advisor
+    capability: a second opinion the PRIMARY model asks for when it gets
+    stuck. It is not a pipeline stage nucleus orchestrates -- nucleus just
+    names the model and ships its credentials. None when unconfigured.
+
+    `mcp_servers` is genuinely 0..N now. It used to come from
+    AIAgent.mcp_server, a single FK, so it was never longer than one entry
+    even though the consumer side has always handled a list.
+    """
     id: str
     name: str
-    source_type: str  # "model" or "agent"
     prompt: PromptInternal
-    model: Optional[ModelInternal] = None
+    model: ModelInternal
+    advisor_model: Optional[ModelInternal] = None
     mcp_servers: list[MCPServerInternal] = Field(default_factory=list)
+    temperature: float
+    max_tokens: int
+    max_steps: int
 
 
 class ContextSourceInternal(Schema):
@@ -127,6 +161,48 @@ class HistoryMessageInternal(Schema):
     sequence: int
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _model_internal(model) -> ModelInternal:
+    """Serialise one ModelConfig, decrypting its API key."""
+    return ModelInternal(
+        id=str(model.id),
+        name=model.name,
+        provider=model.provider,
+        model_id=model.model_id,
+        qualified_id=model.qualified_id,
+        api_base=model.api_base,
+        api_key=model.get_api_key(),
+        context_window=model.context_window,
+        supports_tools=model.supports_tools,
+        supports_streaming=model.supports_streaming,
+        supports_vision=model.supports_vision,
+    )
+
+
+def _mcp_internal(server, needs_reauth: bool) -> MCPServerInternal:
+    return MCPServerInternal(
+        id=str(server.id),
+        name=server.name,
+        server_type=server.server_type,
+        transport=server.transport,
+        url=server.url,
+        command=server.command,
+        config=server.config,
+        # A server that needs re-authentication gets NO secrets -- handing
+        # nexus-ai a stale token would produce a 401 it cannot act on. The
+        # needs_reauth flag is what the runner raises MCPReauthRequiredError
+        # on instead, which surfaces as a reconnect prompt in chat.
+        secrets={} if needs_reauth else server.get_secrets(),
+        is_first_party=server.is_first_party,
+        embed_output=server.embed_output,
+        needs_reauth=needs_reauth,
+        auth_type=server.auth_type,
+        token_env_var=(server.oauth_config or {}).get("token_env_var", "OAUTH_ACCESS_TOKEN"),
+    )
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -134,13 +210,21 @@ class HistoryMessageInternal(Schema):
 def get_persona_internal(request, persona_id: str):
     """
     Fetch full persona config for nexus-ai to use on trigger.
-    Returns: persona + prompt + model (with decrypted api_key) + mcp_servers[]
+
+    Returns: prompt + model (decrypted key) + optional advisor model +
+    0..N MCP servers + generation settings.
+
+    No source_type branch any more -- a persona has one model, optionally an
+    advisor, and zero or more tool servers. "Agent-ness" is emergent: no MCP
+    servers means a plain LLM, which is already how the runner behaves.
     """
-    from nucleus.models import Persona, MCPServer
+    from nucleus.models import Persona
+    from intelligence import oauth_client
 
     persona = (
         Persona.objects.filter(id=persona_id, is_active=True)
-        .select_related("prompt", "model", "agent__mcp_server")
+        .select_related("prompt", "model", "advisor_model")
+        .prefetch_related("mcp_servers")
         .first()
     )
 
@@ -150,78 +234,48 @@ def get_persona_internal(request, persona_id: str):
     if not hasattr(persona, "prompt") or not persona.prompt:
         raise HttpError(400, "Persona has no prompt configured.")
 
+    # model is NOT NULL at the database level, so this can only fail if the
+    # row it points at was soft-deleted. Refusing is deliberate: serving a
+    # deleted model's decrypted API key is worse than a clear error, and
+    # PROTECT never fires here because every delete in this codebase is a
+    # soft delete (is_active=False). intelligence/services.py also refuses
+    # to soft-delete a model any persona still uses.
+    if persona.model is None or not persona.model.is_active:
+        raise HttpError(400, "Persona's model config is missing or deleted.")
+
     prompt = persona.prompt
 
-    model_data = None
+    # An advisor pointing at a deleted model degrades rather than fails --
+    # it is an optional capability, and losing it should not take the
+    # persona down with it.
+    advisor = persona.advisor_model
+    if advisor is not None and not advisor.is_active:
+        advisor = None
+
+    # Per-server, in a loop -- this is the code path that was capped at one
+    # entry by AIAgent.mcp_server being a single FK. refresh_if_needed()
+    # returns True immediately for any non-oauth2 server and returns early
+    # for an oauth2 server whose token is still valid, so iterating is cheap:
+    # only an actually-expiring token costs a network round trip.
     mcp_servers = []
-
-    if persona.source_type == "model" and persona.model:
-        m = persona.model
-        model_data = ModelInternal(
-            id=str(m.id),
-            name=m.name,
-            provider=m.provider,
-            model_id=m.model_id,
-            api_base=m.api_base,
-            api_key=m.get_api_key(),
-            temperature=m.temperature,
-            max_tokens=m.max_tokens,
-            context_window=m.context_window,
-            supports_tools=m.supports_tools,
-            supports_streaming=m.supports_streaming,
-        )
-
-    elif persona.source_type == "agent" and persona.agent:
-        agent = persona.agent
-        if agent.model:
-            m = agent.model
-            model_data = ModelInternal(
-                id=str(m.id),
-                name=m.name,
-                provider=m.provider,
-                model_id=m.model_id,
-                api_base=m.api_base,
-                api_key=m.get_api_key(),
-                temperature=m.temperature,
-                max_tokens=m.max_tokens,
-                context_window=m.context_window,
-                supports_tools=m.supports_tools,
-                supports_streaming=m.supports_streaming,
-            )
-        # Collect all MCP servers linked to this agent's model
-        if agent.mcp_server:
-            from intelligence import oauth_client
-            s = agent.mcp_server
-            ok = oauth_client.refresh_if_needed(s)
-            mcp_servers.append(
-                MCPServerInternal(
-                    id=str(s.id),
-                    name=s.name,
-                    server_type=s.server_type,
-                    transport=s.transport,
-                    url=s.url,
-                    command=s.command,
-                    config=s.config,
-                    secrets={} if not ok else s.get_secrets(),
-                    is_first_party=s.is_first_party,
-                    embed_output=s.embed_output,
-                    needs_reauth=not ok,
-                    auth_type=s.auth_type,
-                    token_env_var=(s.oauth_config or {}).get("token_env_var", "OAUTH_ACCESS_TOKEN"),
-                )
-            )
+    for server in persona.mcp_servers.filter(is_active=True):
+        ok = oauth_client.refresh_if_needed(server)
+        mcp_servers.append(_mcp_internal(server, needs_reauth=not ok))
 
     return PersonaInternal(
         id=str(persona.id),
         name=persona.name,
-        source_type=persona.source_type,
         prompt=PromptInternal(
             system_prompt=prompt.system_prompt,
             output_type=prompt.output_type,
             context_scope=prompt.context_scope,
         ),
-        model=model_data,
+        model=_model_internal(persona.model),
+        advisor_model=_model_internal(advisor) if advisor else None,
         mcp_servers=mcp_servers,
+        temperature=persona.temperature,
+        max_tokens=persona.max_tokens,
+        max_steps=persona.max_steps,
     )
 
 

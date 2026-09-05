@@ -1,24 +1,26 @@
 """
 Management command: python manage.py test_mcp_server_flow
 
-Exercises both MCP server code paths -- the flat/standalone endpoints AND
-the legacy nested-under-model endpoints -- create -> list -> patch/create ->
-delete, plus the RBAC rights checks around each step. Same shape as
+Exercises the MCP server lifecycle -- create -> list -> patch -> delete --
+plus the RBAC rights checks around each step. Same shape as
 test_persona_flow.py / test_agent_flow.py.
 
 Rights being verified (see authn/permissions/rights.py + intelligence/api.py):
-    Flat endpoints (mcp-servers/): mcp_server.create/update/delete are
-    PROJECT scope, checked as obj=project (create) or obj=server
-    (update/delete). A Project Admin on the server's own project reaches
-    these with no company-wide role -- same pattern as agent.*.
+    mcp_server.create/update/delete are PROJECT scope, checked as
+    obj=project (create) or obj=server (update/delete). A Project Admin on
+    the server's own project reaches these with no company-wide role --
+    the pattern agent.* used to share before AIAgent was removed.
 
-    Legacy nested endpoints (ai-models/{model_id}/mcp-servers/): a
-    DELIBERATE, DOCUMENTED asymmetry -- these check the exact same right
-    codes, but anchored at company=company instead of obj=project/obj=server.
-    A PROJECT-scope RoleAssignment never matches a chain rooted only at
-    COMPANY, so the same Project Admin who passes every flat-endpoint check
-    below gets denied on all three legacy ones. This command demonstrates
-    that gap explicitly rather than leaving it implicit.
+    Part 2 keeps the other half of the old story: the SAME right codes
+    anchored at company=company instead of obj=project/obj=server. A
+    PROJECT-scope RoleAssignment never matches a chain rooted only at
+    COMPANY, so the same Project Admin who passes every check in Part 1
+    gets denied on all three here. That used to be demonstrated through
+    the legacy nested endpoints (ai-models/{model_id}/mcp-servers/); those
+    endpoints and their model-scoped service functions
+    (create_mcp_server / list_mcp_servers / delete_mcp_server) are gone
+    with AIAgent -- they reached servers via `agents__model__id` -- so the
+    checks are shown against the standalone calls instead.
 """
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
@@ -26,7 +28,7 @@ from django.core.management.base import BaseCommand
 from authn.permissions.checker import PermissionChecker
 from authn.permissions.models import Role
 from intelligence import services as isvc
-from nucleus.models import AIModel, Company, Project
+from nucleus.models import Company, MCPServer, Project
 
 User = get_user_model()
 
@@ -56,16 +58,20 @@ class Command(BaseCommand):
             defaults={"name": "Other Project (mcp flow isolation test)"},
         )
 
-        model = AIModel.objects.filter(company=company, is_active=True).first()
-        if not model:
-            self.stdout.write("No AIModel found -- creating a throwaway one for this test.")
-            model = AIModel.objects.create(
-                company=company, created_by=owner, name="Test Model for MCP Flow",
-                provider="litellm", model_id="openai/gpt-test", licence_accepted=True,
-            )
+        # No throwaway AIModel any more -- MCP servers are project-owned
+        # through a real `project` FK and never hung off a model.
+
+        # Hard-delete leftovers from a previous run:
+        # uniq_mcp_server_name_per_project does not ignore soft-deleted rows,
+        # so a name freed only by this command's own delete step would still
+        # collide on the next create.
+        MCPServer.objects.filter(
+            project=project,
+            name__in=["Search MCP Test Flow", "Search MCP Test Flow v2", "Company Anchored MCP Test Flow"],
+        ).delete()
 
         self.stdout.write(f"Company: {company.name} | Owner: {owner.email} | "
-                           f"Project: {project.name} | Other project: {other_project.name} | Model: {model.name}")
+                           f"Project: {project.name} | Other project: {other_project.name}")
 
         admin_role = Role.objects.filter(company=company, name="Admin").first()
 
@@ -135,35 +141,41 @@ class Command(BaseCommand):
         self.stdout.write(f"  -> server.is_active after delete: {server.is_active}")
 
         # ══════════════════════════════════════════════════════════════════════
-        # PART 2 — Legacy nested endpoints (ai-models/{model_id}/mcp-servers/)
+        # PART 2 — The same right codes, anchored at company=company
         # ══════════════════════════════════════════════════════════════════════
 
-        self._section("PART 2 — Legacy nested: CREATE -- mcp_server.create checked as company=company (NOT obj=project)")
+        self._section("PART 2 — CREATE -- mcp_server.create checked as company=company (NOT obj=project)")
         self._check("owner can mcp_server.create (company-wide)", PermissionChecker.can(owner, "mcp_server.create", company=company), True)
         self._check("project_admin can mcp_server.create (company-wide) -- EXPECT False here even though it was True in Part 1",
                      PermissionChecker.can(project_admin, "mcp_server.create", company=company), False)
 
-        legacy_server = isvc.create_mcp_server(company, str(model.id), {
-            "name": "Legacy MCP Test Flow", "server_type": "remote", "transport": "http",
-            "url": "https://example.test/legacy-flow",
+        # The model-scoped create_mcp_server(company, model_id, data) is gone
+        # -- it reached servers through `agents__model__id` and raised
+        # TypeError on every call anyway. project_id rides in the payload now.
+        second_server = isvc.create_mcp_server_standalone(company, {
+            "name": "Company Anchored MCP Test Flow", "project_id": str(project.id),
+            "server_type": "remote", "transport": "http",
+            "url": "https://example.test/company-anchored-flow",
         })
-        self.stdout.write(f"  -> legacy server created: id={legacy_server.id} name={legacy_server.name!r} "
-                           f"(also auto-created a linking AIAgent -- see create_mcp_server)")
+        self.stdout.write(f"  -> server created: id={second_server.id} name={second_server.name!r} "
+                           f"project={second_server.project.name}")
 
-        self._section("PART 2 — Legacy nested: LIST -- mcp_server.list checked as company=company")
+        self._section("PART 2 — LIST -- mcp_server.list checked as company=company")
         self._check("owner can mcp_server.list (company-wide)", PermissionChecker.can(owner, "mcp_server.list", company=company), True)
-        legacy_list = [s.name for s in isvc.list_mcp_servers(company, str(model.id))]
-        self.stdout.write(f"  -> list_mcp_servers(model): {legacy_list}")
+        # list_mcp_servers(company, model_id) is gone -- there is no model to
+        # scope a server list to any more, only the row-visibility rule.
+        owner_list = [s.name for s in isvc.list_mcp_servers_all(company, owner)]
+        self.stdout.write(f"  -> list_mcp_servers_all(owner): {owner_list}")
 
-        self._section("PART 2 — Legacy nested: DELETE -- mcp_server.delete checked as company=company")
+        self._section("PART 2 — DELETE -- mcp_server.delete checked as company=company")
         self._check("owner can mcp_server.delete (company-wide)", PermissionChecker.can(owner, "mcp_server.delete", company=company), True)
         self._check("project_admin can mcp_server.delete (company-wide) -- EXPECT False, same asymmetry as create",
                      PermissionChecker.can(project_admin, "mcp_server.delete", company=company), False)
 
-        legacy_result = isvc.delete_mcp_server(company, str(model.id), str(legacy_server.id))
-        self.stdout.write(f"  -> delete_mcp_server returned: {legacy_result}")
-        legacy_server.refresh_from_db()
-        self.stdout.write(f"  -> legacy_server.is_active after delete: {legacy_server.is_active}")
+        second_result = isvc.delete_mcp_server_standalone(company, str(second_server.id))
+        self.stdout.write(f"  -> delete_mcp_server_standalone returned: {second_result}")
+        second_server.refresh_from_db()
+        self.stdout.write(f"  -> second_server.is_active after delete: {second_server.is_active}")
 
         self._line()
         self.stdout.write(self.style.SUCCESS("Done."))

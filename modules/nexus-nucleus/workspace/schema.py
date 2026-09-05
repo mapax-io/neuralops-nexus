@@ -126,5 +126,7 @@ class AvailablePersonaOut(Schema):
     persona_id: str
     user_id: str
     name: str
-    source_type: str
     avatar: Optional[str] = None
+    # REMOVED: source_type -- the model/agent discriminator went away with
+    # AIAgent. A persona's "agent-ness" is now emergent (does it have MCP
+    # servers attached), and this picker does not need it.

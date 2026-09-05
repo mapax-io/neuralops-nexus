@@ -1,3 +1,8 @@
+"""
+NOTE: this module (with team_api.py / team_services.py) is NOT mounted --
+core/urls.py registers workspace.api's routers only. Dead weight; delete
+in a separate pass.
+"""
 from ninja import Schema
 from typing import Optional
 
@@ -37,8 +42,8 @@ class AvailablePersonaOut(Schema):
     persona_id: str
     user_id: str
     name: str
-    source_type: str
     avatar: Optional[str] = None
+    # REMOVED: source_type -- went away with AIAgent.
 
 
 class AvailableUserOut(Schema):

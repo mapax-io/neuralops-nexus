@@ -1,5 +1,12 @@
 """
 Business logic for project team management.
+
+NOTE: this module (with team_api.py / team_schema.py) is NOT mounted --
+core/urls.py registers workspace.api's routers only, and the live team
+endpoints are served by the near-identical code in workspace/services.py.
+Kept in sync with the AIAgent collapse so nothing here references deleted
+models, but it is dead weight and should be deleted outright in a
+separate pass.
 """
 import hashlib
 import secrets
@@ -26,17 +33,11 @@ def _format_member(member) -> dict:
             avatar = None
         email = ""
     else:
+        # The Human profile model is gone -- User.get_display_name() is the
+        # only name source now, and the avatar lives on User (#148).
         name = user.get_display_name()
         email = user.email or ""
-        avatar = None
-        try:
-            hp = user.human_profile
-            if hp.full_name:
-                name = hp.full_name
-            email = hp.email or email
-            avatar = hp.avatar.url if hp.avatar else None
-        except Exception:
-            pass
+        avatar = user.get_avatar_url()
 
     return {
         "id": str(member.id),
@@ -58,7 +59,7 @@ def list_team(company, project) -> list:
     members = (
         ProjectMember.objects.filter(company=company, project=project, is_active=True)
         .filter(user__is_active=True)  # exclude deactivated persona shadow users
-        .select_related("user", "user__human_profile", "user__persona_profile")
+        .select_related("user", "user__persona_profile")
         .order_by("role", "created_at")
     )
     return [_format_member(m) for m in members]
@@ -224,24 +225,24 @@ def list_available_users(company, project, search: str = "") -> list:
 
     qs = User.objects.filter(
         id__in=workspace_ids, user_type="human", is_active=True,
-    ).exclude(id__in=in_project).select_related("human_profile")
+    ).exclude(id__in=in_project)
 
+    # Searched against User's own columns -- the Human profile table this
+    # used to search is gone.
     if search:
         qs = qs.filter(
-            Q(human_profile__full_name__icontains=search)
-            | Q(human_profile__email__icontains=search)
+            Q(display_name__icontains=search) | Q(email__icontains=search)
         )
 
-    result = []
-    for user in qs:
-        profile = getattr(user, "human_profile", None)
-        result.append({
+    return [
+        {
             "user_id": str(user.id),
-            "name": profile.full_name if profile else user.email,
-            "email": profile.email if profile else user.email,
-            "avatar": profile.avatar.url if (profile and profile.avatar) else None,
-        })
-    return result
+            "name": user.get_display_name(),
+            "email": user.email or "",
+            "avatar": user.get_avatar_url(),
+        }
+        for user in qs
+    ]
 
 
 def list_available_personas(company, project) -> list:
@@ -253,17 +254,18 @@ def list_available_personas(company, project) -> list:
         user__user_type="persona",
     ).values_list("user_id", flat=True)
 
+    # Scoped to THIS project -- personas are project-owned and not
+    # transferable since the AIAgent collapse.
     personas = Persona.objects.filter(
-        company=company, is_active=True
+        company=company, project=project, is_active=True
     ).exclude(identity_user_id__in=in_project).select_related("identity_user")
 
-    result = []
-    for p in personas:
-        result.append({
+    return [
+        {
             "persona_id": str(p.id),
             "user_id": str(p.identity_user_id),
             "name": p.name,
-            "source_type": p.source_type,
             "avatar": p.avatar.url if p.avatar else None,
-        })
-    return result
+        }
+        for p in personas
+    ]

@@ -42,10 +42,12 @@ REGISTRY = [
     # Owner/Admin of just one project) as well as inherited from COMPANY.
     ("project.view", ObjectType.PROJECT, ScopeType.PROJECT,
      "View a specific project's details."),
-    ("ai_model.attach", ObjectType.PROJECT, ScopeType.PROJECT,
-     "Attach an already-existing AI model to a project (does not create the "
-     "model or touch its API key -- that's ai_model.create, COMPANY-only). "
-     "Reachable by a Project-scoped Admin, unlike ai_model.create/delete."),
+    ("model_config.attach", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Attach an already-existing model config to a project (does not create "
+     "the config or touch its API key -- that's model_config.create, "
+     "COMPANY-only). Reachable by a Project-scoped Admin, unlike "
+     "model_config.create/delete. This is the right that lets a company "
+     "Owner/Admin share one set of credentials across projects."),
     ("project.archive", ObjectType.PROJECT, ScopeType.PROJECT,
      "Archive (soft-delete) a project, or view it once archived. Reversible in "
      "principle via Project.restore() -- there's just no endpoint for that yet. "
@@ -64,11 +66,9 @@ REGISTRY = [
      "Archive (soft-delete) a channel, or view it once archived. Same right "
      "gates both archiving and the include_archived view."),
 
-    # ── AI Agent / MCP Server -- project-owned, so PROJECT scope (reachable
-    # by both a company-wide Admin and that project's own Project Admin).
-    # Distinct from ai_model.* below, which stays COMPANY-only. ───────────────
-    ("agent.update", ObjectType.AGENT, ScopeType.PROJECT,
-     "Edit an AI agent belonging to a project."),
+    # ── MCP Server -- project-owned, so PROJECT scope (reachable by both a
+    # company-wide Admin and that project's own Project Admin). Distinct
+    # from model_config.* below, which stays COMPANY-only. ───────────────────
     ("mcp_server.update", ObjectType.MCP_SERVER, ScopeType.PROJECT,
      "Edit an MCP server belonging to a project."),
 
@@ -114,21 +114,25 @@ REGISTRY = [
     ("persona.update", ObjectType.PERSONA, ScopeType.PROJECT, "Edit a persona."),
     ("persona.delete", ObjectType.PERSONA, ScopeType.PROJECT, "Delete a persona."),
 
-    ("agent.list", ObjectType.AGENT, ScopeType.COMPANY, "List AI agents."),
-    # create/delete are PROJECT scope -- an agent belongs to exactly one
-    # project (see AIAgent.projects in nucleus/models/intelligence.py), and
-    # that project's own Admin should be able to manage it without needing
-    # company-wide access. Still reachable by a COMPANY-scope Admin/Owner too.
-    ("agent.create", ObjectType.AGENT, ScopeType.PROJECT, "Create an AI agent in a project."),
-    ("agent.delete", ObjectType.AGENT, ScopeType.PROJECT, "Delete an AI agent."),
+    # agent.list / agent.create / agent.update / agent.delete were REMOVED --
+    # AIAgent no longer exists. Persona absorbed it: a persona is one model
+    # config, an optional advisor, and zero or more MCP servers. Their Right
+    # rows and every RoleRight referencing them are deleted in
+    # authn/migrations/0005 -- seed_permissions only ever create-or-updates,
+    # so dropping them from this REGISTRY alone would leave them granted in
+    # the database forever.
 
     ("mcp_server.list", ObjectType.MCP_SERVER, ScopeType.COMPANY, "List MCP servers."),
     ("mcp_server.create", ObjectType.MCP_SERVER, ScopeType.PROJECT, "Register a new MCP server in a project."),
     ("mcp_server.delete", ObjectType.MCP_SERVER, ScopeType.PROJECT, "Delete an MCP server."),
 
-    ("ai_model.list", ObjectType.AI_MODEL, ScopeType.COMPANY, "List AI models."),
-    ("ai_model.create", ObjectType.AI_MODEL, ScopeType.COMPANY, "Register a new AI model."),
-    ("ai_model.delete", ObjectType.AI_MODEL, ScopeType.COMPANY, "Delete an AI model."),
+    ("model_config.list", ObjectType.MODEL_CONFIG, ScopeType.COMPANY, "List model configs."),
+    ("model_config.create", ObjectType.MODEL_CONFIG, ScopeType.COMPANY, "Register a new model config."),
+    ("model_config.update", ObjectType.MODEL_CONFIG, ScopeType.COMPANY,
+     "Edit a model config -- including rotating its API key. Previously "
+     "impossible: there was no update endpoint, and delete is refused while "
+     "any persona still references the row."),
+    ("model_config.delete", ObjectType.MODEL_CONFIG, ScopeType.COMPANY, "Delete a model config."),
 
     # ── Persona Schedule (#189) — TOPIC scope, same tier as session.create/
     # persona.mention: any Member with access to a topic can automate a
@@ -169,9 +173,9 @@ DEFAULT_ROLE_RIGHTS = {
         "session.create", "session.close",
         "persona.mention",
         "persona.list", "persona.create", "persona.update", "persona.delete",
-        "agent.list", "agent.create", "agent.update", "agent.delete",
         "mcp_server.list", "mcp_server.create", "mcp_server.update", "mcp_server.delete",
-        "ai_model.list", "ai_model.create", "ai_model.delete", "ai_model.attach",
+        "model_config.list", "model_config.create", "model_config.update",
+        "model_config.delete", "model_config.attach",
         "schedule.create", "schedule.manage",
         # project.archive/channel.archive/topic.archive are now included --
         # this reverses the old project.delete-was-Owner-only policy. Archiving
@@ -194,7 +198,7 @@ DEFAULT_ROLE_RIGHTS = {
         "topic.create", "topic.list", "topic.update", "topic.mark_read",
         "session.create", "session.close",
         "persona.mention",
-        "persona.list", "agent.list", "mcp_server.list", "ai_model.list",
+        "persona.list", "mcp_server.list", "model_config.list",
         "schedule.create",
         # Deliberately no schedule.manage -- a Member can still pause/delete
         # a schedule THEY created via the ownership check in
@@ -205,7 +209,7 @@ DEFAULT_ROLE_RIGHTS = {
         "project.list", "project.view",
         "channel.list",
         "topic.list", "topic.mark_read",
-        "persona.list", "agent.list", "mcp_server.list", "ai_model.list",
+        "persona.list", "mcp_server.list", "model_config.list",
         # Deliberately no session.*, no persona.mention, no *.create/update/delete.
         # topic.mark_read is the one exception: it's a personal read-state
         # marker, not a write to shared content, so every role gets it.
