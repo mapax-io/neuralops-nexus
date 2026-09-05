@@ -61,9 +61,16 @@ describe("TopBar — mobile navigation menu", () => {
   it("lists every nav destination plus About under the hamburger", () => {
     renderBar();
     openMenu();
-    for (const label of ["Personas", "AI models", "MCP servers", "Agents", "Members", "About NeuralOps Nexus"]) {
+    for (const label of ["Personas", "AI models", "MCP servers", "Members", "About NeuralOps Nexus"]) {
       expect(screen.getByRole("menuitem", { name: label })).toBeInTheDocument();
     }
+  });
+
+  it("offers no Agents destination anywhere — agents collapsed into personas", () => {
+    renderBar();
+    expect(screen.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument();
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: "Agents" })).not.toBeInTheDocument();
   });
 
   it("navigates to the picked intelligence section and closes", () => {

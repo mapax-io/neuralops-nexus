@@ -44,3 +44,12 @@ describe("resolveSubmit management commands", () => {
     expect(resolveSubmit("/nonsense").kind).toBe("invalid");
   });
 });
+
+describe("resolveSubmit retired commands", () => {
+  // Agents collapsed into personas server-side — the commands would open a
+  // section that no longer exists, so they must read as unknown.
+  it("no longer knows /add-agent or /list-agents", () => {
+    expect(resolveSubmit("/add-agent").kind).toBe("invalid");
+    expect(resolveSubmit("/list-agents").kind).toBe("invalid");
+  });
+});

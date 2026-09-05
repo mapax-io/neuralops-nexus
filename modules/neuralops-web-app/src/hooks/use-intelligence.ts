@@ -11,19 +11,14 @@ function useGate() {
   return { serverUrl, enabled: !!serverUrl && !!token };
 }
 
-export function useModels() {
+export function useModelConfigs() {
   const { serverUrl, enabled } = useGate();
-  return useQuery({ queryKey: ["ai-models", serverUrl], queryFn: intel.listModels, enabled });
+  return useQuery({ queryKey: ["model-configs", serverUrl], queryFn: intel.listModelConfigs, enabled });
 }
 
 export function useMcpServers() {
   const { serverUrl, enabled } = useGate();
   return useQuery({ queryKey: ["mcp-servers", serverUrl], queryFn: intel.listMcpServers, enabled });
-}
-
-export function useAgents() {
-  const { serverUrl, enabled } = useGate();
-  return useQuery({ queryKey: ["agents", serverUrl], queryFn: intel.listAgents, enabled });
 }
 
 export function usePersonas(projectId?: string) {
@@ -52,10 +47,10 @@ function useInvalidate(...keys: string[]) {
   return () => Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: [key] })));
 }
 
-export function useCreateModel(onDone?: (m: intel.AIModel) => void) {
-  const inv = useInvalidate("ai-models");
+export function useCreateModelConfig(onDone?: (m: intel.ModelConfig) => void) {
+  const inv = useInvalidate("model-configs");
   return useMutation({
-    mutationFn: intel.createModel,
+    mutationFn: intel.createModelConfig,
     onSuccess: (m) => {
       toast.success(`Model "${m.name}" registered.`);
       inv();
@@ -65,26 +60,41 @@ export function useCreateModel(onDone?: (m: intel.AIModel) => void) {
   });
 }
 
-export function useSetModelProject() {
-  const inv = useInvalidate("ai-models");
+export function usePatchModelConfig(onDone?: () => void) {
+  // Persona cards embed the model's name and tool capability.
+  const inv = useInvalidate("model-configs", "personas");
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: intel.ModelConfigPatch }) => intel.patchModelConfig(id, payload),
+    onSuccess: (m) => {
+      toast.success(`Model "${m.name}" updated.`);
+      inv();
+      onDone?.();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+}
+
+export function useSetModelConfigProject() {
+  const inv = useInvalidate("model-configs");
   return useMutation({
     mutationFn: ({ projectId, modelId, attach }: { projectId: string; modelId: string; attach: boolean }) =>
-      attach ? intel.attachModelToProject(projectId, modelId) : intel.detachModelFromProject(projectId, modelId),
+      attach ? intel.attachModelConfigToProject(projectId, modelId) : intel.detachModelConfigFromProject(projectId, modelId),
     // AWAIT the refetch: the dialog's checkboxes derive from the query cache,
     // and re-enabling them against stale data would invert the next click.
     onSuccess: async (_r, v) => {
       toast.success(v.attach ? "Model attached to the project." : "Model detached from the project.");
       await inv();
     },
+    // A detach refused while a persona still uses the model arrives as a 409
+    // naming the persona — surfaced as-is.
     onError: (e) => toast.error(e.message),
   });
 }
 
-export function useDeleteModel() {
-  // Agents embed model_name — removing a model must refresh their cards.
-  const inv = useInvalidate("ai-models", "agents");
+export function useDeleteModelConfig() {
+  const inv = useInvalidate("model-configs", "personas");
   return useMutation({
-    mutationFn: intel.deleteModel,
+    mutationFn: intel.deleteModelConfig,
     onSuccess: () => {
       toast.success("Model removed.");
       inv();
@@ -107,7 +117,8 @@ export function useCreateMcpServer(onDone?: (s: intel.MCPServer) => void) {
 }
 
 export function usePatchMcpServer(onDone?: () => void) {
-  const inv = useInvalidate("mcp-servers");
+  // Persona cards embed the server's name and auth state.
+  const inv = useInvalidate("mcp-servers", "personas");
   return useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: intel.MCPServerPatch }) => intel.patchMcpServer(id, payload),
     onSuccess: (s) => {
@@ -120,49 +131,11 @@ export function usePatchMcpServer(onDone?: () => void) {
 }
 
 export function useDeleteMcpServer() {
-  const inv = useInvalidate("mcp-servers", "agents");
+  const inv = useInvalidate("mcp-servers", "personas");
   return useMutation({
     mutationFn: intel.deleteMcpServer,
     onSuccess: () => {
       toast.success("MCP server removed.");
-      inv();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-}
-
-export function useCreateAgent(onDone?: (a: intel.AIAgent) => void) {
-  const inv = useInvalidate("agents");
-  return useMutation({
-    mutationFn: intel.createAgent,
-    onSuccess: (a) => {
-      toast.success(`Agent "${a.name}" created.`);
-      inv();
-      onDone?.(a);
-    },
-    onError: (e) => toast.error(e.message),
-  });
-}
-
-export function usePatchAgent(onDone?: () => void) {
-  const inv = useInvalidate("agents");
-  return useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: intel.AIAgentPatch }) => intel.patchAgent(id, payload),
-    onSuccess: (a) => {
-      toast.success(`Agent "${a.name}" updated.`);
-      inv();
-      onDone?.();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-}
-
-export function useDeleteAgent() {
-  const inv = useInvalidate("agents");
-  return useMutation({
-    mutationFn: intel.deleteAgent,
-    onSuccess: () => {
-      toast.success("Agent removed.");
       inv();
     },
     onError: (e) => toast.error(e.message),
@@ -228,7 +201,11 @@ export function useMcpOAuthConnect() {
       }),
     onSuccess: async (_r, v) => {
       toast.success(`${v.name} connected.`);
-      await qc.invalidateQueries({ queryKey: ["mcp-servers", serverUrl] });
+      // Persona cards flag a mounted server that needs reconnecting.
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["mcp-servers", serverUrl] }),
+        qc.invalidateQueries({ queryKey: ["personas", serverUrl] }),
+      ]);
     },
     onError: (e) => {
       // Cancellation is not an error worth a red toast — the user chose to stop.

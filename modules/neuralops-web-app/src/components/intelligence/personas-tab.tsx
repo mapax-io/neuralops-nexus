@@ -9,22 +9,30 @@ import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { absolutizeMedia } from "@/lib/api/client";
 import { isMentionableName } from "@/lib/composer/directives";
+import { validateNumber } from "@/lib/validation";
 import {
-  useAgents,
   useCreatePersona,
   useDeletePersona,
-  useModels,
+  useMcpServers,
+  useModelConfigs,
   useOutputTypes,
   usePatchPersona,
   usePersonas,
   usePromptTemplates,
-  useSetModelProject,
+  useSetModelConfigProject,
 } from "@/hooks/use-intelligence";
 import { useProjects } from "@/hooks/use-workspace";
-import { fetchPromptTemplate, type Persona } from "@/lib/api/intelligence";
+import {
+  fetchPromptTemplate,
+  MAX_MCP_SERVERS_PER_PERSONA,
+  type ModelConfig,
+  type ModelConfigRef,
+  type Persona,
+  type PersonaPatch,
+} from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { CardGrid, Chip, EntityCard, ListState, ModelPicker, ProjectSelect, TabShell, Toolbar } from "./shared";
-import { CreateAgentDialog } from "./agents-tab";
+import { CreateMcpDialog } from "./mcp-tab";
 import { CreateModelDialog } from "./models-tab";
 
 export function PersonasTab({ canManage, embedded, defaultProjectId }: { canManage: boolean; embedded?: boolean; defaultProjectId?: string }) {
@@ -89,8 +97,8 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
         <Toolbar
           facts={[
             `${personas.length} ${personas.length === 1 ? "persona" : "personas"}`,
-            `${personas.filter((p) => p.source_type === "agent").length} agent-backed`,
-            `${personas.filter((p) => p.source_type === "model").length} model-backed`,
+            `${personas.filter((p) => p.mcp_servers.length > 0).length} with tools`,
+            `${personas.filter((p) => p.advisor_model).length} with an advisor`,
           ]}
         />
       )}
@@ -106,48 +114,63 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
       />
       {!showLoading && !!personas?.length && (
         <CardGrid>
-          {personas.map((p) => (
-            <EntityCard
-              key={p.id}
-              icon={
-                p.avatar ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- runtime server-relative media, domain unknown at build
-                  <img src={absolutizeMedia(p.avatar) ?? undefined} alt="" className="size-full object-cover" />
-                ) : (
-                  <UserRound size={17} strokeWidth={2} />
-                )
-              }
-              title={`@${p.name}`}
-              chips={<Chip tone={p.source_type === "agent" ? "accent" : "neutral"}>{p.source_type === "agent" ? "agent · tools" : "model"}</Chip>}
-              body={p.description ?? p.prompt?.system_prompt}
-              meta={
-                <>
-                  <span>answers as {p.prompt?.output_type ?? "text"}</span>
-                  <span>@mention to bring in</span>
-                </>
-              }
-              actions={canManage && (
-                <>
-                  <button
-                    aria-label={`Edit persona ${p.name}`}
-                    title="Edit persona"
-                    onClick={() => setEditing(p)}
-                    className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
-                  >
-                    <Pencil size={14} strokeWidth={2} />
-                  </button>
-                  <button
-                    aria-label={`Remove persona ${p.name}`}
-                    title="Remove persona"
-                    onClick={() => setRemoving(p)}
-                    className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
-                  >
-                    <Trash2 size={14} strokeWidth={2} />
-                  </button>
-                </>
-              )}
-            />
-          ))}
+          {personas.map((p) => {
+            const tools = p.mcp_servers.length;
+            // A mounted OAuth server whose sign-in lapsed silently breaks the
+            // persona's tools — say so on the card, next to the tool count.
+            const needsReconnect = p.mcp_servers.some((s) => s.auth_type === "oauth2" && !s.oauth_connected);
+            return (
+              <EntityCard
+                key={p.id}
+                icon={
+                  p.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- runtime server-relative media, domain unknown at build
+                    <img src={absolutizeMedia(p.avatar) ?? undefined} alt="" className="size-full object-cover" />
+                  ) : (
+                    <UserRound size={17} strokeWidth={2} />
+                  )
+                }
+                title={`@${p.name}`}
+                chips={
+                  <>
+                    <Chip>{p.model.name}</Chip>
+                    {p.advisor_model && <Chip>advisor · {p.advisor_model.name}</Chip>}
+                    {tools > 0 && <Chip tone="accent">{`${tools} ${tools === 1 ? "tool" : "tools"}`}</Chip>}
+                    {needsReconnect && <Chip tone="warn">reconnect needed</Chip>}
+                  </>
+                }
+                body={p.description ?? p.prompt?.system_prompt}
+                meta={
+                  <>
+                    <span>answers as {p.prompt?.output_type ?? "text"}</span>
+                    <span>{p.max_steps} steps</span>
+                    <span>temp {p.temperature}</span>
+                    <span>@mention to bring in</span>
+                  </>
+                }
+                actions={canManage && (
+                  <>
+                    <button
+                      aria-label={`Edit persona ${p.name}`}
+                      title="Edit persona"
+                      onClick={() => setEditing(p)}
+                      className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
+                    >
+                      <Pencil size={14} strokeWidth={2} />
+                    </button>
+                    <button
+                      aria-label={`Remove persona ${p.name}`}
+                      title="Remove persona"
+                      onClick={() => setRemoving(p)}
+                      className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
+                    >
+                      <Trash2 size={14} strokeWidth={2} />
+                    </button>
+                  </>
+                )}
+              />
+            );
+          })}
         </CardGrid>
       )}
       {activeProject && (
@@ -158,9 +181,7 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
           defaultProjectId={activeProject}
           // The dialog owns its project — if the persona landed elsewhere,
           // follow it so the new card is visible, not mysteriously absent.
-          onCreated={(p) => {
-            if (p.project_id) setProjectId(p.project_id);
-          }}
+          onCreated={(p) => setProjectId(p.project_id)}
         />
       )}
       {editing && (
@@ -192,6 +213,143 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
   );
 }
 
+// ── The backing: one model, an optional advisor, 0..N tool servers ────────────
+// The server's wiring rules are applied as the user picks, so the dialog shows
+// exactly what will be saved: the advisor is never the primary (hidden from the
+// advisor list, cleared if the primary takes its id), and a model that can't
+// call tools unticks and disables the servers rather than failing on submit.
+function useBacking(
+  models: ModelConfig[] | undefined,
+  initial: { modelId: string; advisorId: string; serverIds: string[] },
+  // The persona's own refs, so capability is known even before the list loads.
+  knownRefs: (ModelConfigRef | null | undefined)[] = [],
+) {
+  const [modelId, setModelId] = useState(initial.modelId);
+  const [advisorId, setAdvisorId] = useState(initial.advisorId);
+  const [serverIds, setServerIds] = useState<string[]>(initial.serverIds);
+  const [clearedTools, setClearedTools] = useState(false);
+  const resolve = (id: string) => models?.find((m) => m.id === id) ?? knownRefs.find((r) => r?.id === id) ?? undefined;
+  const model = modelId ? resolve(modelId) : undefined;
+  const lacksTools = !!model && !model.supports_tools;
+
+  // `known` carries a model handed back by the inline register dialog — it is
+  // picked before the list refetches, so its capability must not be guessed.
+  const pickModel = (id: string, known?: ModelConfig) => {
+    setModelId(id);
+    if (id && id === advisorId) setAdvisorId("");
+    const next = known ?? (id ? resolve(id) : undefined);
+    if (next && !next.supports_tools && serverIds.length > 0) {
+      setServerIds([]);
+      setClearedTools(true);
+    }
+  };
+  const toggleServer = (id: string) => {
+    setClearedTools(false);
+    setServerIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  };
+  const clearAll = () => {
+    setModelId("");
+    setAdvisorId("");
+    setServerIds([]);
+    setClearedTools(false);
+  };
+  return { modelId, advisorId, serverIds, model, lacksTools, clearedTools, pickModel, setAdvisorId, toggleServer, clearAll };
+}
+
+function ToolServerPicker({ servers, selected, onToggle, disabledReason, clearedNote, onAdd }: {
+  servers: { id: string; name: string }[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  disabledReason: string | null; // set when the chosen model can't call tools
+  clearedNote: boolean;          // ticks were just cleared by a model switch
+  onAdd: () => void;
+}) {
+  const full = selected.length >= MAX_MCP_SERVERS_PER_PERSONA;
+  return (
+    <fieldset>
+      <legend className="mb-1.5 block text-[13px] font-medium text-ink2">Tool servers <span className="text-ink2">(optional)</span></legend>
+      {servers.length === 0 ? (
+        <p className="rounded-[10px] border border-dashed border-line px-3 py-2.5 text-[12.5px] text-ink2">
+          No tool servers in this project yet — without one the persona answers, but can&apos;t act.
+        </p>
+      ) : (
+        <ul className="grid gap-1.5 sm:grid-cols-2">
+          {servers.map((s) => {
+            const on = selected.includes(s.id);
+            const off = !!disabledReason || (!on && full);
+            return (
+              <li key={s.id}>
+                <label className={`flex items-center gap-2.5 rounded-[10px] border px-3 py-2 text-[13px] transition-colors ${on ? "border-accent bg-accent/10" : "border-line bg-surface"} ${off ? "opacity-60" : "cursor-pointer hover:border-accent/50"}`}>
+                  <input type="checkbox" checked={on} disabled={off} onChange={() => onToggle(s.id)} className="accent-[var(--accent)]" />
+                  <span className="truncate">{s.name}</span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+        {disabledReason ? (
+          <p className="text-[12px] text-warn">{disabledReason}{clearedNote ? " Your ticks were cleared." : ""}</p>
+        ) : (
+          <p className="text-[12px] text-ink2">Up to {MAX_MCP_SERVERS_PER_PERSONA} tool servers per persona — this project&apos;s only, since a server belongs to one project.</p>
+        )}
+        <button type="button" onClick={onAdd} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
+          <Plus size={12} strokeWidth={2.4} /> Add a tool server
+        </button>
+      </div>
+    </fieldset>
+  );
+}
+
+const toolsReason = (model: { name: string; supports_tools: boolean } | undefined) =>
+  model && !model.supports_tools ? `${model.name} isn't marked tool-capable — pick another model to attach tool servers.` : null;
+
+// Per-persona generation settings (moved off the model row server-side —
+// two personas sharing a key routinely want different ones).
+function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, onSteps }: {
+  idPrefix: string;
+  temp: string;
+  tokens: string;
+  steps: string;
+  onTemp: (v: string) => void;
+  onTokens: (v: string) => void;
+  onSteps: (v: string) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[13px] font-medium text-ink2">Generation settings</p>
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <Label htmlFor={`${idPrefix}-temp`}>Temperature</Label>
+          <Input id={`${idPrefix}-temp`} type="number" min={0} max={2} step={0.1} inputMode="decimal" value={temp} onChange={(e) => onTemp(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor={`${idPrefix}-max-tokens`}>Max tokens</Label>
+          <Input id={`${idPrefix}-max-tokens`} type="number" min={1} step={1} inputMode="numeric" value={tokens} onChange={(e) => onTokens(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor={`${idPrefix}-max-steps`}>Max steps</Label>
+          <Input id={`${idPrefix}-max-steps`} type="number" min={1} max={50} step={1} inputMode="numeric" value={steps} onChange={(e) => onSteps(e.target.value)} />
+        </div>
+      </div>
+      <p className="mt-1.5 text-[12px] text-ink2">Lower temperature means steadier answers. Steps cap the tool-call rounds per reply.</p>
+    </div>
+  );
+}
+
+// Server-side these are unbounded; the ranges here catch typos, not taste.
+const validateGeneration = (temp: string, tokens: string, steps: string) =>
+  validateNumber(temp, { label: "a temperature", min: 0, max: 2 }) ??
+  validateNumber(tokens, { label: "max tokens", min: 1, max: 1_000_000, integer: true }) ??
+  validateNumber(steps, { label: "max steps", min: 1, max: 50, integer: true });
+
+const sameIds = (a: string[], b: string[]) => {
+  if (a.length !== b.length) return false;
+  const sb = [...b].sort();
+  return [...a].sort().every((x, i) => x === sb[i]);
+};
+
 function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
   open: boolean;
   onClose: () => void;
@@ -199,28 +357,29 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
   onCreated?: (p: Persona) => void;
 }) {
   const { data: projects } = useProjects();
-  const { data: models } = useModels();
-  const { data: agents } = useAgents();
+  const { data: models } = useModelConfigs();
+  const { data: servers } = useMcpServers();
   const { data: outputTypes } = useOutputTypes();
-  const setProject = useSetModelProject();
+  const setProject = useSetModelConfigProject();
   // The dialog owns its target project — pre-set from the tab, switchable
   // here, and named in the title so there is never any doubt.
   const [projectId, setProjectId] = useState(defaultProjectId);
   // Inline prerequisite creation — stacked dialogs, mounted fresh per open so
   // they scope to the currently selected project.
   const [addingModel, setAddingModel] = useState(false);
-  const [addingAgent, setAddingAgent] = useState(false);
+  const [addingMcp, setAddingMcp] = useState(false);
   // Persona names are unique server-wide (the shadow user's handle), but the
   // API only lists per project — check what we can see live; the server
   // rejects cross-project collisions on submit (surfaced via toast).
   const { data: projectPersonas } = usePersonas(projectId);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [sourceType, setSourceType] = useState<"model" | "agent">("model");
-  const [modelId, setModelId] = useState("");
-  const [agentId, setAgentId] = useState("");
+  const backing = useBacking(models, { modelId: "", advisorId: "", serverIds: [] });
   const [systemPrompt, setSystemPrompt] = useState("");
   const [outputType, setOutputType] = useState("text");
+  const [temp, setTemp] = useState("0.7");
+  const [tokens, setTokens] = useState("4096");
+  const [steps, setSteps] = useState("10");
   const [err, setErr] = useState<string | null>(null);
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
@@ -258,11 +417,12 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     setProjectId(defaultProjectId);
     setName("");
     setDescription("");
-    setSourceType("model");
-    setModelId("");
-    setAgentId("");
+    backing.clearAll();
     setSystemPrompt("");
     setOutputType("text");
+    setTemp("0.7");
+    setTokens("4096");
+    setSteps("10");
     setErr(null);
     setNameErr(null);
     setTouched(false);
@@ -278,7 +438,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     onCreated?.(p);
     close();
   });
-  const projectAgents = agents?.filter((a) => a.project_id === projectId) ?? [];
+  // MCP servers are project-owned — only this project's can be mounted.
+  const projectServers = servers?.filter((s) => s.project_id === projectId) ?? [];
   const projName = projects?.find((p) => p.id === projectId)?.name;
 
   const submit = async (e: React.FormEvent) => {
@@ -292,16 +453,22 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     const ne = validateName(n);
     setNameErr(ne);
     if (ne) return;
-    if (sourceType === "model" && !modelId) return setErr("Pick the model that powers them.");
-    if (sourceType === "agent" && !agentId) return setErr("Pick the agent that powers them.");
+    if (!backing.modelId) return setErr("Pick the model that powers them.");
+    // Mirrors the server's wiring rules — unreachable through the controls,
+    // kept so a stale list can never produce a confusing round-trip 400.
+    if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
+    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} tool servers.`);
     if (!systemPrompt.trim()) return setErr("Write the role — it's the persona's job description.");
+    const ge = validateGeneration(temp, tokens, steps);
+    if (ge) return setErr(ge);
     // Attach & use: a model picked from another project is attached here
-    // first, then the persona is created — one submit, no tab-hopping.
-    if (sourceType === "model") {
-      const picked = models?.find((m) => m.id === modelId);
+    // first (the server requires it), then the persona is created — one
+    // submit, no tab-hopping. Both slots.
+    for (const id of [backing.modelId, backing.advisorId].filter(Boolean)) {
+      const picked = models?.find((m) => m.id === id);
       if (picked?.project_ids && !picked.project_ids.includes(projectId)) {
         try {
-          await setProject.mutateAsync({ projectId, modelId, attach: true });
+          await setProject.mutateAsync({ projectId, modelId: id, attach: true });
         } catch {
           return; // the hook already toasted; stay in the dialog to retry
         }
@@ -311,9 +478,12 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       name: n,
       description: description.trim() || undefined,
       project_id: projectId,
-      source_type: sourceType,
-      model_id: sourceType === "model" ? modelId : undefined,
-      agent_id: sourceType === "agent" ? agentId : undefined,
+      model_config_id: backing.modelId,
+      advisor_model_config_id: backing.advisorId || undefined,
+      mcp_server_ids: backing.serverIds,
+      temperature: Number(temp),
+      max_tokens: Number(tokens),
+      max_steps: Number(steps),
       prompt: { system_prompt: systemPrompt.trim(), output_type: outputType },
     });
   };
@@ -340,9 +510,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           value={projectId}
           onChange={(v) => {
             setProjectId(v);
-            // The backing pickers are project-scoped — selections don't carry over.
-            setModelId("");
-            setAgentId("");
+            // The backing is project-scoped — selections don't carry over.
+            backing.clearAll();
           }}
           only={projects ?? []}
         />
@@ -372,60 +541,35 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
             <p className="mt-1.5 text-[12px] text-ink2">Teammates will type @{name.trim() || "name"} to bring them in.</p>
           )}
         </div>
-        <div>
-          <Label>Powered by</Label>
-          <div
-            className="flex gap-2"
-            role="radiogroup"
-            onKeyDown={(e) => {
-              if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-              e.preventDefault();
-              const btns = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button[role=radio]"));
-              const idx = btns.findIndex((b) => b.getAttribute("aria-checked") === "true");
-              const next = btns[(idx + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length];
-              next?.focus();
-              next?.click();
-            }} aria-label="Powered by">
-            {(["model", "agent"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                role="radio"
-                aria-checked={sourceType === t}
-                onClick={() => setSourceType(t)}
-                className={`flex-1 rounded-[10px] border px-3 py-2 text-[13px] font-semibold transition-colors ${sourceType === t ? "border-accent bg-accent/10 text-accent" : "border-line bg-surface text-ink2 hover:border-accent/50"}`}
-              >
-                {t === "model" ? "Model — answers" : "Agent — acts with tools"}
-              </button>
-            ))}
-          </div>
-        </div>
-        {sourceType === "model" ? (
-          <ModelPicker
-            id="pe-model"
-            projectId={projectId}
-            models={models}
-            value={modelId}
-            onChange={setModelId}
-            onRegisterNew={() => setAddingModel(true)}
-          />
-        ) : (
-          <div>
-            <Label htmlFor="pe-agent">Agent</Label>
-            <select id="pe-agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
-              <option value="" disabled>Choose an agent…</option>
-              {projectAgents.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-              {projectAgents.length === 0 && <p className="text-[12px] text-warn">This project has no agents yet.</p>}
-              <button type="button" onClick={() => setAddingAgent(true)} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
-                <Plus size={12} strokeWidth={2.4} /> Create an agent
-              </button>
-            </div>
-          </div>
-        )}
+        <ModelPicker
+          id="pe-model"
+          projectId={projectId}
+          models={models}
+          value={backing.modelId}
+          onChange={backing.pickModel}
+          onRegisterNew={() => setAddingModel(true)}
+          hint={<p className="text-[12px] text-ink2">Every answer comes from this model.</p>}
+        />
+        <ModelPicker
+          id="pe-advisor"
+          label="Advisor model"
+          optional
+          noneLabel="No advisor"
+          exclude={backing.modelId ? [backing.modelId] : []}
+          projectId={projectId}
+          models={models}
+          value={backing.advisorId}
+          onChange={backing.setAdvisorId}
+          hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
+        />
+        <ToolServerPicker
+          servers={projectServers}
+          selected={backing.serverIds}
+          onToggle={backing.toggleServer}
+          disabledReason={toolsReason(backing.model)}
+          clearedNote={backing.clearedTools}
+          onAdd={() => setAddingMcp(true)}
+        />
         {Object.keys(templates?.prompts ?? {}).length > 0 && (
           <div>
             <Label htmlFor="pe-template">Start from a template <span className="text-ink2">(optional)</span></Label>
@@ -463,6 +607,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           </select>
           <p className="mt-1.5 text-[12px] text-ink2">Anyone can still override per message with @chart, @table, and friends.</p>
         </div>
+        <GenerationSettings idPrefix="pe" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} />
         <div>
           <Label htmlFor="pe-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="pe-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
@@ -477,16 +622,17 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
         onClose={() => setAddingModel(false)}
         attachProjectId={projectId}
         attachProjectName={projName}
-        onCreated={(m) => setModelId(m.id)}
+        onCreated={(m) => backing.pickModel(m.id, m)}
       />
     )}
-    {addingAgent && (
-      <CreateAgentDialog
+    {addingMcp && (
+      <CreateMcpDialog
         open
-        onClose={() => setAddingAgent(false)}
+        onClose={() => setAddingMcp(false)}
         defaultProjectId={projectId}
-        onCreated={(a) => {
-          if (a.project_id === projectId) setAgentId(a.id);
+        onCreated={(s) => {
+          // A server created for another project can't be mounted here.
+          if (s.project_id === projectId && !backing.serverIds.includes(s.id)) backing.toggleServer(s.id);
         }}
       />
     )}
@@ -499,16 +645,40 @@ function templateLabel(path: string): string {
   return path.replace(/\.[a-z]+$/i, "").replace(/[-_]/g, " ").split("/").join(" / ");
 }
 
+// The backing is mutable: model, advisor and tool servers can all be changed
+// here. Only what changed is sent — the server applies non-null fields, with
+// clear_advisor as the one way to remove the advisor and [] to detach all.
 function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; onClose: () => void; siblings: Persona[] }) {
+  const { data: projects } = useProjects();
+  const { data: models } = useModelConfigs();
+  const { data: servers } = useMcpServers();
   const { data: outputTypes } = useOutputTypes();
+  const setProject = useSetModelConfigProject();
+  const [addingModel, setAddingModel] = useState(false);
+  const [addingMcp, setAddingMcp] = useState(false);
   const [name, setName] = useState(persona.name);
   const [description, setDescription] = useState(persona.description ?? "");
+  const mountedIds = persona.mcp_servers.map((s) => s.id);
+  const backing = useBacking(
+    models,
+    { modelId: persona.model.id, advisorId: persona.advisor_model?.id ?? "", serverIds: mountedIds },
+    [persona.model, persona.advisor_model],
+  );
   const [systemPrompt, setSystemPrompt] = useState(persona.prompt?.system_prompt ?? "");
   const [outputType, setOutputType] = useState(persona.prompt?.output_type ?? "text");
+  const [temp, setTemp] = useState(String(persona.temperature));
+  const [tokens, setTokens] = useState(String(persona.max_tokens));
+  const [steps, setSteps] = useState(String(persona.max_steps));
   const [err, setErr] = useState<string | null>(null);
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
   const patch = usePatchPersona(onClose);
+  // This project's servers, plus any mounted one the list doesn't carry (so
+  // it can still be unticked) — never another project's.
+  const projectServers = [
+    ...(servers?.filter((s) => s.project_id === persona.project_id) ?? []),
+    ...persona.mcp_servers.filter((m) => !servers?.some((s) => s.id === m.id)),
+  ].map((s) => ({ id: s.id, name: s.name }));
 
   const validateName = (v: string) => {
     const n = v.trim();
@@ -518,39 +688,67 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
     return null;
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (patch.isPending || setProject.isPending) return;
     setErr(null);
     setTouched(true);
     const n = name.trim();
     const ne = validateName(n);
     setNameErr(ne);
     if (ne) return;
+    if (!backing.modelId) return setErr("Pick the model that powers them.");
+    if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
+    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} tool servers.`);
     if (!systemPrompt.trim()) return setErr("The role can't be empty — it's the persona's job description.");
-    // Only send what changed; an unchanged name skips the server's rename path.
+    const ge = validateGeneration(temp, tokens, steps);
+    if (ge) return setErr(ge);
+    const advisorBefore = persona.advisor_model?.id ?? "";
     const promptChanged =
       systemPrompt.trim() !== (persona.prompt?.system_prompt ?? "") || outputType !== (persona.prompt?.output_type ?? "text");
-    const payload = {
+    // Only send what changed; an unchanged name skips the server's rename path.
+    const payload: PersonaPatch = {
       ...(n !== persona.name ? { name: n } : {}),
       ...(description.trim() !== (persona.description ?? "") ? { description: description.trim() } : {}),
+      ...(backing.modelId !== persona.model.id ? { model_config_id: backing.modelId } : {}),
+      ...(backing.advisorId !== advisorBefore
+        ? backing.advisorId ? { advisor_model_config_id: backing.advisorId } : { clear_advisor: true }
+        : {}),
+      ...(!sameIds(backing.serverIds, mountedIds) ? { mcp_server_ids: backing.serverIds } : {}),
+      ...(Number(temp) !== persona.temperature ? { temperature: Number(temp) } : {}),
+      ...(Number(tokens) !== persona.max_tokens ? { max_tokens: Number(tokens) } : {}),
+      ...(Number(steps) !== persona.max_steps ? { max_steps: Number(steps) } : {}),
       ...(promptChanged ? { prompt: { system_prompt: systemPrompt.trim(), output_type: outputType } } : {}),
     };
     if (Object.keys(payload).length === 0) return onClose(); // nothing changed
+    // Attach & use for a swapped-in model from another project — same rule as
+    // create: the server requires the model to be attached first.
+    for (const id of [payload.model_config_id, payload.advisor_model_config_id].filter((x): x is string => !!x)) {
+      const picked = models?.find((m) => m.id === id);
+      if (picked?.project_ids && !picked.project_ids.includes(persona.project_id)) {
+        try {
+          await setProject.mutateAsync({ projectId: persona.project_id, modelId: id, attach: true });
+        } catch {
+          return;
+        }
+      }
+    }
     patch.mutate({ id: persona.id, payload });
   };
 
   return (
+    <>
     <Dialog
       open
       onClose={onClose}
       size="lg"
       title={`Edit @${persona.name}`}
-      description="Changes apply to every future answer. Past messages stay as they were."
+      description="Changes apply to every future answer — a swapped model or tool set takes effect on the next @mention. Past messages stay as they were."
       icon={<Pencil size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="pd-form" size="sm" variant="primary" loading={patch.isPending}>Save changes</Button>
+          <Button type="submit" form="pd-form" size="sm" variant="primary" loading={patch.isPending || setProject.isPending}>Save changes</Button>
         </div>
       }
     >
@@ -580,6 +778,35 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             <p className="mt-1.5 text-[12px] text-ink2">Renaming updates the @mention everywhere from now on.</p>
           )}
         </div>
+        <ModelPicker
+          id="pd-model"
+          projectId={persona.project_id}
+          models={models}
+          value={backing.modelId}
+          onChange={backing.pickModel}
+          onRegisterNew={() => setAddingModel(true)}
+          hint={<p className="text-[12px] text-ink2">Every answer comes from this model.</p>}
+        />
+        <ModelPicker
+          id="pd-advisor"
+          label="Advisor model"
+          optional
+          noneLabel="No advisor"
+          exclude={backing.modelId ? [backing.modelId] : []}
+          projectId={persona.project_id}
+          models={models}
+          value={backing.advisorId}
+          onChange={backing.setAdvisorId}
+          hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
+        />
+        <ToolServerPicker
+          servers={projectServers}
+          selected={backing.serverIds}
+          onToggle={backing.toggleServer}
+          disabledReason={toolsReason(backing.model)}
+          clearedNote={backing.clearedTools}
+          onAdd={() => setAddingMcp(true)}
+        />
         <div>
           <Label htmlFor="pd-role">Role</Label>
           <textarea
@@ -603,6 +830,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             ))}
           </select>
         </div>
+        <GenerationSettings idPrefix="pd" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} />
         <div>
           <Label htmlFor="pd-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="pd-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
@@ -610,5 +838,25 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
         <FieldError>{err}</FieldError>
       </form>
     </Dialog>
+    {addingModel && (
+      <CreateModelDialog
+        open
+        onClose={() => setAddingModel(false)}
+        attachProjectId={persona.project_id}
+        attachProjectName={projects?.find((p) => p.id === persona.project_id)?.name}
+        onCreated={(m) => backing.pickModel(m.id, m)}
+      />
+    )}
+    {addingMcp && (
+      <CreateMcpDialog
+        open
+        onClose={() => setAddingMcp(false)}
+        defaultProjectId={persona.project_id}
+        onCreated={(s) => {
+          if (s.project_id === persona.project_id && !backing.serverIds.includes(s.id)) backing.toggleServer(s.id);
+        }}
+      />
+    )}
+    </>
   );
 }

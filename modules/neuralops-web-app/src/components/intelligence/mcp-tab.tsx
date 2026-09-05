@@ -66,7 +66,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
     <TabShell
       embedded={embedded}
       title="MCP tool servers"
-      blurb="Tools agents can call over the Model Context Protocol — register any MCP server by URL."
+      blurb="Tools personas can call over the Model Context Protocol — register any MCP server by URL."
       action={!!servers?.length && canManage && (
         <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
           <Plus size={14} strokeWidth={2} /> Add server
@@ -77,7 +77,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
         <Toolbar
           facts={[
             `${servers.length} ${servers.length === 1 ? "server" : "servers"}`,
-            `${new Set(servers.map((sv) => sv.project_id).filter(Boolean)).size} projects`,
+            `${new Set(servers.map((sv) => sv.project_id)).size} ${new Set(servers.map((sv) => sv.project_id)).size === 1 ? "project" : "projects"}`,
           ]}
         />
       )}
@@ -88,7 +88,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
         empty={servers?.length === 0}
         emptyTitle="No tool servers yet"
         emptyIcon={<Plug2 size={24} strokeWidth={1.8} />}
-        emptyHint={canManage ? "Point at any MCP server and your agents can start acting, not just answering." : "An admin can register MCP servers to give agents tools."}
+        emptyHint={canManage ? "Point at any MCP server and your personas can start acting, not just answering." : "An admin can register MCP servers to give personas tools."}
         emptyAction={canManage ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> Add server</Button> : undefined}
       />
       {!showLoading && !!servers?.length && (
@@ -183,8 +183,8 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
         title="Remove this tool server?"
         body={
           <p>
-            <b className="text-ink">{removing?.name}</b> will be removed. Agents wired to it lose those tools
-            until it&apos;s added back.
+            <b className="text-ink">{removing?.name}</b> will be removed. If a persona still mounts it, the
+            server refuses and names the persona — untick the server there first.
           </p>
         }
         confirmLabel="Remove server"
@@ -198,8 +198,8 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   open: boolean;
   onClose: () => void;
   defaultProjectId?: string;
-  // Launched inline from the agent builder: hands the new server back so the
-  // host can select it — no tab-hopping.
+  // Launched inline from the persona builder: hands the new server back so the
+  // host can tick it — no tab-hopping.
   onCreated?: (s: MCPServer) => void;
 }) {
   const { data: allProjects } = useProjects();
@@ -284,7 +284,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       onClose={close}
       size="2xl"
       title={`Add an MCP tool server${projName ? ` — ${projName}` : ""}`}
-      description="Any server that speaks the Model Context Protocol over HTTP. Agents in the owning project can use its tools."
+      description="Any server that speaks the Model Context Protocol over HTTP. Personas in the owning project can mount its tools."
       icon={<Plug2 size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
@@ -421,7 +421,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       onClose={onClose}
       size="2xl"
       title={`Edit ${server.name}`}
-      description="Changes apply to the next tool call — agents pick up the new address automatically."
+      description="Changes apply to the next tool call — personas pick up the new address automatically."
       icon={<Pencil size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">

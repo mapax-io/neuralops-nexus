@@ -14,13 +14,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "invite", hint: "Add a persona or invite a person here", usage: "/invite @Persona · /invite email@example.com [project]" },
   { name: "schedule", hint: "Schedule a persona to run in this topic", usage: "/schedule" },
   { name: "list-schedules", hint: "See this topic's schedules", usage: "/list-schedules" },
-  { name: "add-persona", hint: "Create a persona", usage: "/add-persona" },
+  { name: "add-persona", hint: "Create a persona (model, optional advisor and tools)", usage: "/add-persona" },
   { name: "list-personas", hint: "See all personas", usage: "/list-personas" },
   { name: "edit-persona", hint: "Edit a persona", usage: "/edit-persona" },
   { name: "add-model", hint: "Register an AI model", usage: "/add-model" },
   { name: "list-models", hint: "See registered AI models", usage: "/list-models" },
-  { name: "add-agent", hint: "Create an agent (model + tools)", usage: "/add-agent" },
-  { name: "list-agents", hint: "See all agents", usage: "/list-agents" },
   { name: "add-mcp", hint: "Register an MCP tool server", usage: "/add-mcp" },
   { name: "list-mcps", hint: "See MCP servers", usage: "/list-mcps" },
   { name: "changeusername", hint: "Change your display name on this server", usage: "/changeusername NewName" },
@@ -28,13 +26,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 
 // Single-token commands that jump to an intelligence section — optionally
 // opening its create dialog (the one-shot intelCreate intent in ui.store).
-export const INTEL_COMMANDS: Record<string, { section: "models" | "mcp" | "agents" | "personas"; create: boolean }> = {
+export const INTEL_COMMANDS: Record<string, { section: "models" | "mcp" | "personas"; create: boolean }> = {
   "add-model": { section: "models", create: true },
   "list-models": { section: "models", create: false },
   "add-mcp": { section: "mcp", create: true },
   "list-mcps": { section: "mcp", create: false },
-  "add-agent": { section: "agents", create: true },
-  "list-agents": { section: "agents", create: false },
   "add-persona": { section: "personas", create: true },
   "list-personas": { section: "personas", create: false },
   "edit-persona": { section: "personas", create: false },
@@ -60,7 +56,7 @@ export type SlashAction =
   // DECISIONS §13: persona vs human detected from the argument — an email
   // has an @ in the MIDDLE; a persona is a bare name or a leading-@ handle.
   | { kind: "invite"; email?: string; personaName?: string; scope: "project" | "topic" }
-  | { kind: "intel"; section: "models" | "mcp" | "agents" | "personas"; create: boolean }
+  | { kind: "intel"; section: "models" | "mcp" | "personas"; create: boolean }
   | { kind: "schedules" }
   | { kind: "invalid"; message: string };
 

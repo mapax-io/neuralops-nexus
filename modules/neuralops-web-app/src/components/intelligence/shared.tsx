@@ -6,9 +6,9 @@ import { Label } from "@/components/ui/field";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useProjects } from "@/hooks/use-workspace";
-import type { AIModel } from "@/lib/api/intelligence";
+import type { ModelConfig } from "@/lib/api/intelligence";
 
-// Shared chrome for the four intelligence tabs: consistent header, list
+// Shared chrome for the three intelligence tabs: consistent header, list
 // states, and the project selector used by project-owned resources.
 
 export function TabShell({ title, blurb, action, children, embedded }: {
@@ -139,37 +139,45 @@ export function Chip({ children, tone = "neutral" }: { children: React.ReactNode
   return <span className={`rounded-full border px-2 py-px text-[10.5px] font-semibold ${tones[tone]}`}>{children}</span>;
 }
 
-// Model picker for project-scoped builders (personas, agents). Never a dead
-// end: models not yet attached to the project are offered under an
+// Model picker for the persona builder's two slots (model, advisor). Never a
+// dead end: models not yet attached to the project are offered under an
 // "attach & use" group (the caller attaches them on submit), and a new model
 // can be registered inline without leaving the flow.
-export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew }: {
+export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew, label = "Model", optional, noneLabel = "None", exclude, hint }: {
   id: string;
   projectId: string;
-  models: AIModel[] | undefined;
+  models: ModelConfig[] | undefined;
   value: string;
   onChange: (modelId: string) => void;
   // Opens the stacked CreateModelDialog; omitted when the user lacks the right.
   onRegisterNew?: () => void;
+  label?: string;
+  // An optional slot (the advisor) starts from a real "none" choice.
+  optional?: boolean;
+  noneLabel?: string;
+  // Ids hidden from this slot — the advisor must never be the primary model.
+  exclude?: string[];
+  hint?: React.ReactNode;
 }) {
+  const visible = models?.filter((m) => !exclude?.includes(m.id));
   // A model without project_ids predates the visibility gate — usable anywhere.
-  const inProject = models?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? [];
-  const attachable = models?.filter((m) => m.project_ids && !m.project_ids.includes(projectId)) ?? [];
-  const opt = (m: AIModel) => <option key={m.id} value={m.id}>{m.name} ({m.model_id})</option>;
+  const inProject = visible?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? [];
+  const attachable = visible?.filter((m) => m.project_ids && !m.project_ids.includes(projectId)) ?? [];
+  const opt = (m: ModelConfig) => <option key={m.id} value={m.id}>{m.name} ({m.qualified_id})</option>;
   return (
     <div>
-      <Label htmlFor={id}>Model</Label>
+      <Label htmlFor={id}>{label}{optional && <span className="text-ink2"> (optional)</span>}</Label>
       <select
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
       >
-        <option value="" disabled>Choose a model…</option>
+        {optional ? <option value="">{noneLabel}</option> : <option value="" disabled>Choose a model…</option>}
         {/* Without a chosen project the in/attachable split is meaningless —
             one flat list; the groups appear once the project is picked. */}
         {!projectId ? (
-          (models ?? []).map(opt)
+          (visible ?? []).map(opt)
         ) : (
           <>
             {inProject.length > 0 && <optgroup label="In this project">{inProject.map(opt)}</optgroup>}
@@ -180,13 +188,13 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
         )}
       </select>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {models?.length === 0 ? (
+        {models?.length === 0 && !optional ? (
           <p className="text-[12px] text-warn">No models registered on this server yet.</p>
-        ) : !projectId ? null : attachable.some((m) => m.id === value) ? (
-          <p className="text-[12px] text-ink2">This model gets attached to the project when you create.</p>
-        ) : attachable.length > 0 ? (
+        ) : !projectId ? hint : attachable.some((m) => m.id === value) ? (
+          <p className="text-[12px] text-ink2">This model gets attached to the project when you save.</p>
+        ) : attachable.length > 0 && !optional ? (
           <p className="text-[12px] text-ink2">Models from other projects are attached automatically when picked.</p>
-        ) : null}
+        ) : hint}
         {onRegisterNew && (
           <button type="button" onClick={onRegisterNew} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
             <Plus size={12} strokeWidth={2.4} /> Register a new model

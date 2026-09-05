@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArrowLeftRight, Bot, Cpu, Info, Menu, Plug2, Search, UserRound, Users } from "lucide-react";
+import { ArrowLeftRight, Cpu, Info, Menu, Plug2, Search, UserRound, Users } from "lucide-react";
 import { NexusMark } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ProfileButton } from "@/components/shell/profile-button";
@@ -61,7 +61,6 @@ export function TopBar({ onAbout }: { onAbout: () => void }) {
         <BarButton label="Personas" text="Personas" active={onIntel && intelSection === "personas"} onClick={() => intel("personas")}><UserRound size={16} strokeWidth={1.9} /></BarButton>
         <BarButton label="AI models" text="Models" active={onIntel && intelSection === "models"} onClick={() => intel("models")}><Cpu size={16} strokeWidth={1.9} /></BarButton>
         <BarButton label="MCP servers" text="MCP" active={onIntel && intelSection === "mcp"} onClick={() => intel("mcp")}><Plug2 size={16} strokeWidth={1.9} /></BarButton>
-        <BarButton label="Agents" text="Agents" active={onIntel && intelSection === "agents"} onClick={() => intel("agents")}><Bot size={16} strokeWidth={1.9} /></BarButton>
         <BarButton label="Members" text="Members" active={pathname?.startsWith("/members") ?? false} onClick={() => router.push("/members")}><Users size={16} strokeWidth={1.9} /></BarButton>
       </div>
 
@@ -185,9 +184,6 @@ function MobileNavMenu({ onAbout, intel, goMembers }: {
           </button>
           <button role="menuitem" className={item} onClick={pick(() => intel("mcp"))}>
             <Plug2 size={15} strokeWidth={2} className={icon} /> MCP servers
-          </button>
-          <button role="menuitem" className={item} onClick={pick(() => intel("agents"))}>
-            <Bot size={15} strokeWidth={2} className={icon} /> Agents
           </button>
           <button role="menuitem" className={item} onClick={pick(goMembers)}>
             <Users size={15} strokeWidth={2} className={icon} /> Members

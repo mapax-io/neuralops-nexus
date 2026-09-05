@@ -77,6 +77,14 @@ export function TeamDialog({ pid, projectName, open, onClose, canManage = true }
   }));
   const roster = [...humans, ...(team.data ?? []).filter((m) => m.member_type === "persona"),
     ...personaRows.filter((r) => !teamPersonaIds.has(r.user_id))];
+  // What backs an addable persona — its model and how many tool servers it
+  // mounts — read from the project persona list already loaded above.
+  const personaDetail = (personaId: string) => {
+    const pp = projectPersonas.data?.find((x) => x.id === personaId);
+    if (!pp?.model) return null; // also covers a server still on the pre-#99 contract
+    const n = pp.mcp_servers?.length ?? 0;
+    return n ? `${pp.model.name} · ${n} ${n === 1 ? "tool" : "tools"}` : pp.model.name;
+  };
   const busy = add.isPending || remove.isPending;
 
   return (
@@ -176,7 +184,7 @@ export function TeamDialog({ pid, projectName, open, onClose, canManage = true }
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13.5px] font-semibold">@{p.name}</p>
-                      <p className="truncate text-[12px] text-ink2">{p.source_type === "agent" ? "agent-backed" : "model-backed"}</p>
+                      {personaDetail(p.persona_id) && <p className="truncate text-[12px] text-ink2">{personaDetail(p.persona_id)}</p>}
                     </div>
                     <Button size="sm" variant="ghost" disabled={busy} onClick={() => add.mutate(p.user_id)}>
                       <Plus size={14} strokeWidth={2} /> Add

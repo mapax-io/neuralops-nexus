@@ -1,26 +1,23 @@
 "use client";
 
-import { Bot, Brain, Cpu, Plug2, UserRound } from "lucide-react";
-import { useAgents, useMcpServers, useModels } from "@/hooks/use-intelligence";
+import { Brain, Cpu, Plug2, UserRound } from "lucide-react";
+import { useMcpServers, useModelConfigs } from "@/hooks/use-intelligence";
 
 export const INTEL_SECTIONS = [
   { key: "personas", label: "Personas", hint: "AI teammates", icon: UserRound },
   { key: "models", label: "AI models", hint: "Keys & endpoints", icon: Cpu },
-  { key: "mcp", label: "MCP servers", hint: "Tools for agents", icon: Plug2 },
-  { key: "agents", label: "Agents", hint: "Models that act", icon: Bot },
+  { key: "mcp", label: "MCP servers", hint: "Tools for personas", icon: Plug2 },
 ] as const;
 
 export type IntelSection = (typeof INTEL_SECTIONS)[number]["key"];
 
 // Settings-style vertical navigation (horizontal scroll strip below lg).
 export function IntelNav({ section, onSection }: { section: IntelSection; onSection: (s: IntelSection) => void }) {
-  const { data: models } = useModels();
+  const { data: models } = useModelConfigs();
   const { data: mcp } = useMcpServers();
-  const { data: agents } = useAgents();
   const counts: Partial<Record<IntelSection, number>> = {
     models: models?.length,
     mcp: mcp?.length,
-    agents: agents?.length,
   };
 
   return (
@@ -63,8 +60,8 @@ export function IntelNav({ section, onSection }: { section: IntelSection; onSect
       </nav>
       <div className="hidden flex-1 lg:block" />
       <p className="hidden border-t border-line px-4 py-3 text-[11.5px] leading-relaxed text-ink2 lg:block">
-        Register a model, wire tools through MCP, combine them into agents — then give the result a name and a
-        role as a persona.
+        Register a model, wire tools through MCP — then give the mix a name and a role as a persona. A persona
+        with tools acts; one without just answers.
       </p>
     </aside>
   );

@@ -8,7 +8,6 @@ import { ChatHeaderBar } from "@/components/chat/chat-header-bar";
 import { Composer } from "@/components/chat/composer";
 import { ContextPanel } from "@/components/chat/context-panel";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
-import { AgentsTab } from "@/components/intelligence/agents-tab";
 import { McpTab } from "@/components/intelligence/mcp-tab";
 import { ModelsTab } from "@/components/intelligence/models-tab";
 import { PersonasTab } from "@/components/intelligence/personas-tab";
@@ -47,7 +46,7 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
   const [tab, setTab] = useState<ChatTab>("messages");
   // Slash-command dialogs host the REAL intelligence tabs over the chat —
   // create/edit/delete complete right here, no navigation (owner decision).
-  const [slashDialog, setSlashDialog] = useState<"models" | "mcp" | "agents" | "personas" | null>(null);
+  const [slashDialog, setSlashDialog] = useState<"models" | "mcp" | "personas" | null>(null);
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -219,16 +218,14 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
         size="lg"
         title={
           slashDialog === "models" ? "AI models" :
-          slashDialog === "mcp" ? "MCP servers" :
-          slashDialog === "agents" ? "Agents" : "Personas"
+          slashDialog === "mcp" ? "MCP servers" : "Personas"
         }
       >
         {/* Slash-created entities default to THIS chat's project — the narrowest
-            scope the project-ownership model allows (personas/agents/mcp are
+            scope the project-ownership model allows (personas/mcp are
             project-owned; models are company-wide so take no default). */}
         {slashDialog === "models" && <ModelsTab embedded canManage={isCompanyAdmin(role)} />}
         {slashDialog === "mcp" && <McpTab embedded defaultProjectId={pid} />}
-        {slashDialog === "agents" && <AgentsTab embedded defaultProjectId={pid} />}
         {slashDialog === "personas" && <PersonasTab embedded canManage={isCompanyAdmin(role)} defaultProjectId={pid} />}
       </Dialog>
       <ConfirmDialog
