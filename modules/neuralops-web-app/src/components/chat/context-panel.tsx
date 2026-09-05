@@ -442,8 +442,8 @@ function AddLinkForm({ projectId, topicId, onDone }: { projectId: string; topicI
   return (
     <form onSubmit={submit} noValidate className="mt-3 flex max-w-xl flex-col gap-3 rounded-xl border border-line bg-surface p-3.5">
       <div>
-        <Label htmlFor="ctx-url">Web address</Label>
-        <Input id="ctx-url" placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} autoFocus />
+        <Label htmlFor="ctx-url" required>Web address</Label>
+        <Input id="ctx-url" required placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} autoFocus />
       </div>
       <div>
         <Label htmlFor="ctx-name">Name <span className="text-ink2">(optional)</span></Label>

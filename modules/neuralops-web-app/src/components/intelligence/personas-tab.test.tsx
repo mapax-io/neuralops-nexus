@@ -159,6 +159,25 @@ describe("CreatePersonaDialog — project clarity", () => {
   });
 });
 
+describe("CreatePersonaDialog — required fields are marked", () => {
+  it("marks exactly the fields a blank would block, in both dialogs", async () => {
+    personas = [LAYLA];
+    renderTab();
+    const create = await openCreate();
+    for (const field of ["Project", "Name", "Model", "Role", "Temperature", "Max tokens", "Max steps"]) {
+      expect(within(create).getByLabelText(field)).toBeRequired();
+      expect(within(create).getByText(field, { selector: "label" })).toHaveAttribute("data-required", "true");
+    }
+    for (const field of [/advisor model/i, /description/i, /default answer format/i]) {
+      expect(within(create).getByLabelText(field)).not.toBeRequired();
+    }
+    fireEvent.keyDown(document, { key: "Escape" });
+    const edit = await openEdit("Layla");
+    for (const field of ["Name", "Model", "Role", "Max steps"]) expect(within(edit).getByLabelText(field)).toBeRequired();
+    expect(within(edit).getByLabelText(/advisor model/i)).not.toBeRequired();
+  });
+});
+
 describe("CreatePersonaDialog — name is mandatory", () => {
   it("keeps Create persona disabled until a name is typed", async () => {
     renderTab();

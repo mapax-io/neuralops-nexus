@@ -119,6 +119,21 @@ describe("ModelsTab — register", () => {
   });
 });
 
+describe("ModelsTab — required fields are marked", () => {
+  it("follows the provider: key required for hosted providers, API base for compatible endpoints", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    for (const field of ["Name", "Model id", "API key", "Context window"]) expect(within(dialog).getByLabelText(field)).toBeRequired();
+    expect(within(dialog).getByLabelText("Provider", { exact: true })).not.toBeRequired();
+    fireEvent.change(within(dialog).getByLabelText("Provider", { exact: true }), { target: { value: "ollama" } });
+    expect(within(dialog).getByLabelText(/api key/i)).not.toBeRequired();
+    expect(within(dialog).getByLabelText(/api base/i)).not.toBeRequired();
+    fireEvent.change(within(dialog).getByLabelText("Provider", { exact: true }), { target: { value: "openai_compatible" } });
+    expect(within(dialog).getByLabelText(/api base/i)).toBeRequired();
+    expect(within(dialog).getByText(/api base/i, { selector: "label" })).toHaveAttribute("data-required", "true");
+  });
+});
+
 describe("ModelsTab — edit", () => {
   it("keeps provider and model id read-only and patches only what changed, rotating the key when given", async () => {
     renderTab();

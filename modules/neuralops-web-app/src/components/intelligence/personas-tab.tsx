@@ -322,16 +322,16 @@ function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, o
       <p className="mb-1.5 text-[13px] font-medium text-ink2">Generation settings</p>
       <div className="grid grid-cols-3 gap-3">
         <div>
-          <Label htmlFor={`${idPrefix}-temp`}>Temperature</Label>
-          <Input id={`${idPrefix}-temp`} type="number" min={0} max={2} step={0.1} inputMode="decimal" value={temp} onChange={(e) => onTemp(e.target.value)} />
+          <Label htmlFor={`${idPrefix}-temp`} required>Temperature</Label>
+          <Input id={`${idPrefix}-temp`} type="number" required min={0} max={2} step={0.1} inputMode="decimal" value={temp} onChange={(e) => onTemp(e.target.value)} />
         </div>
         <div>
-          <Label htmlFor={`${idPrefix}-max-tokens`}>Max tokens</Label>
-          <Input id={`${idPrefix}-max-tokens`} type="number" min={1} step={1} inputMode="numeric" value={tokens} onChange={(e) => onTokens(e.target.value)} />
+          <Label htmlFor={`${idPrefix}-max-tokens`} required>Max tokens</Label>
+          <Input id={`${idPrefix}-max-tokens`} type="number" required min={1} step={1} inputMode="numeric" value={tokens} onChange={(e) => onTokens(e.target.value)} />
         </div>
         <div>
-          <Label htmlFor={`${idPrefix}-max-steps`}>Max steps</Label>
-          <Input id={`${idPrefix}-max-steps`} type="number" min={1} max={50} step={1} inputMode="numeric" value={steps} onChange={(e) => onSteps(e.target.value)} />
+          <Label htmlFor={`${idPrefix}-max-steps`} required>Max steps</Label>
+          <Input id={`${idPrefix}-max-steps`} type="number" required min={1} max={50} step={1} inputMode="numeric" value={steps} onChange={(e) => onSteps(e.target.value)} />
         </div>
       </div>
       <p className="mt-1.5 text-[12px] text-ink2">Lower temperature means steadier answers. Steps cap the tool-call rounds per reply.</p>
@@ -518,9 +518,10 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           only={projects ?? []}
         />
         <div>
-          <Label htmlFor="pe-name">Name</Label>
+          <Label htmlFor="pe-name" required>Name</Label>
           <Input
             id="pe-name"
+            required
             autoFocus
             placeholder="e.g. Layla"
             value={name}
@@ -590,12 +591,13 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           </div>
         )}
         <div>
-          <Label htmlFor="pe-role">Role</Label>
+          <Label htmlFor="pe-role" required>Role</Label>
           {/* The field shows {PERSONA_NAME} filled with the name typed above,
               live; the raw text (token included) stays in state until the
               user edits the role by hand, so a later rename still follows. */}
           <textarea
             id="pe-role"
+            required
             rows={4}
             value={fillPersonaName(systemPrompt, name)}
             onChange={(e) => setSystemPrompt(e.target.value)}
@@ -762,9 +764,10 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
     >
       <form id="pd-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="pd-name">Name</Label>
+          <Label htmlFor="pd-name" required>Name</Label>
           <Input
             id="pd-name"
+            required
             autoFocus
             value={name}
             aria-invalid={!!nameErr}
@@ -816,11 +819,12 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           onAdd={() => setAddingMcp(true)}
         />
         <div>
-          <Label htmlFor="pd-role">Role</Label>
+          <Label htmlFor="pd-role" required>Role</Label>
           {/* A role saved with {PERSONA_NAME} still in it shows filled; it is
               only rewritten on the server once the text is edited here. */}
           <textarea
             id="pd-role"
+            required
             rows={5}
             value={fillPersonaName(systemPrompt, name)}
             onChange={(e) => setSystemPrompt(e.target.value)}

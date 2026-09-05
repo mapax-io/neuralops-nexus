@@ -341,9 +341,10 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
     >
       <form id="wp-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="pname">Name</Label>
+          <Label htmlFor="pname" required>Name</Label>
           <Input
             id="pname"
+            required
             autoFocus
             placeholder="e.g. Quarterly Review"
             value={name}
@@ -429,9 +430,10 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
     >
       <form id="wc-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="cname">Name</Label>
+          <Label htmlFor="cname" required>Name</Label>
           <Input
             id="cname"
+            required
             autoFocus
             placeholder="e.g. backend"
             value={name}

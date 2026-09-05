@@ -282,24 +282,24 @@ export function McpAuthSection({
           )}
 
           <div>
-            <Label htmlFor="oa-client">Client ID</Label>
-            <Input id="oa-client" name="mcp-oauth-client-id" placeholder="e.g. Ov23li… / your-app-id" value={oauth.client_id} onChange={(e) => set({ client_id: e.target.value })}
+            <Label htmlFor="oa-client" required>Client ID</Label>
+            <Input id="oa-client" required name="mcp-oauth-client-id" placeholder="e.g. Ov23li… / your-app-id" value={oauth.client_id} onChange={(e) => set({ client_id: e.target.value })}
               autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore data-lpignore="true" data-form-type="other" className="font-mono" />
           </div>
           <div>
-            <Label htmlFor="oa-secret">Client Secret{isEdit && hasStoredSecret && <span className="text-ink2"> (leave blank to keep current)</span>}</Label>
-            <SecretInput id="oa-secret" placeholder={isEdit && hasStoredSecret ? "•••••••• (stored — leave blank to keep)" : "The OAuth app's client secret"}
+            <Label htmlFor="oa-secret" required={!(isEdit && hasStoredSecret)}>Client Secret{isEdit && hasStoredSecret && <span className="text-ink2"> (leave blank to keep current)</span>}</Label>
+            <SecretInput id="oa-secret" required={!(isEdit && hasStoredSecret)} placeholder={isEdit && hasStoredSecret ? "•••••••• (stored — leave blank to keep)" : "The OAuth app's client secret"}
               value={oauth.client_secret} onChange={(v) => set({ client_secret: v })} shown={showSecret} onToggle={() => setShowSecret((x) => !x)} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <Label htmlFor="oa-auth">Authorize endpoint</Label>
-              <Input id="oa-auth" inputMode="url" placeholder="https://provider.com/oauth/authorize" value={oauth.authorize_endpoint} onChange={(e) => set({ authorize_endpoint: e.target.value })} className="font-mono text-[12px]" />
+              <Label htmlFor="oa-auth" required>Authorize endpoint</Label>
+              <Input id="oa-auth" required inputMode="url" placeholder="https://provider.com/oauth/authorize" value={oauth.authorize_endpoint} onChange={(e) => set({ authorize_endpoint: e.target.value })} className="font-mono text-[12px]" />
               <FieldHint>Required. Where you&apos;re sent to sign in and approve access — from your provider&apos;s OAuth docs. GitHub <code className="rounded bg-surface2 px-1 py-px">…/login/oauth/authorize</code>, GitLab <code className="rounded bg-surface2 px-1 py-px">…/oauth/authorize</code>, Atlassian <code className="rounded bg-surface2 px-1 py-px">auth.atlassian.com/authorize</code>. A preset fills it.</FieldHint>
             </div>
             <div>
-              <Label htmlFor="oa-token">Token endpoint</Label>
-              <Input id="oa-token" inputMode="url" placeholder="https://provider.com/oauth/token" value={oauth.token_endpoint} onChange={(e) => set({ token_endpoint: e.target.value })} className="font-mono text-[12px]" />
+              <Label htmlFor="oa-token" required>Token endpoint</Label>
+              <Input id="oa-token" required inputMode="url" placeholder="https://provider.com/oauth/token" value={oauth.token_endpoint} onChange={(e) => set({ token_endpoint: e.target.value })} className="font-mono text-[12px]" />
               <FieldHint>Required. Where your approval is exchanged for a token (server-side). Note the exact path differs per provider — GitHub uses <code className="rounded bg-surface2 px-1 py-px">/access_token</code>, most others <code className="rounded bg-surface2 px-1 py-px">/token</code>. A preset fills it.</FieldHint>
             </div>
           </div>
@@ -328,12 +328,12 @@ export function McpAuthSection({
 
 // A password input with a show/hide eye toggle. Never pre-filled — the server
 // never returns a secret, and the field starts blank.
-function SecretInput({ id, value, placeholder, onChange, shown, onToggle }: {
-  id: string; value: string; placeholder?: string; onChange: (v: string) => void; shown: boolean; onToggle: () => void;
+function SecretInput({ id, value, placeholder, onChange, shown, onToggle, required }: {
+  id: string; value: string; placeholder?: string; onChange: (v: string) => void; shown: boolean; onToggle: () => void; required?: boolean;
 }) {
   return (
     <div className="relative">
-      <Input id={id} name={id} type={shown ? "text" : "password"} placeholder={placeholder} value={value}
+      <Input id={id} name={id} type={shown ? "text" : "password"} placeholder={placeholder} value={value} required={required}
         onChange={(e) => onChange(e.target.value)} autoComplete="new-password" autoCorrect="off" autoCapitalize="off"
         spellCheck={false} data-1p-ignore data-lpignore="true" data-form-type="other" className="pr-10 font-mono" />
       <button type="button" aria-label={shown ? "Hide secret" : "Show secret"} onClick={onToggle}

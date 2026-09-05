@@ -296,9 +296,10 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       <form id="mcp-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <ProjectSelect id="mcp-project" value={projectId} onChange={setProjectId} only={allProjects ?? []} />
         <div>
-          <Label htmlFor="mcp-name">Name</Label>
+          <Label htmlFor="mcp-name" required>Name</Label>
           <Input
             id="mcp-name"
+            required
             autoFocus
             placeholder="e.g. Warehouse tools"
             value={name}
@@ -318,9 +319,10 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
           <FieldError>{nameErr}</FieldError>
         </div>
         <div>
-          <Label htmlFor="mcp-url">URL</Label>
+          <Label htmlFor="mcp-url" required>URL</Label>
           <Input
             id="mcp-url"
+            required
             inputMode="url"
             placeholder="http://tools.internal:8080/mcp"
             value={url}
@@ -432,9 +434,10 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
     >
       <form id="mce-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="mce-name">Name</Label>
+          <Label htmlFor="mce-name" required>Name</Label>
           <Input
             id="mce-name"
+            required
             autoFocus
             value={name}
             aria-invalid={!!nameErr}
@@ -453,9 +456,10 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           <FieldError>{nameErr}</FieldError>
         </div>
         <div>
-          <Label htmlFor="mce-url">URL</Label>
+          <Label htmlFor="mce-url" required>URL</Label>
           <Input
             id="mce-url"
+            required
             inputMode="url"
             value={url}
             aria-invalid={!!urlErr}

@@ -227,8 +227,8 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
     >
       <form id="sc-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="sc-persona">Persona</Label>
-          <select id="sc-persona" autoFocus value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
+          <Label htmlFor="sc-persona" required>Persona</Label>
+          <select id="sc-persona" required autoFocus value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
             <option value="" disabled>Choose a persona…</option>
             {personas?.map((p) => (
               <option key={p.id} value={p.id}>@{p.name}</option>
@@ -237,9 +237,10 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
           {personas?.length === 0 && <p className="mt-1.5 text-[12px] text-warn">This project has no personas yet — create one under Intelligence.</p>}
         </div>
         <div>
-          <Label htmlFor="sc-query">What should they do each run?</Label>
+          <Label htmlFor="sc-query" required>What should they do each run?</Label>
           <textarea
             id="sc-query"
+            required
             rows={3}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -277,15 +278,15 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
         </div>
         {mode === "daily" && (
           <div className="max-w-[180px]">
-            <Label htmlFor="sc-time">At</Label>
-            <Input id="sc-time" type="time" value={dailyTime} onChange={(e) => setDailyTime(e.target.value)} />
+            <Label htmlFor="sc-time" required>At</Label>
+            <Input id="sc-time" type="time" required value={dailyTime} onChange={(e) => setDailyTime(e.target.value)} />
           </div>
         )}
         {mode === "interval" && (
           <div className="grid max-w-sm grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="sc-every">Every</Label>
-              <Input id="sc-every" type="number" min={1} value={every} onChange={(e) => setEvery(Number(e.target.value))} />
+              <Label htmlFor="sc-every" required>Every</Label>
+              <Input id="sc-every" type="number" required min={1} value={every} onChange={(e) => setEvery(Number(e.target.value))} />
             </div>
             <div>
               <Label htmlFor="sc-period">Period</Label>
@@ -300,8 +301,8 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
         )}
         {mode === "once" && (
           <div className="max-w-[260px]">
-            <Label htmlFor="sc-once">Fire at</Label>
-            <Input id="sc-once" type="datetime-local" value={onceAt} onChange={(e) => setOnceAt(e.target.value)} />
+            <Label htmlFor="sc-once" required>Fire at</Label>
+            <Input id="sc-once" type="datetime-local" required value={onceAt} onChange={(e) => setOnceAt(e.target.value)} />
           </div>
         )}
         <div>

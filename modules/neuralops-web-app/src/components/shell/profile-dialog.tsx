@@ -132,10 +132,11 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       </div>
 
       <form onSubmit={submitName} noValidate className="mt-5">
-        <Label htmlFor="prof-name">Display name on {connection?.companyName ?? "this server"}</Label>
+        <Label htmlFor="prof-name" required>Display name on {connection?.companyName ?? "this server"}</Label>
         <div className="flex gap-2">
           <Input
             id="prof-name"
+            required
             autoFocus
             placeholder={currentName || "your_name"}
             value={name}
@@ -157,12 +158,12 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
         <p className="mb-2.5 flex items-center gap-1.5 text-[13px] font-semibold"><KeyRound size={14} strokeWidth={2} /> Change password</p>
         <div className="flex flex-col gap-3">
           <div>
-            <Label htmlFor="prof-pw">New password</Label>
-            <Input id="prof-pw" type="password" autoComplete="new-password" value={pw} aria-invalid={!!pwErr} onChange={(e) => setPw(e.target.value)} />
+            <Label htmlFor="prof-pw" required>New password</Label>
+            <Input id="prof-pw" type="password" required autoComplete="new-password" value={pw} aria-invalid={!!pwErr} onChange={(e) => setPw(e.target.value)} />
           </div>
           <div>
-            <Label htmlFor="prof-pw2">Confirm new password</Label>
-            <Input id="prof-pw2" type="password" autoComplete="new-password" value={pw2} aria-invalid={!!pwErr} onChange={(e) => setPw2(e.target.value)} />
+            <Label htmlFor="prof-pw2" required>Confirm new password</Label>
+            <Input id="prof-pw2" type="password" required autoComplete="new-password" value={pw2} aria-invalid={!!pwErr} onChange={(e) => setPw2(e.target.value)} />
           </div>
           <FieldError>{pwErr}</FieldError>
           <div className="flex">

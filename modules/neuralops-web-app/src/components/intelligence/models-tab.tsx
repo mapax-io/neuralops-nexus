@@ -305,9 +305,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
     >
       <form id="m-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="m-name">Name</Label>
+          <Label htmlFor="m-name" required>Name</Label>
           <Input
             id="m-name"
+            required
             autoFocus
             placeholder="e.g. Claude for Aurora"
             value={name}
@@ -341,9 +342,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             </select>
           </div>
           <div>
-            <Label htmlFor="m-id">Model id</Label>
+            <Label htmlFor="m-id" required>Model id</Label>
             <Input
               id="m-id"
+              required
               placeholder={prov.placeholder}
               value={modelId}
               aria-invalid={!!idErr}
@@ -363,21 +365,21 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
           </div>
         </div>
         <div>
-          <Label htmlFor="m-key">API key{!prov.needsKey && <span className="text-ink2"> (optional)</span>}</Label>
-          <Input id="m-key" type="password" autoComplete="off" placeholder="sk-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          <Label htmlFor="m-key" required={prov.needsKey}>API key{!prov.needsKey && <span className="text-ink2"> (optional)</span>}</Label>
+          <Input id="m-key" type="password" required={prov.needsKey} autoComplete="off" placeholder="sk-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
         </div>
         {showsBase && (
           <div>
-            <Label htmlFor="m-base">API base{prov.base === "optional" && <span className="text-ink2"> (optional)</span>}</Label>
-            <Input id="m-base" inputMode="url" placeholder={provider === "ollama" ? "http://localhost:11434" : "https://api.example.com/v1"} value={apiBase} aria-invalid={!!baseErr}
+            <Label htmlFor="m-base" required={prov.base === "required"}>API base{prov.base === "optional" && <span className="text-ink2"> (optional)</span>}</Label>
+            <Input id="m-base" required={prov.base === "required"} inputMode="url" placeholder={provider === "ollama" ? "http://localhost:11434" : "https://api.example.com/v1"} value={apiBase} aria-invalid={!!baseErr}
               onChange={(e) => { setApiBase(e.target.value); if (touched) setBaseErr(validateBase(e.target.value)); }}
               className="font-mono" />
             <FieldError>{baseErr}</FieldError>
           </div>
         )}
         <div>
-          <Label htmlFor="m-ctx">Context window</Label>
-          <Input id="m-ctx" type="number" min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
+          <Label htmlFor="m-ctx" required>Context window</Label>
+          <Input id="m-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
           <p className="mt-1.5 text-[12px] text-ink2">Tokens the model can take in one call — check the provider&apos;s model page.</p>
         </div>
         <CapabilityChecks value={caps} onChange={setCaps} />
@@ -459,9 +461,10 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
     >
       <form id="me-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
-          <Label htmlFor="me-name">Name</Label>
+          <Label htmlFor="me-name" required>Name</Label>
           <Input
             id="me-name"
+            required
             autoFocus
             value={name}
             aria-invalid={!!nameErr}
@@ -492,8 +495,8 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
         </div>
         {showsBase && (
           <div>
-            <Label htmlFor="me-base">API base{prov?.base !== "required" && <span className="text-ink2"> (optional)</span>}</Label>
-            <Input id="me-base" inputMode="url" value={apiBase} aria-invalid={!!baseErr}
+            <Label htmlFor="me-base" required={prov?.base === "required"}>API base{prov?.base !== "required" && <span className="text-ink2"> (optional)</span>}</Label>
+            <Input id="me-base" required={prov?.base === "required"} inputMode="url" value={apiBase} aria-invalid={!!baseErr}
               onChange={(e) => { setApiBase(e.target.value); if (touched) setBaseErr(validateBase(e.target.value)); }}
               className="font-mono" />
             <FieldError>{baseErr}</FieldError>
@@ -504,8 +507,8 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
           <Input id="me-desc" placeholder="What is this model for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
         <div>
-          <Label htmlFor="me-ctx">Context window</Label>
-          <Input id="me-ctx" type="number" min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
+          <Label htmlFor="me-ctx" required>Context window</Label>
+          <Input id="me-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
         </div>
         <CapabilityChecks value={caps} onChange={setCaps} />
         <FieldError>{err}</FieldError>

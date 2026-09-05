@@ -94,14 +94,14 @@ export function LoginForm() {
   return (
     <form onSubmit={submit} method="post" noValidate className="flex flex-col gap-4">
       <div>
-        <Label htmlFor="email">Email</Label>
-        <Input id="email" type="email" autoFocus autoComplete="email" placeholder="you@company.com" {...form.register("email")} />
+        <Label htmlFor="email" required>Email</Label>
+        <Input id="email" type="email" required autoFocus autoComplete="email" placeholder="you@company.com" {...form.register("email")} />
         <FieldError>{form.formState.errors.email?.message}</FieldError>
       </div>
       {mode !== "forgot" && (
         <div>
-          <Label htmlFor="password">Password</Label>
-          <Input id="password" type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} {...form.register("password")} />
+          <Label htmlFor="password" required>Password</Label>
+          <Input id="password" type="password" required autoComplete={mode === "signin" ? "current-password" : "new-password"} {...form.register("password")} />
           <FieldError>{form.formState.errors.password?.message}</FieldError>
         </div>
       )}

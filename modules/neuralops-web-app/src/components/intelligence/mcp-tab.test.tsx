@@ -122,6 +122,14 @@ describe("McpTab — single-project ownership (spec §3.3)", () => {
     expect(posted).toMatchObject({ project_id: "p2", name: "Warehouse tools", auth_type: "none" });
   });
 
+  it("marks project, name and URL as required — description stays optional", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    for (const field of ["Project", "Name", "URL"]) expect(screen.getByLabelText(field)).toBeRequired();
+    expect(screen.getByLabelText(/description/i)).not.toBeRequired();
+  });
+
   it("offers no project control when editing — ownership is not transferable", async () => {
     renderTab();
     await screen.findByText("Warehouse tools");

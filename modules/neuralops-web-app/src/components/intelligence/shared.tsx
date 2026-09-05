@@ -166,9 +166,10 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
   const opt = (m: ModelConfig) => <option key={m.id} value={m.id}>{m.name} ({m.qualified_id})</option>;
   return (
     <div>
-      <Label htmlFor={id}>{label}{optional && <span className="text-ink2"> (optional)</span>}</Label>
+      <Label htmlFor={id} required={!optional}>{label}{optional && <span className="text-ink2"> (optional)</span>}</Label>
       <select
         id={id}
+        required={!optional}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
@@ -217,9 +218,10 @@ export function ProjectSelect({ id, value, onChange, only }: {
   const projects = only ?? all;
   return (
     <div>
-      <Label htmlFor={id}>Project</Label>
+      <Label htmlFor={id} required>Project</Label>
       <select
         id={id}
+        required
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
