@@ -70,16 +70,22 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
       action={
         <div className="flex items-center gap-2">
           {/* The list is SCOPED by this — styled as a loud filter pill, not a
-              quiet form field, so switching projects is impossible to miss. */}
+              quiet form field, so switching projects is impossible to miss.
+              The select sizes to the project name (capped for phones) so long
+              names never clip. */}
           <div className="flex h-9 items-stretch">
             <label htmlFor="ps-project" className="flex items-center gap-1.5 rounded-l-[10px] border border-r-0 border-accent/40 bg-accent/10 px-2.5 text-[12px] font-semibold text-accent">
-              <FolderKanban size={14} strokeWidth={2.2} /> Project
+              <FolderKanban size={14} strokeWidth={2.2} />
+              {/* Phones give the word's room to the project name; the label
+                  text stays for assistive tech. */}
+              <span className="sr-only sm:not-sr-only">Project</span>
             </label>
             <select
               id="ps-project"
+              title={projects?.find((p) => p.id === activeProject)?.name}
               value={activeProject ?? ""}
               onChange={(e) => setProjectId(e.target.value)}
-              className="w-48 rounded-r-[10px] border border-accent/40 bg-surface px-3 text-[13.5px] font-semibold outline-none transition-[border-color,box-shadow] hover:border-accent focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+              className="min-w-40 max-w-[min(28rem,70vw)] rounded-r-[10px] border border-accent/40 bg-surface px-3 text-[13.5px] font-semibold outline-none transition-[border-color,box-shadow] hover:border-accent focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
             >
               {projects?.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
