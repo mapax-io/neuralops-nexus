@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { Pencil, Plus, Sparkles, Trash2, UserRound } from "lucide-react";
+import { FolderKanban, Pencil, Plus, Sparkles, Trash2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
@@ -18,11 +18,14 @@ import {
   usePatchPersona,
   usePersonas,
   usePromptTemplates,
+  useSetModelProject,
 } from "@/hooks/use-intelligence";
 import { useProjects } from "@/hooks/use-workspace";
 import { fetchPromptTemplate, type Persona } from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
-import { CardGrid, Chip, EntityCard, ListState, TabShell, Toolbar } from "./shared";
+import { CardGrid, Chip, EntityCard, ListState, ModelPicker, ProjectSelect, TabShell, Toolbar } from "./shared";
+import { CreateAgentDialog } from "./agents-tab";
+import { CreateModelDialog } from "./models-tab";
 
 export function PersonasTab({ canManage, embedded, defaultProjectId }: { canManage: boolean; embedded?: boolean; defaultProjectId?: string }) {
   const { data: projects } = useProjects();
@@ -57,17 +60,23 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
       blurb="AI teammates with a role in plain language — @mention them in their project's chats."
       action={
         <div className="flex items-center gap-2">
-          <label htmlFor="ps-project" className="text-[13px] font-medium text-ink2">Project</label>
-          <select
-            id="ps-project"
-            value={activeProject ?? ""}
-            onChange={(e) => setProjectId(e.target.value)}
-            className="h-9 w-52 rounded-[10px] border border-line bg-surface px-3 text-[13.5px] font-medium outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
-          >
-            {projects?.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          {/* The list is SCOPED by this — styled as a loud filter pill, not a
+              quiet form field, so switching projects is impossible to miss. */}
+          <div className="flex h-9 items-stretch">
+            <label htmlFor="ps-project" className="flex items-center gap-1.5 rounded-l-[10px] border border-r-0 border-accent/40 bg-accent/10 px-2.5 text-[12px] font-semibold text-accent">
+              <FolderKanban size={14} strokeWidth={2.2} /> Project
+            </label>
+            <select
+              id="ps-project"
+              value={activeProject ?? ""}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="w-48 rounded-r-[10px] border border-accent/40 bg-surface px-3 text-[13.5px] font-semibold outline-none transition-[border-color,box-shadow] hover:border-accent focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+            >
+              {projects?.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
           {!!personas?.length && canManage && activeProject && (
             <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
               <Plus size={14} strokeWidth={2} /> New persona
@@ -141,7 +150,19 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
           ))}
         </CardGrid>
       )}
-      {activeProject && <CreatePersonaDialog open={creating} onClose={() => setCreating(false)} projectId={activeProject} />}
+      {activeProject && (
+        <CreatePersonaDialog
+          key={activeProject}
+          open={creating}
+          onClose={() => setCreating(false)}
+          defaultProjectId={activeProject}
+          // The dialog owns its project — if the persona landed elsewhere,
+          // follow it so the new card is visible, not mysteriously absent.
+          onCreated={(p) => {
+            if (p.project_id) setProjectId(p.project_id);
+          }}
+        />
+      )}
       {editing && (
         <EditPersonaDialog
           key={editing.id}
@@ -171,10 +192,24 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
   );
 }
 
-function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onClose: () => void; projectId: string }) {
+function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
+  open: boolean;
+  onClose: () => void;
+  defaultProjectId: string;
+  onCreated?: (p: Persona) => void;
+}) {
+  const { data: projects } = useProjects();
   const { data: models } = useModels();
   const { data: agents } = useAgents();
   const { data: outputTypes } = useOutputTypes();
+  const setProject = useSetModelProject();
+  // The dialog owns its target project — pre-set from the tab, switchable
+  // here, and named in the title so there is never any doubt.
+  const [projectId, setProjectId] = useState(defaultProjectId);
+  // Inline prerequisite creation — stacked dialogs, mounted fresh per open so
+  // they scope to the currently selected project.
+  const [addingModel, setAddingModel] = useState(false);
+  const [addingAgent, setAddingAgent] = useState(false);
   // Persona names are unique server-wide (the shadow user's handle), but the
   // API only lists per project — check what we can see live; the server
   // rejects cross-project collisions on submit (surfaced via toast).
@@ -220,6 +255,7 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
   };
 
   const reset = () => {
+    setProjectId(defaultProjectId);
     setName("");
     setDescription("");
     setSourceType("model");
@@ -238,11 +274,18 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
     reset();
     onClose();
   };
-  const create = useCreatePersona(close);
+  const create = useCreatePersona((p) => {
+    onCreated?.(p);
+    close();
+  });
   const projectAgents = agents?.filter((a) => a.project_id === projectId) ?? [];
+  const projName = projects?.find((p) => p.id === projectId)?.name;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // The attach await opens a window where create.isPending is still false —
+    // the footer button's loading covers it, this guard covers the race.
+    if (create.isPending || setProject.isPending) return;
     setErr(null);
     setTouched(true);
     const n = name.trim();
@@ -252,6 +295,18 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
     if (sourceType === "model" && !modelId) return setErr("Pick the model that powers them.");
     if (sourceType === "agent" && !agentId) return setErr("Pick the agent that powers them.");
     if (!systemPrompt.trim()) return setErr("Write the role — it's the persona's job description.");
+    // Attach & use: a model picked from another project is attached here
+    // first, then the persona is created — one submit, no tab-hopping.
+    if (sourceType === "model") {
+      const picked = models?.find((m) => m.id === modelId);
+      if (picked?.project_ids && !picked.project_ids.includes(projectId)) {
+        try {
+          await setProject.mutateAsync({ projectId, modelId, attach: true });
+        } catch {
+          return; // the hook already toasted; stay in the dialog to retry
+        }
+      }
+    }
     create.mutate({
       name: n,
       description: description.trim() || undefined,
@@ -264,21 +319,33 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
   };
 
   return (
+    <>
     <Dialog
       open={open}
       onClose={close}
       size="lg"
-      title="New persona"
+      title={`New persona${projName ? ` — ${projName}` : ""}`}
       description="An AI teammate for this project. The role you write here is their standing instructions for every answer."
       icon={<Sparkles size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="pe-form" size="sm" variant="primary" loading={create.isPending}>Create persona</Button>
+          <Button type="submit" form="pe-form" size="sm" variant="primary" loading={create.isPending || setProject.isPending}>Create persona</Button>
         </div>
       }
     >
       <form id="pe-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <ProjectSelect
+          id="pe-project"
+          value={projectId}
+          onChange={(v) => {
+            setProjectId(v);
+            // The backing pickers are project-scoped — selections don't carry over.
+            setModelId("");
+            setAgentId("");
+          }}
+          only={projects ?? []}
+        />
         <div>
           <Label htmlFor="pe-name">Name</Label>
           <Input
@@ -334,18 +401,14 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
           </div>
         </div>
         {sourceType === "model" ? (
-          <div>
-            <Label htmlFor="pe-model">Model</Label>
-            <select id="pe-model" value={modelId} onChange={(e) => setModelId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
-              <option value="" disabled>Choose a model…</option>
-              {(models?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? []).map((m) => (
-                <option key={m.id} value={m.id}>{m.name} ({m.model_id})</option>
-              ))}
-            </select>
-            {(models?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? []).length === 0 && (
-              <p className="mt-1.5 text-[12px] text-warn">No models attached to this project yet — attach one on the AI models tab.</p>
-            )}
-          </div>
+          <ModelPicker
+            id="pe-model"
+            projectId={projectId}
+            models={models}
+            value={modelId}
+            onChange={setModelId}
+            onRegisterNew={() => setAddingModel(true)}
+          />
         ) : (
           <div>
             <Label htmlFor="pe-agent">Agent</Label>
@@ -355,7 +418,12 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
-            {projectAgents.length === 0 && <p className="mt-1.5 text-[12px] text-warn">This project has no agents yet — create one on the Agents tab.</p>}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {projectAgents.length === 0 && <p className="text-[12px] text-warn">This project has no agents yet.</p>}
+              <button type="button" onClick={() => setAddingAgent(true)} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
+                <Plus size={12} strokeWidth={2.4} /> Create an agent
+              </button>
+            </div>
           </div>
         )}
         {Object.keys(templates?.prompts ?? {}).length > 0 && (
@@ -402,6 +470,27 @@ function CreatePersonaDialog({ open, onClose, projectId }: { open: boolean; onCl
         <FieldError>{err}</FieldError>
       </form>
     </Dialog>
+    {/* Stacked prerequisite dialogs — the flow never leaves this screen. */}
+    {addingModel && (
+      <CreateModelDialog
+        open
+        onClose={() => setAddingModel(false)}
+        attachProjectId={projectId}
+        attachProjectName={projName}
+        onCreated={(m) => setModelId(m.id)}
+      />
+    )}
+    {addingAgent && (
+      <CreateAgentDialog
+        open
+        onClose={() => setAddingAgent(false)}
+        defaultProjectId={projectId}
+        onCreated={(a) => {
+          if (a.project_id === projectId) setAgentId(a.id);
+        }}
+      />
+    )}
+    </>
   );
 }
 
