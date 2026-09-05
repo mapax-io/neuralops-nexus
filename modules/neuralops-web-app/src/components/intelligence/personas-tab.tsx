@@ -274,10 +274,10 @@ function ToolServerPicker({ servers, selected, onToggle, disabledReason, cleared
   const full = selected.length >= MAX_MCP_SERVERS_PER_PERSONA;
   return (
     <fieldset>
-      <legend className="mb-1.5 block text-[13px] font-medium text-ink2">Tool servers <span className="text-ink2">(optional)</span></legend>
+      <legend className="mb-1.5 block text-[13px] font-medium text-ink2">MCP tool servers <span className="text-ink2">(optional)</span></legend>
       {servers.length === 0 ? (
         <p className="rounded-[10px] border border-dashed border-line px-3 py-2.5 text-[12.5px] text-ink2">
-          No tool servers in this project yet — without one the persona answers, but can&apos;t act.
+          No MCP tool servers in this project yet — without one the persona answers, but can&apos;t act.
         </p>
       ) : (
         <ul className="grid gap-1.5 sm:grid-cols-2">
@@ -299,10 +299,10 @@ function ToolServerPicker({ servers, selected, onToggle, disabledReason, cleared
         {disabledReason ? (
           <p className="text-[12px] text-warn">{disabledReason}{clearedNote ? " Your ticks were cleared." : ""}</p>
         ) : (
-          <p className="text-[12px] text-ink2">Up to {MAX_MCP_SERVERS_PER_PERSONA} tool servers per persona — this project&apos;s only, since a server belongs to one project.</p>
+          <p className="text-[12px] text-ink2">Up to {MAX_MCP_SERVERS_PER_PERSONA} MCP tool servers per persona — this project&apos;s only, since a server belongs to one project.</p>
         )}
         <button type="button" onClick={onAdd} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
-          <Plus size={12} strokeWidth={2.4} /> Add a tool server
+          <Plus size={12} strokeWidth={2.4} /> Add an MCP tool server
         </button>
       </div>
     </fieldset>
@@ -310,7 +310,7 @@ function ToolServerPicker({ servers, selected, onToggle, disabledReason, cleared
 }
 
 const toolsReason = (model: { name: string; supports_tools: boolean } | undefined) =>
-  model && !model.supports_tools ? `${model.name} isn't marked tool-capable — pick another model to attach tool servers.` : null;
+  model && !model.supports_tools ? `${model.name} isn't marked tool-capable — pick another model to attach MCP tool servers.` : null;
 
 // Per-persona generation settings (moved off the model row server-side —
 // two personas sharing a key routinely want different ones).
@@ -465,7 +465,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     // Mirrors the server's wiring rules — unreachable through the controls,
     // kept so a stale list can never produce a confusing round-trip 400.
     if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
-    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} tool servers.`);
+    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} MCP tool servers.`);
     if (!systemPrompt.trim()) return setErr("Write the role — it's the persona's job description.");
     const ge = validateGeneration(temp, tokens, steps);
     if (ge) return setErr(ge);
@@ -718,7 +718,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
     if (ne) return;
     if (!backing.modelId) return setErr("Pick the model that powers them.");
     if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
-    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} tool servers.`);
+    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} MCP tool servers.`);
     if (!systemPrompt.trim()) return setErr("The role can't be empty — it's the persona's job description.");
     const ge = validateGeneration(temp, tokens, steps);
     if (ge) return setErr(ge);

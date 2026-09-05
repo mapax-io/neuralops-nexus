@@ -86,7 +86,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
         error={error}
         onRetry={refetch}
         empty={servers?.length === 0}
-        emptyTitle="No tool servers yet"
+        emptyTitle="No MCP tool servers yet"
         emptyIcon={<Plug2 size={24} strokeWidth={1.8} />}
         emptyHint={canManage ? "Point at any MCP server and your personas can start acting, not just answering." : "An admin can register MCP servers to give personas tools."}
         emptyAction={canManage ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> Add server</Button> : undefined}
@@ -180,7 +180,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
           if (removing) del.mutate(removing.id);
           setRemoving(null);
         }}
-        title="Remove this tool server?"
+        title="Remove this MCP tool server?"
         body={
           <p>
             <b className="text-ink">{removing?.name}</b> will be removed. If a persona still mounts it, the

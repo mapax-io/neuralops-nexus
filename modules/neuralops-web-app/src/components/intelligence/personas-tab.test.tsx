@@ -322,11 +322,36 @@ describe("CreatePersonaDialog — composition", () => {
     expect(attached).toEqual(["p1:m9"]); // registered from a project-scoped flow → attached there
   });
 
-  it("adds a tool server inline and ticks it on return", async () => {
+  it("explains an empty advisor list and registers a second model straight into the advisor slot", async () => {
+    modelList = [MODELS[0]]; // the only model on the server
     renderTab();
     const dialog = await openCreate();
     fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /add a tool server/i }));
+    const advisor = within(dialog).getByLabelText(/advisor model/i) as HTMLSelectElement;
+    // Nothing but "No advisor" is eligible — the user must be told why, not left guessing.
+    expect(within(advisor).getAllByRole("option")).toHaveLength(1);
+    expect(within(dialog).getByText(/already the primary/i)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /register a second model/i }));
+    const nested = (await screen.findByRole("heading", { name: /register an ai model — apollo/i })).closest('[role="dialog"]') as HTMLElement;
+    fireEvent.change(within(nested).getByLabelText("Name"), { target: { value: "Second opinion" } });
+    fireEvent.change(within(nested).getByLabelText("Model id"), { target: { value: "claude-haiku-4-5" } });
+    fireEvent.change(within(nested).getByLabelText("API key"), { target: { value: "sk-x" } });
+    fireEvent.click(within(nested).getByLabelText(/accept the model provider/i));
+    fireEvent.submit(document.getElementById("m-form")!);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: /register an ai model/i })).not.toBeInTheDocument());
+    // The new model lands in the ADVISOR slot; the primary is untouched.
+    await waitFor(() => expect(advisor.value).toBe("m9"));
+    expect((within(dialog).getByLabelText("Model") as HTMLSelectElement).value).toBe("m1");
+    expect(attached).toEqual(["p1:m9"]);
+  });
+
+  it("adds an MCP tool server inline and ticks it on return", async () => {
+    renderTab();
+    const dialog = await openCreate();
+    // The block names the protocol — "tool servers" alone left users guessing.
+    expect(within(dialog).getByText(/mcp tool servers/i, { selector: "legend" })).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /add an mcp tool server/i }));
     const nested = (await screen.findByRole("heading", { name: /add an mcp tool server — apollo/i })).closest('[role="dialog"]') as HTMLElement;
     fireEvent.change(within(nested).getByLabelText("Name"), { target: { value: "Ledger" } });
     fireEvent.change(within(nested).getByLabelText("URL"), { target: { value: "http://ledger.internal/mcp" } });
