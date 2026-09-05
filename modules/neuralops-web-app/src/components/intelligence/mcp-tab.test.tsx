@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -21,7 +21,11 @@ const S1: MCPServer = {
   server_type: "remote",
   transport: "http",
   url: "http://tools.internal:8080/mcp",
+  command: null,
   timeout_seconds: 60,
+  max_retries: 3,
+  config: {},
+  is_first_party: false,
   embed_output: false,
   auth_type: "none",
   oauth_config: null,
@@ -130,6 +134,48 @@ describe("McpTab — single-project ownership (spec §3.3)", () => {
     expect(screen.getByLabelText(/description/i)).not.toBeRequired();
   });
 
+  it("offers the four transports, defaults to HTTP, and swaps the URL for a command on STDIO", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const transport = screen.getByLabelText("Transport") as HTMLSelectElement;
+    expect(transport.value).toBe("http");
+    expect(within(transport).getAllByRole("option").map((o) => (o as HTMLOptionElement).value)).toEqual(["http", "sse", "websocket", "stdio"]);
+    expect(screen.getByLabelText("URL")).toBeInTheDocument();
+    fireEvent.change(transport, { target: { value: "stdio" } });
+    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Command")).toBeRequired();
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p2" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Local files" } });
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "npx -y @modelcontextprotocol/server-filesystem /data" } });
+    submitCreate();
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ project_id: "p2", transport: "stdio", server_type: "local", command: "npx -y @modelcontextprotocol/server-filesystem /data" });
+    expect(posted).not.toHaveProperty("url");
+  });
+
+  it("posts the chosen remote transport with the URL", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fireEvent.change(screen.getByLabelText("Transport"), { target: { value: "sse" } });
+    fillCreate({ projectId: "p2", name: "Events", url: "http://events.internal/sse" });
+    submitCreate();
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ transport: "sse", server_type: "remote", url: "http://events.internal/sse" });
+  });
+
+  it("shows the transport as fixed when editing and offers the command field for a STDIO server", async () => {
+    server.use(http.get(SERVERS_URL, () => HttpResponse.json([{ ...S1, id: "s3", name: "Local files", transport: "stdio", server_type: "local", url: null, command: "npx -y server-fs /data" }])));
+    renderTab();
+    await screen.findByText("Local files");
+    fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Local files" }));
+    await screen.findByText("Edit Local files");
+    expect(screen.queryByLabelText("Transport")).not.toBeInTheDocument();
+    expect(screen.getByText(/stdio/i, { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Command")).toHaveValue("npx -y server-fs /data");
+    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+  });
   it("offers no project control when editing — ownership is not transferable", async () => {
     renderTab();
     await screen.findByText("Warehouse tools");

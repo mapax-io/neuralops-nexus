@@ -108,10 +108,18 @@ export interface MCPServer {
   name: string;
   description: string | null;
   project_id: string; // the ONE owning project — an FK server-side, never transferable
-  server_type: string;
-  transport: string;
-  url: string | null;
+  server_type: string; // remote (URL transports) | local (stdio)
+  transport: string;   // http | sse | websocket | stdio
+  url: string | null;      // URL transports
+  command: string | null;  // stdio: the command NeuralOps runs
   timeout_seconds: number;
+  max_retries: number;
+  // Non-secret runtime configuration handed to the worker with the server
+  // (e.g. {"root_path": "/data"} for a filesystem server).
+  config: Record<string, unknown>;
+  // Published by us (marketplace) — the only kind whose tool output may be
+  // embedded. Fixed after creation: the server's PATCH has no such field.
+  is_first_party: boolean;
   embed_output: boolean;
   auth_type: McpAuthType;
   oauth_config: McpOAuthConfig | null;
@@ -135,9 +143,10 @@ export interface MCPServerCreate {
   name: string;
   description?: string;
   project_id: string; // MCP servers are project-owned
-  url: string;
+  url?: string;       // http / sse / websocket
+  command?: string;   // stdio
   server_type?: string;
-  transport?: string;
+  transport?: string; // fixed after creation — the server's PATCH has no transport field
   auth_type?: McpAuthType;
   oauth_config?: McpOAuthConfig;
   client_secret?: string; // write-only — folded into encrypted secrets server-side
@@ -150,6 +159,7 @@ export interface MCPServerPatch {
   name?: string;
   description?: string;
   url?: string;
+  command?: string;
   auth_type?: McpAuthType;
   oauth_config?: McpOAuthConfig;
   client_secret?: string;

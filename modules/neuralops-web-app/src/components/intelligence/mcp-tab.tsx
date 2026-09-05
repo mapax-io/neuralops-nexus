@@ -6,7 +6,7 @@ import { CircleCheck, CircleX, Link2, Pencil, Plug2, Plus, RefreshCw, Trash2 } f
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
-import { validateName as vName, validateUrl as vUrl } from "@/lib/validation";
+import { validateName as vName, validateNumber, validateRequired, validateUrl as vUrl } from "@/lib/validation";
 import { useCreateMcpServer, useDeleteMcpServer, useMcpOAuthConnect, useMcpServers, usePatchMcpServer } from "@/hooks/use-intelligence";
 import { isCompanyAdmin } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
@@ -35,6 +35,19 @@ function connSignature(
   return ["oauth2", u, c.client_id ?? "", c.authorize_endpoint ?? "", c.token_endpoint ?? "", scopes, c.token_env_var ?? ""].join("|");
 }
 
+// The four transports the server accepts. URL transports are "remote"
+// servers; STDIO is a "local" one NeuralOps launches from a command. The
+// transport is fixed after creation (the server's PATCH has no such field).
+const TRANSPORTS = [
+  { value: "http", label: "HTTP" },
+  { value: "sse", label: "SSE" },
+  { value: "websocket", label: "WebSocket" },
+  { value: "stdio", label: "STDIO — a local command" },
+] as const;
+const isStdio = (transport: string) => transport === "stdio";
+const selectClass = "h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]";
+// What identifies a server's connection: its URL, or for STDIO its command.
+const endpointOf = (s: { transport: string; url: string | null; command: string | null }) => (isStdio(s.transport) ? s.command : s.url);
 export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; defaultProjectId?: string } = {}) {
   // mcp_server.* create/update/delete are PROJECT-scope rights.
   const role = useConnectionStore((s) => s.connection?.role);
@@ -127,7 +140,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
               body={s.description ?? undefined}
               meta={
                 <>
-                  {s.url && <span title={s.url} className="truncate font-mono">{s.url}</span>}
+                  {endpointOf(s) && <span title={endpointOf(s) ?? undefined} className="truncate font-mono">{endpointOf(s)}</span>}
                   <span>timeout {s.timeout_seconds}s</span>
                   {s.auth_type === "oauth2" && s.oauth_connected && s.oauth_config?.expires_at && (
                     <span
@@ -206,7 +219,9 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   const { data: servers } = useMcpServers();
   const [projectId, setProjectId] = useState(defaultProjectId ?? "");
   const [name, setName] = useState("");
+  const [transport, setTransport] = useState<string>("http");
   const [url, setUrl] = useState("");
+  const [command, setCommand] = useState("");
   const [description, setDescription] = useState("");
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>("none");
   const [oauth, setOauth] = useState<OAuthDraft>(emptyOAuthDraft);
@@ -214,6 +229,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [urlErr, setUrlErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  const stdio = isStdio(transport);
 
   const validateName = (v: string) => {
     const shared = vName(v, { label: "server name" });
@@ -224,12 +240,16 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       return "This project already has an MCP server with this name.";
     return null;
   };
-  const validateUrl = (v: string) => vUrl(v, { label: "the server URL" });
+  // URL transports need a URL; STDIO needs the command instead — the same
+  // either/or the server enforces with its check constraints.
+  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
 
   const reset = () => {
     setProjectId(defaultProjectId ?? "");
     setName("");
+    setTransport("http");
     setUrl("");
+    setCommand("");
     setDescription("");
     setAuthType("none");
     setOauth(emptyOAuthDraft());
@@ -265,11 +285,13 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     // Duplicate CONNECTION guard: the same endpoint + auth config already
     // registered in this project is a duplicate even under a different name.
     const draftCfg = authType === "oauth2" ? draftToPayload(oauth).oauth_config : null;
-    const mySig = connSignature(url, authType, draftCfg);
-    const dupConn = servers?.find((s) => s.project_id === projectId && connSignature(s.url, s.auth_type, s.oauth_config ?? null) === mySig);
+    const mySig = connSignature(stdio ? command : url, authType, draftCfg);
+    const dupConn = servers?.find((s) => s.project_id === projectId && connSignature(endpointOf(s), s.auth_type, s.oauth_config ?? null) === mySig);
     if (dupConn) return setErr(`This project already has a server with these exact connection details ("${dupConn.name}").`);
     create.mutate({
-      project_id: projectId, name: name.trim(), url: url.trim(),
+      project_id: projectId, name: name.trim(),
+      transport, server_type: stdio ? "local" : "remote",
+      ...(stdio ? { command: command.trim() } : { url: url.trim() }),
       description: description.trim() || undefined,
       auth_type: authType,
       ...(authType === "oauth2" ? draftToPayload(oauth)
@@ -284,7 +306,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       onClose={close}
       size="2xl"
       title={`Add an MCP tool server${projName ? ` — ${projName}` : ""}`}
-      description="Any server that speaks the Model Context Protocol over HTTP. Personas in the owning project can mount its tools."
+      description="Any server that speaks the Model Context Protocol — reached by URL over HTTP, SSE or WebSocket, or run as a local command over STDIO. Personas in the owning project can mount its tools."
       icon={<Plug2 size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
@@ -318,34 +340,71 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
           />
           <FieldError>{nameErr}</FieldError>
         </div>
-        <div>
-          <Label htmlFor="mcp-url" required>URL</Label>
-          <Input
-            id="mcp-url"
-            required
-            inputMode="url"
-            placeholder="http://tools.internal:8080/mcp"
-            value={url}
-            aria-invalid={!!urlErr}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              if (touched) setUrlErr(validateUrl(e.target.value));
-            }}
-            onBlur={() => {
-              if (url) {
-                setTouched(true);
-                setUrlErr(validateUrl(url));
-              }
-            }}
-            className="font-mono"
-          />
-          <FieldError>{urlErr}</FieldError>
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+          <div>
+            <Label htmlFor="mcp-transport">Transport</Label>
+            <select
+              id="mcp-transport"
+              value={transport}
+              onChange={(e) => {
+                setTransport(e.target.value);
+                setUrlErr(null); // the other field's error no longer applies
+              }}
+              className={selectClass}
+            >
+              {TRANSPORTS.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          {stdio ? (
+            <div>
+              <Label htmlFor="mcp-command" required>Command</Label>
+              <Input
+                id="mcp-command"
+                required
+                placeholder="npx -y @modelcontextprotocol/server-filesystem /data"
+                value={command}
+                aria-invalid={!!urlErr}
+                onChange={(e) => {
+                  setCommand(e.target.value);
+                  if (touched) setUrlErr(validateRequired(e.target.value, "the command"));
+                }}
+                className="font-mono"
+              />
+              {urlErr ? <FieldError>{urlErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Runs on the NeuralOps server; its tools are read over stdin/stdout.</p>}
+            </div>
+          ) : (
+            <div>
+              <Label htmlFor="mcp-url" required>URL</Label>
+              <Input
+                id="mcp-url"
+                required
+                inputMode="url"
+                placeholder="http://tools.internal:8080/mcp"
+                value={url}
+                aria-invalid={!!urlErr}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  if (touched) setUrlErr(validateUrl(e.target.value));
+                }}
+                onBlur={() => {
+                  if (url) {
+                    setTouched(true);
+                    setUrlErr(validateUrl(url));
+                  }
+                }}
+                className="font-mono"
+              />
+              <FieldError>{urlErr}</FieldError>
+            </div>
+          )}
         </div>
         <div>
           <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
-        <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!url.trim()) setUrl(u); }} />
+        <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
         {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
         <FieldError>{err}</FieldError>
       </form>
@@ -356,8 +415,10 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
 function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClose: () => void; siblings: MCPServer[] }) {
   const [name, setName] = useState(server.name);
   const [url, setUrl] = useState(server.url ?? "");
+  const [command, setCommand] = useState(server.command ?? "");
   const [description, setDescription] = useState(server.description ?? "");
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>(server.auth_type);
+  const stdio = isStdio(server.transport);
   const [oauth, setOauth] = useState<OAuthDraft>(() => draftFromConfig(server.oauth_config));
   const [authErr, setAuthErr] = useState<string | null>(null);
   const [nameErr, setNameErr] = useState<string | null>(null);
@@ -373,7 +434,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       return "This project already has an MCP server with this name.";
     return null;
   };
-  const validateUrl = (v: string) => vUrl(v, { label: "the server URL" });
+  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -409,7 +470,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       : {};
     const payload = {
       ...(name.trim() !== server.name ? { name: name.trim() } : {}),
-      ...(url.trim() !== (server.url ?? "") ? { url: url.trim() } : {}),
+      ...(!stdio && url.trim() !== (server.url ?? "") ? { url: url.trim() } : {}),
+      ...(stdio && command.trim() !== (server.command ?? "") ? { command: command.trim() } : {}),
       ...(description.trim() !== (server.description ?? "") ? { description: description.trim() } : {}),
       ...authPayload,
     };
@@ -455,33 +517,57 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           />
           <FieldError>{nameErr}</FieldError>
         </div>
-        <div>
-          <Label htmlFor="mce-url" required>URL</Label>
-          <Input
-            id="mce-url"
-            required
-            inputMode="url"
-            value={url}
-            aria-invalid={!!urlErr}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              if (touched) setUrlErr(validateUrl(e.target.value));
-            }}
-            onBlur={() => {
-              if (url) {
-                setTouched(true);
-                setUrlErr(validateUrl(url));
-              }
-            }}
-            className="font-mono"
-          />
-          <FieldError>{urlErr}</FieldError>
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+          <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
+            <p className="text-[12px] text-ink2">Transport <span className="text-ink2/70">(fixed)</span></p>
+            <p className="mt-0.5"><code className="font-mono text-[12.5px]">{server.transport}</code></p>
+          </div>
+          {stdio ? (
+            <div>
+              <Label htmlFor="mce-command" required>Command</Label>
+              <Input
+                id="mce-command"
+                required
+                value={command}
+                aria-invalid={!!urlErr}
+                onChange={(e) => {
+                  setCommand(e.target.value);
+                  if (touched) setUrlErr(validateRequired(e.target.value, "the command"));
+                }}
+                className="font-mono"
+              />
+              <FieldError>{urlErr}</FieldError>
+            </div>
+          ) : (
+            <div>
+              <Label htmlFor="mce-url" required>URL</Label>
+              <Input
+                id="mce-url"
+                required
+                inputMode="url"
+                value={url}
+                aria-invalid={!!urlErr}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  if (touched) setUrlErr(validateUrl(e.target.value));
+                }}
+                onBlur={() => {
+                  if (url) {
+                    setTouched(true);
+                    setUrlErr(validateUrl(url));
+                  }
+                }}
+                className="font-mono"
+              />
+              <FieldError>{urlErr}</FieldError>
+            </div>
+          )}
         </div>
         <div>
           <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
-        <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!url.trim()) setUrl(u); }} />
+        <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
         <FieldError>{authErr}</FieldError>
       </form>
     </Dialog>

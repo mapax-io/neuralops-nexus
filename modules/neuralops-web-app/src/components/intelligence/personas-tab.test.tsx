@@ -35,7 +35,7 @@ const MODELS = [
 function mcp(id: string, name: string, over: Partial<MCPServer> = {}): MCPServer {
   return {
     id, name, description: null, project_id: "p1", server_type: "remote", transport: "http",
-    url: `http://${id}.internal/mcp`, timeout_seconds: 60, embed_output: false,
+    url: `http://${id}.internal/mcp`, command: null, timeout_seconds: 60, max_retries: 3, config: {}, is_first_party: false, embed_output: false,
     auth_type: "none", oauth_config: null, oauth_connected: false, ...over,
   };
 }
