@@ -14,12 +14,12 @@ see authn/tests.py — no pytest dependency here).
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from nucleus.models import Company, Project, Channel, ChatTopic, AIModel, AIAgent, MCPServer, Persona
+from nucleus.models import Company, Project, Channel, ChatTopic, ModelConfig, MCPServer, Persona
 
 from .checker import PermissionChecker
 from .models import Right, Role, RoleAssignment, RoleRight
 from .rights import DEFAULT_ROLE_RIGHTS, REGISTRY
-from .row_rules import visible_ai_models, visible_agents, visible_mcp_servers, visible_personas
+from .row_rules import visible_model_configs, visible_mcp_servers, visible_personas
 
 User = get_user_model()
 
@@ -47,14 +47,16 @@ class RegistryConsistencyTests(TestCase):
 
     def test_company_wide_ai_rights_excluded_from_member_and_viewer(self):
         """
-        Locks in the decision from the design discussion: persona/agent/
-        mcp_server/ai_model create+delete rights must never be handed to
-        Member or Viewer by default, regardless of scope.
+        Locks in the decision from the design discussion: persona/
+        mcp_server/model_config create+delete rights must never be handed
+        to Member or Viewer by default, regardless of scope.
+
+        The agent.* codes this used to also guard are gone -- AIAgent was
+        removed and Persona absorbed it, so there is nothing left to check.
         """
         forbidden_prefixes = ("persona.create", "persona.update", "persona.delete",
-                               "agent.create", "agent.delete",
                                "mcp_server.create", "mcp_server.delete",
-                               "ai_model.create", "ai_model.delete")
+                               "model_config.create", "model_config.delete")
         for role_name in ("Member", "Viewer"):
             granted = set(DEFAULT_ROLE_RIGHTS[role_name])
             overlap = granted.intersection(forbidden_prefixes)
@@ -478,11 +480,16 @@ class UC18_ChannelTopicArchiveAndIncludeArchivedTests(PermissionCheckerTestCase)
 
 class AIResourceTestCase(PermissionCheckerTestCase):
     """
-    Shared fixture for UC13-17 (AI Model / Agent / MCP Server / Persona
+    Shared fixture for UC13-17 (Model Config / MCP Server / Persona
     permissions -- see USE_CASES.md). Extends the base fixture with a
     second project (so project-to-project isolation can be tested, same
     idea as UC3/UC17), the Rights these use, and one instance of each
     AI resource type, attached to self.project.
+
+    The Agent half of this fixture is gone -- AIAgent no longer exists,
+    so there is no agent object to build and no agent.* right to grant.
+    Persona absorbed it: a persona is one ModelConfig, an optional
+    advisor, and zero or more MCPServers.
 
     Rights are granted to role_company_admin AND role_project_admin
     identically, mirroring DEFAULT_ROLE_RIGHTS["Admin"] in rights.py --
@@ -490,7 +497,7 @@ class AIResourceTestCase(PermissionCheckerTestCase):
     Whether a right actually becomes reachable is entirely down to
     _scope_chain() + _SCOPE_ORDER, not which rights were curated per
     role here -- e.g. role_project_admin holds the RoleRight for
-    ai_model.create (COMPANY scope) same as role_company_admin does, but
+    model_config.create (COMPANY scope) same as role_company_admin does, but
     a PROJECT-scoped assignment can never reach a COMPANY-scope right
     (see UC6/UC7), so the create test for Project Admin below still
     correctly denies.
@@ -503,13 +510,11 @@ class AIResourceTestCase(PermissionCheckerTestCase):
             company=self.company, name="Other Project", slug="other-project-ai",
         )
 
-        self.r_ai_model_list = Right.objects.create(code="ai_model.list", object_type="ai_model", scope="company")
-        self.r_ai_model_create = Right.objects.create(code="ai_model.create", object_type="ai_model", scope="company")
-        self.r_ai_model_attach = Right.objects.create(code="ai_model.attach", object_type="project", scope="project")
-        self.r_agent_list = Right.objects.create(code="agent.list", object_type="agent", scope="company")
-        self.r_agent_create = Right.objects.create(code="agent.create", object_type="agent", scope="project")
-        self.r_agent_update = Right.objects.create(code="agent.update", object_type="agent", scope="project")
-        self.r_agent_delete = Right.objects.create(code="agent.delete", object_type="agent", scope="project")
+        # agent.list / agent.create / agent.update / agent.delete are NOT
+        # created here any more -- those Right rows no longer exist.
+        self.r_model_config_list = Right.objects.create(code="model_config.list", object_type="model_config", scope="company")
+        self.r_model_config_create = Right.objects.create(code="model_config.create", object_type="model_config", scope="company")
+        self.r_model_config_attach = Right.objects.create(code="model_config.attach", object_type="project", scope="project")
         self.r_mcp_list = Right.objects.create(code="mcp_server.list", object_type="mcp_server", scope="company")
         self.r_mcp_create = Right.objects.create(code="mcp_server.create", object_type="mcp_server", scope="project")
         self.r_mcp_update = Right.objects.create(code="mcp_server.update", object_type="mcp_server", scope="project")
@@ -517,8 +522,7 @@ class AIResourceTestCase(PermissionCheckerTestCase):
         self.r_persona_list = Right.objects.create(code="persona.list", object_type="persona", scope="company")
 
         admin_rights = (
-            self.r_ai_model_list, self.r_ai_model_create, self.r_ai_model_attach,
-            self.r_agent_list, self.r_agent_create, self.r_agent_update, self.r_agent_delete,
+            self.r_model_config_list, self.r_model_config_create, self.r_model_config_attach,
             self.r_mcp_list, self.r_mcp_create, self.r_mcp_update, self.r_mcp_delete,
             self.r_persona_list,
         )
@@ -526,26 +530,30 @@ class AIResourceTestCase(PermissionCheckerTestCase):
             RoleRight.objects.create(role=self.role_company_admin, right=right)
             RoleRight.objects.create(role=self.role_project_admin, right=right)
 
-        self.ai_model = AIModel.objects.create(
-            company=self.company, name="GPT Test", provider="litellm", model_id="openai/gpt-test",
+        # provider is now one of the five real providers and model_id is the
+        # BARE model name -- "openai/gpt-test" would be rejected by
+        # create_model_config's prefix guard, and qualified_id composes the
+        # "provider:model" wire string from the two columns.
+        self.model_config = ModelConfig.objects.create(
+            company=self.company, name="GPT Test", provider="openai", model_id="gpt-test",
+            supports_tools=True,
         )
-        self.ai_model.projects.add(self.project)
+        self.model_config.projects.add(self.project)
 
-        self.agent = AIAgent.objects.create(
-            company=self.company, name="Scout", agent_type="internal", model=self.ai_model,
-        )
-        self.agent.projects.add(self.project)
+        # No AIAgent fixture -- the model is deleted; a persona with MCP
+        # servers attached is what "an agent" means now.
 
+        # Project ownership is a real `project` FK, not a `projects` M2M.
         self.mcp_server = MCPServer.objects.create(
-            company=self.company, name="Search MCP", server_type="remote", transport="http",
+            company=self.company, project=self.project,
+            name="Search MCP", server_type="remote", transport="http",
             url="https://example.test/mcp",
         )
-        self.mcp_server.projects.add(self.project)
 
         shadow = User.objects.create(username="persona_nova_test", user_type="persona", is_active=True)
         self.persona = Persona.objects.create(
             company=self.company, project=self.project, identity_user=shadow,
-            name="Nova", source_type="model", model=self.ai_model,
+            name="Nova", model=self.model_config,
         )
 
 
@@ -557,8 +565,8 @@ class UC13_AIResourceVisibilityTests(AIResourceTestCase):
 
     def test_company_admin_sees_every_resource_broad(self):
         PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
-        self.assertIn(self.ai_model, visible_ai_models(self.sara, self.company))
-        self.assertIn(self.agent, visible_agents(self.sara, self.company))
+        self.assertIn(self.model_config, visible_model_configs(self.sara, self.company))
+        # visible_agents() is gone with AIAgent -- nothing to assert here.
         self.assertIn(self.mcp_server, visible_mcp_servers(self.sara, self.company))
         self.assertIn(self.persona, visible_personas(self.sara, self.project))
 
@@ -569,117 +577,112 @@ class UC13_AIResourceVisibilityTests(AIResourceTestCase):
         # via the topic -> project traversal, which is all the narrow path
         # of each visible_*() function needs.
         PermissionChecker.assign_role(self.ali, self.role_topic_member, self.topic_a)
-        self.assertIn(self.ai_model, visible_ai_models(self.ali, self.company))
-        self.assertIn(self.agent, visible_agents(self.ali, self.company))
+        self.assertIn(self.model_config, visible_model_configs(self.ali, self.company))
+        # visible_agents() is gone with AIAgent -- nothing to assert here.
         self.assertIn(self.mcp_server, visible_mcp_servers(self.ali, self.company))
         self.assertIn(self.persona, visible_personas(self.ali, self.project))
 
     def test_outsider_sees_nothing_not_even_a_403(self):
         # Ali holds no assignment anywhere -- these return empty querysets,
         # never raise, matching "list always 200s" from UC13.
-        self.assertNotIn(self.ai_model, visible_ai_models(self.ali, self.company))
-        self.assertEqual(visible_agents(self.ali, self.company).count(), 0)
+        self.assertNotIn(self.model_config, visible_model_configs(self.ali, self.company))
+        # visible_agents() is gone with AIAgent -- nothing to assert here.
         self.assertEqual(visible_mcp_servers(self.ali, self.company).count(), 0)
         self.assertEqual(visible_personas(self.ali, self.project).count(), 0)
 
     def test_project_admin_on_other_project_does_not_see_this_projects_resources(self):
         PermissionChecker.assign_role(self.sara, self.role_project_admin, self.other_project)
-        self.assertNotIn(self.ai_model, visible_ai_models(self.sara, self.company))
-        self.assertNotIn(self.agent, visible_agents(self.sara, self.company))
+        self.assertNotIn(self.model_config, visible_model_configs(self.sara, self.company))
+        # visible_agents() is gone with AIAgent -- nothing to assert here.
         self.assertNotIn(self.mcp_server, visible_mcp_servers(self.sara, self.company))
         self.assertEqual(visible_personas(self.sara, self.project).count(), 0)
 
 
-class UC14_UC15_AIModelCreateVsAttachTests(AIResourceTestCase):
+class UC14_UC15_ModelConfigCreateVsAttachTests(AIResourceTestCase):
     """
-    UC14/15 -- ai_model.create (COMPANY scope, touches the API key) is
-    Owner/Admin-only regardless of assignment scope; ai_model.attach
+    UC14/15 -- model_config.create (COMPANY scope, touches the API key) is
+    Owner/Admin-only regardless of assignment scope; model_config.attach
     (PROJECT scope, never touches the key) is the separate, lighter
     right a Project Admin can also reach.
     """
 
-    def test_company_admin_can_create_ai_model(self):
+    def test_company_admin_can_create_model_config(self):
         PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
-        self.assertTrue(PermissionChecker.can(self.sara, "ai_model.create", company=self.company))
+        self.assertTrue(PermissionChecker.can(self.sara, "model_config.create", company=self.company))
 
-    def test_project_admin_cannot_create_ai_model(self):
+    def test_project_admin_cannot_create_model_config(self):
         PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
         self.assertFalse(
-            PermissionChecker.can(self.ali, "ai_model.create", company=self.company),
-            "ai_model.create is COMPANY scope -- a PROJECT-scoped assignment can never reach it, "
+            PermissionChecker.can(self.ali, "model_config.create", company=self.company),
+            "model_config.create is COMPANY scope -- a PROJECT-scoped assignment can never reach it, "
             "even though role_project_admin holds the RoleRight (see class docstring).",
         )
 
-    def test_project_admin_can_attach_existing_model_to_own_project(self):
+    def test_project_admin_can_attach_existing_config_to_own_project(self):
         PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
-        self.assertTrue(PermissionChecker.can(self.ali, "ai_model.attach", obj=self.project))
+        self.assertTrue(PermissionChecker.can(self.ali, "model_config.attach", obj=self.project))
 
     def test_project_admin_cannot_attach_to_a_project_they_do_not_admin(self):
         PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
-        self.assertFalse(PermissionChecker.can(self.ali, "ai_model.attach", obj=self.other_project))
+        self.assertFalse(PermissionChecker.can(self.ali, "model_config.attach", obj=self.other_project))
 
     def test_company_admin_can_attach_too(self):
         # PROJECT reach flows down from COMPANY -- see _SCOPE_ORDER in checker.py.
         PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
-        self.assertTrue(PermissionChecker.can(self.sara, "ai_model.attach", obj=self.project))
+        self.assertTrue(PermissionChecker.can(self.sara, "model_config.attach", obj=self.project))
 
 
-class UC16_UC17_AgentMcpServerProjectScopeTests(AIResourceTestCase):
+class UC16_UC17_McpServerProjectScopeTests(AIResourceTestCase):
     """
-    UC16/17 -- agent.*/mcp_server.* create+update+delete are PROJECT
-    scope: a Project Admin reaches them on their own project (and the
-    Agent/MCPServer objects within it, via _scope_chain walking the
-    projects M2M), but not on a project they don't administer.
+    UC16/17 -- mcp_server.* create+update+delete are PROJECT scope: a
+    Project Admin reaches them on their own project (and the MCPServer
+    objects within it, via _scope_chain reading the `project` FK), but
+    not on a project they don't administer.
+
+    The agent.* half of this class is gone -- AIAgent no longer exists,
+    so there are no agent.create/update/delete rights left to test.
     """
 
-    def test_project_admin_can_create_agent_in_own_project(self):
-        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
-        self.assertTrue(PermissionChecker.can(self.ali, "agent.create", obj=self.project))
-
-    def test_project_admin_can_update_and_delete_own_projects_agent(self):
-        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
-        self.assertTrue(PermissionChecker.can(self.ali, "agent.update", obj=self.agent))
-        self.assertTrue(PermissionChecker.can(self.ali, "agent.delete", obj=self.agent))
-
-    def test_project_admin_cannot_touch_another_projects_agent(self):
-        other_agent = AIAgent.objects.create(
-            company=self.company, name="Scout Two", agent_type="internal", model=self.ai_model,
-        )
-        other_agent.projects.add(self.other_project)
-        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
-        self.assertFalse(PermissionChecker.can(self.ali, "agent.update", obj=other_agent))
-        self.assertFalse(PermissionChecker.can(self.ali, "agent.delete", obj=other_agent))
-
-    def test_company_admin_can_manage_agent_in_any_project(self):
-        PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
-        self.assertTrue(PermissionChecker.can(self.sara, "agent.delete", obj=self.agent))
-
-    def test_same_pattern_holds_for_mcp_server(self):
+    def test_project_admin_can_create_mcp_server_in_own_project(self):
         PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
         self.assertTrue(PermissionChecker.can(self.ali, "mcp_server.create", obj=self.project))
+
+    def test_project_admin_can_update_and_delete_own_projects_mcp_server(self):
+        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
         self.assertTrue(PermissionChecker.can(self.ali, "mcp_server.update", obj=self.mcp_server))
         self.assertTrue(PermissionChecker.can(self.ali, "mcp_server.delete", obj=self.mcp_server))
 
+    def test_project_admin_cannot_touch_another_projects_mcp_server(self):
+        # Ownership is set at construction now -- a server belongs to exactly
+        # one project and is not transferable, so there is no .add() step.
         other_mcp = MCPServer.objects.create(
-            company=self.company, name="Other MCP", server_type="remote", transport="http",
+            company=self.company, project=self.other_project,
+            name="Other MCP", server_type="remote", transport="http",
             url="https://example.test/other",
         )
-        other_mcp.projects.add(self.other_project)
+        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
+        self.assertFalse(PermissionChecker.can(self.ali, "mcp_server.update", obj=other_mcp))
         self.assertFalse(PermissionChecker.can(self.ali, "mcp_server.delete", obj=other_mcp))
 
-    def test_unattached_agent_falls_back_to_company_only_scope(self):
+    def test_company_admin_can_manage_mcp_server_in_any_project(self):
+        PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
+        self.assertTrue(PermissionChecker.can(self.sara, "mcp_server.delete", obj=self.mcp_server))
+
+    def test_unsaved_mcp_server_falls_back_to_company_only_scope(self):
         """
-        An AIAgent/MCPServer with no project attached yet (e.g. mid-creation,
-        or the .add(project) call somehow never happened) can't be reached
-        via PROJECT scope at all -- _scope_chain's isinstance branch finds no
-        project, so it falls through to the plain company_id fallback,
-        meaning only a COMPANY-scoped assignment reaches it.
+        MCPServer.project is NOT NULL now, so "no project attached yet" can
+        only mean an in-memory instance that was never saved. _scope_chain's
+        project_id guard then falls through to the plain company_id
+        fallback, meaning only a COMPANY-scoped assignment reaches it.
+
+        The AIAgent variant of this case went away with the model.
         """
-        unattached = AIAgent.objects.create(
-            company=self.company, name="Orphan", agent_type="internal", model=self.ai_model,
+        unsaved = MCPServer(
+            company=self.company, name="Orphan", server_type="remote",
+            transport="http", url="https://example.test/orphan",
         )
         PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
-        self.assertFalse(PermissionChecker.can(self.ali, "agent.delete", obj=unattached))
+        self.assertFalse(PermissionChecker.can(self.ali, "mcp_server.delete", obj=unsaved))
 
         PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
-        self.assertTrue(PermissionChecker.can(self.sara, "agent.delete", obj=unattached))
+        self.assertTrue(PermissionChecker.can(self.sara, "mcp_server.delete", obj=unsaved))

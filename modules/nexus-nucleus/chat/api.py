@@ -334,9 +334,9 @@ async def _trigger_personas(
     """
     Fire AI trigger tasks for each persona in parallel.
     Spawns one asyncio task per persona. Only triggers personas that have
-    a model configured (source_type=model for now; source_type=agent
-    handled in M8) -- a cheap existence check, not a judgment about the
-    model's actual configuration, so it stays here.
+    a model configured -- a cheap existence check, not a judgment about the
+    model's actual configuration, so it stays here. (The old source_type
+    model/agent split is gone; see the gate in the loop below.)
 
     History is NOT built here anymore -- nexus-ai fetches and filters it
     itself, per persona, right before building that persona's prompt (see

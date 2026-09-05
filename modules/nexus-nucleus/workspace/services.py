@@ -384,9 +384,9 @@ def remove_member(company, caller, target_user_id: str) -> dict:
 def _format_member(member) -> dict:
     user = member.user
     # Avatar lives on User itself (shared by humans + personas -- see #148),
-    # not on the Human/Persona profile models -- those still have their own
-    # (largely unpopulated) avatar fields, but User.avatar is now the one
-    # actually kept up to date by assign_avatar().
+    # not on the Persona profile model -- that still has its own (largely
+    # unpopulated) avatar field, but User.avatar is the one actually kept up
+    # to date by assign_avatar().
     avatar = user.get_avatar_url()
     if user.user_type == "persona":
         profile = getattr(user, "persona_profile", None)
@@ -396,17 +396,13 @@ def _format_member(member) -> dict:
             name = user.username  # fallback: shouldn't normally happen
         email = ""
     else:
-        # Human profile may not exist (device-auth users have no Human record).
-        # Fall back to User.get_display_name() which uses display_name or email local-part.
+        # User.get_display_name() (display_name, else the email local-part) is
+        # now the ONLY name source for humans. The old `human_profile` lookup
+        # is gone with the Human model -- the table was never populated for
+        # device-auth users anyway (DECISIONS.md §3), so this branch was
+        # always the one that actually ran.
         name = user.get_display_name()
         email = user.email or ""
-        try:
-            hp = user.human_profile
-            if hp.full_name:
-                name = hp.full_name
-            email = hp.email or email
-        except Exception:
-            pass
     return {
         "id": str(member.id), "user_id": str(user.id),
         "name": name, "email": email, "role": member.role,
@@ -420,7 +416,7 @@ def list_team(company, project) -> list:
     members = (
         ProjectMember.objects.filter(company=company, project=project, is_active=True)
         .filter(user__is_active=True)  # exclude deactivated persona shadow users
-        .select_related("user", "user__human_profile", "user__persona_profile")
+        .select_related("user", "user__persona_profile")
         .order_by("role", "created_at")
     )
     return [_format_member(m) for m in members]
@@ -582,23 +578,24 @@ def list_available_users(company, project, search: str = "") -> list:
     ).values_list("user_id", flat=True)
     qs = User.objects.filter(
         id__in=workspace_ids, user_type="human", is_active=True,
-    ).exclude(id__in=in_project).select_related("human_profile")
+    ).exclude(id__in=in_project)
 
+    # Searched against User's own columns now -- the Human profile table it
+    # used to search (human_profile__full_name / __email) is gone, and it was
+    # never populated for device-auth users in the first place.
     if search:
         qs = qs.filter(
-            Q(human_profile__full_name__icontains=search)
-            | Q(human_profile__email__icontains=search)
+            Q(display_name__icontains=search) | Q(email__icontains=search)
         )
-    result = []
-    for user in qs:
-        profile = getattr(user, "human_profile", None)
-        result.append({
+    return [
+        {
             "user_id": str(user.id),
-            "name": profile.full_name if profile else user.email,
-            "email": profile.email if profile else user.email,
-            "avatar": user.get_avatar_url(),  # #148 -- lives on User, not Human
-        })
-    return result
+            "name": user.get_display_name(),
+            "email": user.email or "",
+            "avatar": user.get_avatar_url(),  # #148 -- lives on User
+        }
+        for user in qs
+    ]
 
 
 def list_available_personas(company, project) -> list:
@@ -607,13 +604,17 @@ def list_available_personas(company, project) -> list:
     in_project = ProjectMember.objects.filter(
         company=company, project=project, is_active=True, user__user_type="persona",
     ).values_list("user_id", flat=True)
+    # Scoped to THIS project, matching invite_to_project()'s own lookup --
+    # personas are project-owned and not transferable, so offering another
+    # project's persona here would just produce a "not found in this project"
+    # error on the invite that follows.
     personas = Persona.objects.filter(
-        company=company, is_active=True
+        company=company, project=project, is_active=True
     ).exclude(identity_user_id__in=in_project).select_related("identity_user")
     return [
         {
             "persona_id": str(p.id), "user_id": str(p.identity_user_id),
-            "name": p.name, "source_type": p.source_type,
+            "name": p.name,
             "avatar": p.identity_user.get_avatar_url(),  # #148 -- lives on User, not Persona
         }
         for p in personas
