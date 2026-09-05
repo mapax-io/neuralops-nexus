@@ -52,14 +52,14 @@ function useInvalidate(...keys: string[]) {
   return () => Promise.all(keys.map((key) => qc.invalidateQueries({ queryKey: [key] })));
 }
 
-export function useCreateModel(onDone?: () => void) {
+export function useCreateModel(onDone?: (m: intel.AIModel) => void) {
   const inv = useInvalidate("ai-models");
   return useMutation({
     mutationFn: intel.createModel,
     onSuccess: (m) => {
       toast.success(`Model "${m.name}" registered.`);
       inv();
-      onDone?.();
+      onDone?.(m);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -93,14 +93,14 @@ export function useDeleteModel() {
   });
 }
 
-export function useCreateMcpServer(onDone?: () => void) {
+export function useCreateMcpServer(onDone?: (s: intel.MCPServer) => void) {
   const inv = useInvalidate("mcp-servers");
   return useMutation({
     mutationFn: intel.createMcpServer,
     onSuccess: (s) => {
       toast.success(`MCP server "${s.name}" added.`);
       inv();
-      onDone?.();
+      onDone?.(s);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -131,14 +131,14 @@ export function useDeleteMcpServer() {
   });
 }
 
-export function useCreateAgent(onDone?: () => void) {
+export function useCreateAgent(onDone?: (a: intel.AIAgent) => void) {
   const inv = useInvalidate("agents");
   return useMutation({
     mutationFn: intel.createAgent,
     onSuccess: (a) => {
       toast.success(`Agent "${a.name}" created.`);
       inv();
-      onDone?.();
+      onDone?.(a);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -169,14 +169,14 @@ export function useDeleteAgent() {
   });
 }
 
-export function useCreatePersona(onDone?: () => void) {
+export function useCreatePersona(onDone?: (p: intel.Persona) => void) {
   const inv = useInvalidate("personas");
   return useMutation({
     mutationFn: intel.createPersona,
     onSuccess: (p) => {
       toast.success(`@${p.name} is ready — mention them in any chat of their project.`);
       inv();
-      onDone?.();
+      onDone?.(p);
     },
     onError: (e) => toast.error(e.message),
   });
