@@ -81,7 +81,8 @@ describe("ModelsTab — register", () => {
     await waitFor(() => expect(posted).not.toBeNull());
     expect(posted).toMatchObject({
       name: "Mini", provider: "openai", model_id: "gpt-4o-mini", api_key: "sk-test", licence_accepted: true,
-      supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false, context_window: 8192,
+      // gpt-4o-mini is a known family — the context window defaulted from the id, not the server's 8192.
+      supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false, context_window: 128000,
     });
     expect(posted).not.toHaveProperty("api_base");
   });
@@ -116,6 +117,26 @@ describe("ModelsTab — register", () => {
     const dialog = await openRegister();
     const options = within(within(dialog).getByLabelText("Provider")).getAllByRole("option").map((o) => (o as HTMLOptionElement).value);
     expect(options).toEqual(["anthropic", "openai", "google", "ollama", "openai_compatible"]);
+  });
+});
+
+
+describe("ModelsTab — context window follows the model id", () => {
+  it("fills the known size for the typed id, resets to the default for an unknown one, and keeps a hand-typed value", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    const ctx = within(dialog).getByLabelText("Context window") as HTMLInputElement;
+    expect(ctx.value).toBe("8192");
+    fireEvent.change(within(dialog).getByLabelText("Provider", { exact: true }), { target: { value: "openai" } });
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "gpt-4o-mini" } });
+    expect(ctx.value).toBe("128000");
+    expect(within(dialog).getByText(/defaulted from the model id/i)).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "totally-unknown" } });
+    expect(ctx.value).toBe("8192");
+    // Once the user types a size, the id stops overriding it.
+    fireEvent.change(ctx, { target: { value: "65536" } });
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "gpt-4o" } });
+    expect(ctx.value).toBe("65536");
   });
 });
 

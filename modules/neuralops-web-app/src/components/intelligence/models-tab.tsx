@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
+import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
 import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useSetModelConfigProject } from "@/hooks/use-intelligence";
 import { isCompanyAdmin } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
@@ -215,7 +216,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   const [modelId, setModelId] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
-  const [contextWindow, setContextWindow] = useState("8192");
+  const [contextWindow, setContextWindow] = useState(String(DEFAULT_CONTEXT_WINDOW));
+  // The context window follows the model id until the user types a size of
+  // their own — then it is theirs and the id stops overriding it.
+  const [ctxTouched, setCtxTouched] = useState(false);
   const [caps, setCaps] = useState<Capabilities>({ supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false });
   const [licence, setLicence] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -225,6 +229,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   const [touched, setTouched] = useState(false);
   const prov = providerOf(provider) ?? PROVIDERS[0];
   const showsBase = prov.base !== "none";
+  const ctxKnown = defaultContextWindow(provider, modelId) !== DEFAULT_CONTEXT_WINDOW;
+  const syncContext = (nextProvider: string, nextId: string) => {
+    if (!ctxTouched) setContextWindow(String(defaultContextWindow(nextProvider, nextId)));
+  };
 
   const validateName = (v: string) => vName(v, { label: "model name", existing: models?.map((m) => m.name) });
   const validateBase = (v: string) => vUrl(v, { label: "the API base URL", required: prov.base === "required" });
@@ -235,7 +243,8 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
     setModelId("");
     setApiKey("");
     setApiBase("");
-    setContextWindow("8192");
+    setContextWindow(String(DEFAULT_CONTEXT_WINDOW));
+    setCtxTouched(false);
     setCaps({ supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false });
     setLicence(false);
     setErr(null);
@@ -333,7 +342,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             <select
               id="m-provider"
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => {
+                setProvider(e.target.value);
+                syncContext(e.target.value, modelId);
+              }}
               className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
             >
               {PROVIDERS.map((p) => (
@@ -351,6 +363,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
               aria-invalid={!!idErr}
               onChange={(e) => {
                 setModelId(e.target.value);
+                syncContext(provider, e.target.value);
                 if (touched) setIdErr(validateModelId(e.target.value));
               }}
               onBlur={() => {
@@ -379,8 +392,12 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
         )}
         <div>
           <Label htmlFor="m-ctx" required>Context window</Label>
-          <Input id="m-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
-          <p className="mt-1.5 text-[12px] text-ink2">Tokens the model can take in one call — check the provider&apos;s model page.</p>
+          <Input id="m-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => { setContextWindow(e.target.value); setCtxTouched(true); }} className="sm:max-w-[12rem]" />
+          <p className="mt-1.5 text-[12px] text-ink2">
+            {!ctxTouched && ctxKnown
+              ? "Defaulted from the model id — adjust it if your provider says otherwise."
+              : "Tokens the model can take in one call — check the provider\u2019s model page."}
+          </p>
         </div>
         <CapabilityChecks value={caps} onChange={setCaps} />
         <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
