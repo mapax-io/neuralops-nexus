@@ -211,3 +211,39 @@ the same change.
 
 **Decision needed:** release owner's call — when and to what.
 
+---
+
+## Backend fields the AI worker never reads (do not build UI for these yet)
+
+**Where:** `modules/nexus-nucleus/internal/api.py` (`ModelInternal`, `PromptInternal`,
+`MCPServerInternal`) vs `modules/nexus-ai/apps/managers/nucleus_client.py` /
+`apps/schemas/trigger.py`.
+
+While aligning every web-app dialog with the backend input schemas (2026-09-06),
+these accepted-and-stored fields turned out to have no consumer at runtime, so
+the web app deliberately does NOT expose them (a control that changes nothing
+is worse than none):
+
+- `ModelConfig.config` (provider-specific JSON): not in `ModelInternal`, so
+  nexus-ai never sees it.
+- `MCPServer.server_type` beyond local/remote, `docker_image`, `docker_command`,
+  `kubernetes_service`: not in `MCPServerInternal`; the runner only knows
+  transport + url/command.
+- `MCPServer.timeout_seconds` / `max_retries`: nexus-ai's `MCPServerConfig` has
+  a `timeout_seconds` slot, but nucleus's `MCPServerInternal` does not forward
+  either field — the web app now lets admins set them (the API accepts them),
+  and they will take effect once nucleus forwards them.
+- `Prompt.context_scope` (`['chat', 'doc']`): forwarded in `PromptInternal` but
+  nothing in nexus-ai reads it.
+- `Prompt.template_id` (DB `PromptTemplate`): no list endpoint is mounted
+  (`list_prompt_templates` exists in services only; `/prompt-templates` serves
+  files), so a client cannot offer a choice.
+- `CompanyAIConfig` (`GET/PUT /ai-config/`): nucleus exposes it internally at
+  `/companies/{id}/ai-config/`, but nexus-ai never calls it — it reads
+  `EMBEDDING_MODEL` etc. from env (`apps/core/config.py`). Also note the public
+  `PUT /ai-config/` has no permission check.
+
+**Decision needed:** which of these the backend intends to honor (forward in the
+internal payload / read in nexus-ai), and which should be dropped from the
+schemas. The web app will follow once they are real.
+
