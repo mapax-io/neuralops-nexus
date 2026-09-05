@@ -247,3 +247,28 @@ is worse than none):
 internal payload / read in nexus-ai), and which should be dropped from the
 schemas. The web app will follow once they are real.
 
+---
+
+## Migrations 0009/0010 stop on legacy dev data (orphan and duplicate soft-deleted MCP rows)
+
+**Where:** `modules/nexus-nucleus/nucleus/migrations/0009_mcpserver_project_data.py`,
+`0010_mcpserver_project_finalize.py`.
+
+Seen migrating a long-lived dev database to the #99 schema (2026-09-06):
+
+- 0009 refuses when any `MCPServer` has no project in the old M2M — on this
+  database six inactive "Legacy MCP Test Flow" rows left behind by the old
+  nested `/ai-models/{id}/mcp-servers/` path. Fixed by deleting exactly those
+  six (after nulling the `AIAgent.mcp_server` FKs of the test agents that
+  referenced them).
+- 0010 then fails to build `uniq_mcp_server_name_per_project` because
+  soft-deleted rows keep their names: five inactive "Search MCP Test Flow v2"
+  copies in one project and an inactive "GitHub" beside the live one. Fixed by
+  renaming the inactive duplicates `name_deleted_<8-char id>` — the same scheme
+  `delete_persona()` uses to free a name.
+
+**Decision needed:** whether 0009/0010 should do this themselves (skip or
+mangle soft-deleted rows, drop project-less inactive rows) so a self-hoster's
+upgrade does not stop with a traceback, and whether `delete_mcp_server_standalone`
+should mangle the name on soft delete like `delete_persona` does.
+
