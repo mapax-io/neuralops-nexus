@@ -159,6 +159,21 @@ describe("CreatePersonaDialog — project clarity", () => {
   });
 });
 
+describe("CreatePersonaDialog — name is mandatory", () => {
+  it("keeps Create persona disabled until a name is typed", async () => {
+    renderTab();
+    const dialog = await openCreate();
+    const create = within(dialog).getByRole("button", { name: /create persona/i });
+    expect(create).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "   " } });
+    expect(create).toBeDisabled(); // whitespace is not a name
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Layla" } });
+    expect(create).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "" } });
+    expect(create).toBeDisabled();
+  });
+});
+
 describe("CreatePersonaDialog — composition", () => {
   it("posts model, advisor, tool servers and generation settings in the server's shape", async () => {
     renderTab();
@@ -362,6 +377,15 @@ describe("EditPersonaDialog — {PERSONA_NAME} in an existing role", () => {
 describe("EditPersonaDialog — mutable backing", () => {
   beforeEach(() => {
     personas = [LAYLA];
+  });
+
+  it("disables Save changes while the name is cleared", async () => {
+    renderTab();
+    const dialog = await openEdit("Layla");
+    const save = within(dialog).getByRole("button", { name: /save changes/i });
+    expect(save).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "" } });
+    expect(save).toBeDisabled();
   });
 
   it("pre-fills the composition and sends only what changed", async () => {

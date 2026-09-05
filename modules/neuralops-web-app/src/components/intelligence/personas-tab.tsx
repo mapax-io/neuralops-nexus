@@ -501,7 +501,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="pe-form" size="sm" variant="primary" loading={create.isPending || setProject.isPending}>Create persona</Button>
+          {/* The name is the @mention handle — nothing to create without it. */}
+          <Button type="submit" form="pe-form" size="sm" variant="primary" disabled={!name.trim()} loading={create.isPending || setProject.isPending}>Create persona</Button>
         </div>
       }
     >
@@ -755,7 +756,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="pd-form" size="sm" variant="primary" loading={patch.isPending || setProject.isPending}>Save changes</Button>
+          <Button type="submit" form="pd-form" size="sm" variant="primary" disabled={!name.trim()} loading={patch.isPending || setProject.isPending}>Save changes</Button>
         </div>
       }
     >
