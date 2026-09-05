@@ -165,17 +165,6 @@ changes behavior, not just style:
 
 ---
 
-## neuralops-web-app: intelligence EDIT dialogs lack attach & use
-
-**Where:** `modules/neuralops-web-app` — `agents-tab.tsx` EditAgentDialog,
-`personas-tab.tsx` EditPersonaDialog.
-
-The 2026-09 create-flow rework gave the CREATE dialogs a ModelPicker with an
-"attach & use" group and inline register/add dialogs. The edit dialogs still
-use plain project-filtered selects: swapping an agent's model is limited to
-models already attached to its project, with no inline attach or register.
-Same treatment as create would close the gap.
-
 ## neuralops-web-app: Escape during an in-flight create still completes it
 
 **Where:** `modules/neuralops-web-app` — all intelligence create dialogs.
@@ -185,3 +174,40 @@ the window with the attach-first step): once submit fires, closing the dialog
 does not abort the mutation — the entity is still created and toasts. If
 cancel-on-close is ever wanted, it needs AbortSignal plumbing through the
 mutations; today the toast at least announces the outcome.
+
+## Backend docs still describe AIAgent / AIModel after PR #99
+
+**Where:** `docs/CONCEPTS-AND-ROLES.md` (the "Agent — AIAgent" section, the
+`ai_model.*` / `agent.*` rights tables, `visible_agents`), `docs/ARCHITECTURE.md`
+(`AIModel`, LiteLLM `provider/model` ids, "attach it to an agent"), and the
+`readme.md` feature list.
+
+PR #99 collapsed `AIAgent` into `Persona` (one model + optional advisor + 0..5
+MCP servers), renamed `AIModel` → `ModelConfig` (`/model-configs/`, bare
+`model_id` + `provider`, `qualified_id` in pydantic-ai `provider:model` form),
+renamed the rights to `model_config.*` (plus a new `model_config.update`), and
+deleted `agent.*`. None of those docs were updated in the PR. DECISIONS.md §18
+was rewritten with the web-app follow-up; the rest is the backend's to fix.
+
+**Decision needed:** whether the backend maintainer updates them in one pass or
+the sections get a "superseded by PR #99" banner until then.
+
+---
+
+## `NEURALOPS_VERSION` not bumped for the PR #99 API break
+
+**Where:** `neuralops/Dockerfile` (`NEURALOPS_VERSION="0.1.2"`), consumed by the
+web-app's `COMPATIBLE_SERVER_VERSION` drift check in `src/lib/version.ts`.
+
+PR #99 is a breaking API change for clients (`/ai-models/` → `/model-configs/`,
+`/agents/` gone, persona payloads reshaped), but the image version stayed 0.1.2
+(the dev profile reports `dev`, which the check ignores). The web-app was
+adapted to the new contract and its `COMPATIBLE_SERVER_VERSION` deliberately
+left at 0.1.2: bumping it alone would flag every 0.1.2 production server as
+"breaking" even though 0.1.2 images built from the current `dev` DO speak the
+new contract. When the image version is bumped (0.2.0 would be right under the
+"MINOR drift is breaking while MAJOR is 0" rule), move the frontend constant in
+the same change.
+
+**Decision needed:** release owner's call — when and to what.
+

@@ -285,20 +285,38 @@ The frontend renders them as a centered separator line (not a chat bubble).
 
 ## 18. Persona Edit — PATCH Support
 
-**What can be patched:** `name`, `description`, `prompt.system_prompt`, `prompt.output_type`.
-The agent/model backing the persona cannot be changed after creation — delete and recreate if needed.
+**A persona is a composition** (since PR #99 removed `AIAgent`): exactly one `ModelConfig` (`model`),
+an optional second `ModelConfig` (`advisor_model` — a second opinion the primary can ask for), and
+0..5 `MCPServer`s (`mcp_servers`), plus per-persona generation settings (`temperature`, `max_tokens`,
+`max_steps`). "Agent-ness" is emergent: a persona with tool servers acts, one without just answers.
+
+**What can be patched:** everything above plus `name`, `description`, `prompt.system_prompt`,
+`prompt.output_type`. **The backing is mutable** — the earlier rule ("cannot be changed after creation —
+delete and recreate") died with `AIAgent`. Two PATCH conventions, because handlers apply
+`dict(exclude_none=True)`: `clear_advisor: true` is the ONLY way to remove the advisor (a null means
+"not sent"), and `mcp_server_ids: []` is a real value that detaches every server.
+
+**Server-side wiring rules** (`_validate_persona_wiring()` in `intelligence/services.py`, 400 on
+violation): the model and advisor must be attached to the persona's project; the advisor must differ
+from the model; tool servers must belong to the same project, number at most
+`MAX_MCP_SERVERS_PER_PERSONA` (5), and require a model with `supports_tools`. A PATCH re-validates the
+existing servers against a newly chosen model.
 
 **Backend:** `PATCH /api/v1/personas/{id}/` → `PersonaPatchIn` schema → `patch_persona()` in `intelligence/services.py`.
 
-**Frontend:** Pencil (✏️) button on each persona row in **AI Intelligence → Personas** tab.
-Opens a pre-filled edit dialog. Changes take effect immediately (no restart needed).
+**Frontend (`neuralops-web-app`):** Pencil button on each persona card in **Intelligence → Personas**.
+The edit dialog carries the same composition controls as create — model and advisor pickers (with
+attach & use for models not yet attached to the project), the tool-server checklist, generation
+settings — and mirrors the wiring rules client-side (advisor excluded from the primary's id and cleared
+if the primary takes it; unchecked servers disabled at five; a non-tool model unticks and disables the
+servers). Only changed fields are sent. Changes take effect on the next @mention.
 
 **Files:**
 - `intelligence/api.py` → `patch_persona()` endpoint
 - `intelligence/schema.py` → `PersonaPatchIn`
-- `intelligence/services.py` → `patch_persona()`
-- `neuralops-react-app/src/services/personas.service.ts` → `patchPersona()`
-- `neuralops-react-app/src/routes/app.agents.tsx` → `PersonasTab` edit dialog
+- `intelligence/services.py` → `patch_persona()`, `_validate_persona_wiring()`
+- `neuralops-web-app/src/lib/api/intelligence.ts` → `PersonaPatch`, `patchPersona()`
+- `neuralops-web-app/src/components/intelligence/personas-tab.tsx` → `EditPersonaDialog`
 
 ---
 
