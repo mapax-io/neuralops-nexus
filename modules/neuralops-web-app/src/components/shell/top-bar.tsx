@@ -34,18 +34,23 @@ export function TopBar({ onAbout }: { onAbout: () => void }) {
 
   return (
     <div className="flex h-12 flex-none items-center gap-1 border-b border-line bg-bg2 px-3">
-      {/* The app mark IS the home button. */}
+      {/* The app mark + workspace name ARE the home button. Names up to the
+          50ch render cap show IN FULL; only beyond it (or when the bar runs
+          out of room) does the name clip — never the layout. Below lg it
+          hides here and the nav drawer's header shows it instead (wrapping,
+          uncapped) — the two visibilities are exact complements. */}
       <button
-        aria-label="Workspace"
+        aria-label={companyName ?? "Workspace"}
         title={companyName ?? "Workspace"}
         onClick={() => {
           // Always land back on the workspace where you left off — never clear
           // the open chat (that footgun dumped users on the empty home).
           if (!onWorkspace) router.push("/w");
         }}
-        className="mr-1 flex size-8 flex-none items-center justify-center rounded-lg transition-colors hover:bg-surface"
+        className="mr-1 flex h-8 min-w-0 shrink items-center gap-2 rounded-lg px-1 transition-colors hover:bg-surface"
       >
-        <NexusMark className="size-7" />
+        <NexusMark className="size-7 flex-none" />
+        <span className="hidden max-w-[50ch] min-w-0 truncate font-display text-[14px] font-bold lg:block">{companyName ?? "Workspace"}</span>
       </button>
       <span aria-hidden className="mx-1.5 hidden h-5 w-px bg-line sm:block" />
       {/* Intelligence quick-launch — straight to the section, lit when there. */}
