@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArrowLeftRight, Bot, Cpu, Info, Plug2, Search, UserRound, Users } from "lucide-react";
+import { ArrowLeftRight, Bot, Cpu, Info, Menu, Plug2, Search, UserRound, Users } from "lucide-react";
 import { NexusMark } from "@/components/brand/wordmark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ProfileButton } from "@/components/shell/profile-button";
@@ -52,6 +53,8 @@ export function TopBar({ onAbout }: { onAbout: () => void }) {
         <NexusMark className="size-7 flex-none" />
         <span className="hidden max-w-[50ch] min-w-0 truncate font-display text-[14px] font-bold lg:block">{companyName ?? "Workspace"}</span>
       </button>
+      {/* Phones collapse the quick-launch row into this hamburger. */}
+      <MobileNavMenu onAbout={onAbout} intel={intel} goMembers={() => router.push("/members")} />
       <span aria-hidden className="mx-1.5 hidden h-5 w-px bg-line sm:block" />
       {/* Intelligence quick-launch — straight to the section, lit when there. */}
       <div className="hidden items-center gap-1 sm:flex">
@@ -77,9 +80,12 @@ export function TopBar({ onAbout }: { onAbout: () => void }) {
 
       <div className="flex items-center gap-1">
         <ThemeToggle />
-        <BarButton label="About NeuralOps Nexus" onClick={onAbout}>
-          <Info size={17} strokeWidth={1.9} />
-        </BarButton>
+        {/* Phones reach About through the hamburger — the bar space goes to it. */}
+        <div className="hidden sm:contents">
+          <BarButton label="About NeuralOps Nexus" onClick={onAbout}>
+            <Info size={17} strokeWidth={1.9} />
+          </BarButton>
+        </div>
         <BarButton
           label="Switch server"
           onClick={() => {
@@ -93,6 +99,105 @@ export function TopBar({ onAbout }: { onAbout: () => void }) {
         <span aria-hidden className="mx-1 hidden h-5 w-px bg-line sm:block" />
         <ProfileButton size={8} />
       </div>
+    </div>
+  );
+}
+
+// Phone-only (<sm) hamburger holding the nav destinations the bar has no room
+// for, plus About (whose bar icon yields its spot on phones). Same menu
+// conventions as ProfileButton: focus first item on open (transition only),
+// outside-click/Escape close, arrow cycling, Tab lets focus leave.
+function MobileNavMenu({ onAbout, intel, goMembers }: {
+  onAbout: () => void;
+  intel: (section: string) => void;
+  goMembers: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    // Capture + preventDefault joins the designed Escape chain — listeners
+    // behind this overlay (thread, search) skip defaultPrevented events.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+        btnRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Tab") return setOpen(false); // let focus leave naturally
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    const next = e.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+    items[next]?.focus();
+  };
+
+  const pick = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+  const item = "flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-ink transition-colors hover:bg-surface2 focus:bg-surface2 focus:outline-none";
+  const icon = "flex-none text-ink2";
+
+  return (
+    <div ref={wrapRef} className="relative sm:hidden">
+      <button
+        ref={btnRef}
+        aria-label="Navigation menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-ink2 transition-colors hover:bg-surface hover:text-ink"
+      >
+        <Menu size={17} strokeWidth={1.9} />
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Navigation"
+          onKeyDown={onMenuKeyDown}
+          className="absolute left-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-lg"
+        >
+          <button role="menuitem" className={item} onClick={pick(() => intel("personas"))}>
+            <UserRound size={15} strokeWidth={2} className={icon} /> Personas
+          </button>
+          <button role="menuitem" className={item} onClick={pick(() => intel("models"))}>
+            <Cpu size={15} strokeWidth={2} className={icon} /> AI models
+          </button>
+          <button role="menuitem" className={item} onClick={pick(() => intel("mcp"))}>
+            <Plug2 size={15} strokeWidth={2} className={icon} /> MCP servers
+          </button>
+          <button role="menuitem" className={item} onClick={pick(() => intel("agents"))}>
+            <Bot size={15} strokeWidth={2} className={icon} /> Agents
+          </button>
+          <button role="menuitem" className={item} onClick={pick(goMembers)}>
+            <Users size={15} strokeWidth={2} className={icon} /> Members
+          </button>
+          <div aria-hidden className="my-1 border-t border-line" />
+          <button role="menuitem" className={item} onClick={pick(onAbout)}>
+            <Info size={15} strokeWidth={2} className={icon} /> About NeuralOps Nexus
+          </button>
+        </div>
+      )}
     </div>
   );
 }
