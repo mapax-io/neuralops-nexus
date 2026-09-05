@@ -170,14 +170,31 @@ describe("ModelsTab — required fields are marked", () => {
 });
 
 describe("ModelsTab — edit", () => {
-  it("keeps provider and model id read-only and patches only what changed, rotating the key when given", async () => {
+  it("lets provider and model id change — warning that every persona follows — and refuses a prefixed id", async () => {
     renderTab();
     await screen.findByText("House model");
     fireEvent.click(screen.getByRole("button", { name: "Edit model House model" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).queryByLabelText("Provider")).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Model id")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("anthropic:claude-sonnet-5")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Provider", { exact: true })).toHaveValue("anthropic");
+    expect(within(dialog).getByLabelText("Model id")).toHaveValue("claude-sonnet-5");
+    expect(within(dialog).getByText(/every persona on this model follows/i)).toBeInTheDocument();
+    const id = within(dialog).getByLabelText("Model id");
+    fireEvent.change(id, { target: { value: "anthropic/claude-opus-5" } });
+    fireEvent.blur(id);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/bare model name/i);
+    fireEvent.change(id, { target: { value: "claude-opus-5" } });
+    fireEvent.change(within(dialog).getByLabelText("Provider", { exact: true }), { target: { value: "openai_compatible" } });
+    fireEvent.change(within(dialog).getByLabelText(/api base/i), { target: { value: "https://proxy.example.com/v1" } });
+    fireEvent.submit(document.getElementById("me-form")!);
+    await waitFor(() => expect(patched).not.toBeNull());
+    expect(patched).toEqual({ provider: "openai_compatible", model_id: "claude-opus-5", api_base: "https://proxy.example.com/v1" });
+  });
+
+  it("patches only what changed, rotating the key when given", async () => {
+    renderTab();
+    await screen.findByText("House model");
+    fireEvent.click(screen.getByRole("button", { name: "Edit model House model" }));
+    const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "House model v2" } });
     fireEvent.change(within(dialog).getByLabelText("Context window"), { target: { value: "100000" } });
     fireEvent.change(within(dialog).getByLabelText(/new api key/i), { target: { value: "sk-rotated" } });

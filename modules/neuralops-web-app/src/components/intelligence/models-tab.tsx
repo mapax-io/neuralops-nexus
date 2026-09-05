@@ -417,12 +417,15 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   );
 }
 
-// Everything but the identity: rotating the key used to mean delete-and-recreate,
-// which the delete guard refuses while a persona uses the model. Provider and
-// model id stay read-only — changing them would repoint every persona at a
-// different model.
+// Everything, identity included: rotating the key used to mean
+// delete-and-recreate, which the delete guard refuses while a persona uses the
+// model. Provider and model id are editable too — every persona on the config
+// follows to the new model on save, which the dialog says out loud.
 function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onClose: () => void; siblings: ModelConfig[] }) {
   const [name, setName] = useState(model.name);
+  const [provider, setProvider] = useState<string>(model.provider);
+  const [modelId, setModelId] = useState(model.model_id);
+  const [idErr, setIdErr] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState(model.api_base ?? "");
   const [description, setDescription] = useState(model.description ?? "");
@@ -436,10 +439,11 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
   const [baseErr, setBaseErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
   const patch = usePatchModelConfig(onClose);
-  const prov = providerOf(model.provider);
+  const prov = providerOf(provider);
   // A native provider can still be proxied through api_base — keep it editable
   // whenever the provider allows one or a value is already set.
   const showsBase = (prov?.base ?? "optional") !== "none" || !!model.api_base;
+  const identityChanged = provider !== model.provider || modelId.trim() !== model.model_id;
 
   const validateName = (v: string) => vName(v, { label: "model name", existing: siblings.map((m) => m.name), current: model.name });
   const validateBase = (v: string) => vUrl(v, { label: "the API base URL", required: prov?.base === "required" });
@@ -449,15 +453,19 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
     setErr(null);
     setTouched(true);
     const ne = validateName(name);
+    const ie = validateModelId(modelId);
     const be = showsBase ? validateBase(apiBase) : null;
     setNameErr(ne);
+    setIdErr(ie);
     setBaseErr(be);
-    if (ne || be) return;
+    if (ne || ie || be) return;
     const ce = validateContext(contextWindow);
     if (ce) return setErr(ce);
     // Only what changed; a blank key field means "keep the current key".
     const payload: ModelConfigPatch = {
       ...(name.trim() !== model.name ? { name: name.trim() } : {}),
+      ...(provider !== model.provider ? { provider } : {}),
+      ...(modelId.trim() !== model.model_id ? { model_id: modelId.trim() } : {}),
       ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       ...(showsBase && apiBase.trim() !== (model.api_base ?? "") ? { api_base: apiBase.trim() } : {}),
       ...(description.trim() !== (model.description ?? "") ? { description: description.trim() } : {}),
@@ -474,7 +482,7 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
       onClose={onClose}
       size="lg"
       title={`Edit ${model.name}`}
-      description="Changes apply to the next call. To move to a different model, register it and repoint the personas — the model id is fixed."
+      description="Changes apply to the next call — including a swapped provider or model id."
       icon={<Pencil size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
@@ -506,14 +514,49 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
           />
           <FieldError>{nameErr}</FieldError>
         </div>
-        <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-          <p className="text-[12px] text-ink2">Provider · model id <span className="text-ink2/70">(fixed)</span></p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2">
-            <span className="font-medium">{providerLabel(model.provider)}</span>
-            <code className="font-mono text-[12.5px] text-ink2">{model.qualified_id}</code>
-          </p>
-          <p className="mt-1 text-[11.5px] text-ink2/80">The server keeps these fixed: changing them would silently repoint every persona on this model. Register a new model to switch.</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="me-provider" required>Provider</Label>
+            <select
+              id="me-provider"
+              required
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+            >
+              {PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+              {!providerOf(model.provider) && <option value={model.provider}>{model.provider}</option>}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="me-id" required>Model id</Label>
+            <Input
+              id="me-id"
+              required
+              value={modelId}
+              aria-invalid={!!idErr}
+              onChange={(e) => {
+                setModelId(e.target.value);
+                if (touched) setIdErr(validateModelId(e.target.value));
+              }}
+              onBlur={() => {
+                setTouched(true);
+                setIdErr(validateModelId(modelId));
+              }}
+              className="font-mono"
+            />
+            <FieldError>{idErr}</FieldError>
+          </div>
         </div>
+        {/* Repointing is the point of editing these — but it is silent for the
+            personas involved, so say it before the save, not after. */}
+        <p className={`rounded-[10px] border px-3 py-2 text-[12px] ${identityChanged ? "border-warn/40 bg-warn/10 text-warn" : "border-line bg-surface2/60 text-ink2"}`}>
+          {identityChanged
+            ? `Every persona on this model follows to ${provider}:${modelId.trim() || "…"} the moment you save.`
+            : "Every persona on this model follows a changed provider or model id the moment you save."}
+        </p>
         <div>
           <Label htmlFor="me-key">New API key <span className="text-ink2">(optional)</span></Label>
           <Input id="me-key" type="password" autoComplete="off" placeholder={model.has_api_key ? "Leave blank to keep the current key" : "No key stored yet"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />

@@ -56,10 +56,13 @@ export interface ModelConfigCreate {
 export const createModelConfig = (payload: ModelConfigCreate) =>
   apiJson<ModelConfig>(`/api/v1/model-configs/`, { method: "POST", body: JSON.stringify(payload) });
 
-// provider and model_id are deliberately absent: changing either would silently
-// repoint every persona built on the config. Delete and recreate instead.
+// provider and model_id are patchable: every persona built on the config
+// follows to the new model on save (the dialog warns first). Same guards as
+// create server-side: a known provider, a bare model id.
 export interface ModelConfigPatch {
   name?: string;
+  provider?: string;
+  model_id?: string;
   api_key?: string; // write-only — re-encrypted on set, never returned
   api_base?: string;
   description?: string;
