@@ -105,7 +105,8 @@ beforeEach(() => {
     }),
     http.get(`${BASE}/api/v1/mcp-servers/`, () => HttpResponse.json(servers)),
     http.get(`${BASE}/api/v1/output-types/`, () => HttpResponse.json([{ name: "text", label: "Text", icon: "", render_as: "text" }, { name: "chart", label: "Chart", icon: "", render_as: "html" }])),
-    http.get(`${BASE}/api/v1/prompt-templates`, () => HttpResponse.json({ prompts: {} })),
+    http.get(`${BASE}/api/v1/prompt-templates`, () => HttpResponse.json({ prompts: { t1: "featured/Git_Master.md" } })),
+    http.get(`${BASE}/api/v1/prompt-templates/t1`, () => HttpResponse.json({ content: "---\npersona_name: {PERSONA_NAME}\n---\nYou are {PERSONA_NAME}, the git expert." })),
     http.post(`${BASE}/api/v1/projects/:pid/model-configs/:mid/attach/`, ({ params }) => {
       attached.push(`${params.pid}:${params.mid}`);
       return HttpResponse.json({ ok: true });
@@ -298,6 +299,63 @@ describe("CreatePersonaDialog — composition", () => {
     fireEvent.submit(document.getElementById("mcp-form")!);
     await waitFor(() => expect(screen.queryByRole("heading", { name: /add an mcp tool server/i })).not.toBeInTheDocument());
     await waitFor(() => expect(toolBox(dialog, "Ledger").checked).toBe(true));
+  });
+});
+
+describe("CreatePersonaDialog — {PERSONA_NAME} in templates", () => {
+  it("fills the token with the typed name, live, whichever comes first", async () => {
+    renderTab();
+    const dialog = await openCreate();
+    const role = within(dialog).getByLabelText("Role") as HTMLTextAreaElement;
+    // Template first, name still blank → the token stays visible, with a hint.
+    fireEvent.change(within(dialog).getByLabelText(/start from a template/i), { target: { value: "t1" } });
+    await waitFor(() => expect(role.value).toContain("persona_name: {PERSONA_NAME}"));
+    expect(within(dialog).getByText(/fills in with the name above/i)).toBeInTheDocument();
+    // Typing the name replaces every token in what's shown.
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Layla" } });
+    expect(role.value).toBe("---\npersona_name: Layla\n---\nYou are Layla, the git expert.");
+    // And keeps following the name until the role text is edited by hand.
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Lyla" } });
+    expect(role.value).toContain("You are Lyla, the git expert.");
+    fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });
+    fireEvent.submit(document.getElementById("pe-form")!);
+    await waitFor(() => expect(personaBody).not.toBeNull());
+    expect(personaBody).toMatchObject({ name: "Lyla", prompt: { system_prompt: "---\npersona_name: Lyla\n---\nYou are Lyla, the git expert." } });
+  });
+
+  it("saves the name into a role written with the token by hand", async () => {
+    renderTab();
+    const dialog = await openCreate();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Layla" } });
+    fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });
+    fireEvent.change(within(dialog).getByLabelText("Role"), { target: { value: "You are {PERSONA_NAME}." } });
+    fireEvent.submit(document.getElementById("pe-form")!);
+    await waitFor(() => expect(personaBody).not.toBeNull());
+    expect(personaBody).toMatchObject({ prompt: { system_prompt: "You are Layla." } });
+  });
+});
+
+describe("EditPersonaDialog — {PERSONA_NAME} in an existing role", () => {
+  it("shows the token filled with the persona's name and saves it filled when the role changes", async () => {
+    personas = [{ ...LAYLA, prompt: { system_prompt: "You are {PERSONA_NAME}.", output_type: "text" } }];
+    renderTab();
+    const dialog = await openEdit("Layla");
+    const role = within(dialog).getByLabelText("Role") as HTMLTextAreaElement;
+    expect(role.value).toBe("You are Layla.");
+    fireEvent.submit(document.getElementById("pd-form")!);
+    // Nothing typed → nothing sent; the stored role is left exactly as it was.
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(patchBody).toBeNull();
+  });
+
+  it("sends the filled role once it is edited", async () => {
+    personas = [{ ...LAYLA, prompt: { system_prompt: "You are {PERSONA_NAME}.", output_type: "text" } }];
+    renderTab();
+    const dialog = await openEdit("Layla");
+    fireEvent.change(within(dialog).getByLabelText("Role"), { target: { value: "You are Layla. Be brief." } });
+    fireEvent.submit(document.getElementById("pd-form")!);
+    await waitFor(() => expect(patchBody).not.toBeNull());
+    expect(patchBody).toEqual({ prompt: { system_prompt: "You are Layla. Be brief.", output_type: "text" } });
   });
 });
 

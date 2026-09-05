@@ -10,6 +10,7 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { absolutizeMedia } from "@/lib/api/client";
 import { isMentionableName } from "@/lib/composer/directives";
 import { validateNumber } from "@/lib/validation";
+import { fillPersonaName, hasPersonaNameToken } from "@/lib/persona-template";
 import {
   useCreatePersona,
   useDeletePersona,
@@ -139,7 +140,7 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
                     {needsReconnect && <Chip tone="warn">reconnect needed</Chip>}
                   </>
                 }
-                body={p.description ?? p.prompt?.system_prompt}
+                body={p.description ?? (p.prompt ? fillPersonaName(p.prompt.system_prompt, p.name) : undefined)}
                 meta={
                   <>
                     <span>answers as {p.prompt?.output_type ?? "text"}</span>
@@ -484,7 +485,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       temperature: Number(temp),
       max_tokens: Number(tokens),
       max_steps: Number(steps),
-      prompt: { system_prompt: systemPrompt.trim(), output_type: outputType },
+      prompt: { system_prompt: fillPersonaName(systemPrompt, n).trim(), output_type: outputType },
     });
   };
 
@@ -589,14 +590,20 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
         )}
         <div>
           <Label htmlFor="pe-role">Role</Label>
+          {/* The field shows {PERSONA_NAME} filled with the name typed above,
+              live; the raw text (token included) stays in state until the
+              user edits the role by hand, so a later rename still follows. */}
           <textarea
             id="pe-role"
             rows={4}
-            value={systemPrompt}
+            value={fillPersonaName(systemPrompt, name)}
             onChange={(e) => setSystemPrompt(e.target.value)}
             placeholder="You are the project's data analyst. Answer with concrete numbers, cite the source table, and prefer charts for trends."
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
+          {hasPersonaNameToken(systemPrompt) && !name.trim() && (
+            <p className="mt-1.5 text-[12px] text-ink2">{"{PERSONA_NAME} fills in with the name above."}</p>
+          )}
         </div>
         <div>
           <Label htmlFor="pe-output">Default answer format</Label>
@@ -718,7 +725,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
       ...(Number(temp) !== persona.temperature ? { temperature: Number(temp) } : {}),
       ...(Number(tokens) !== persona.max_tokens ? { max_tokens: Number(tokens) } : {}),
       ...(Number(steps) !== persona.max_steps ? { max_steps: Number(steps) } : {}),
-      ...(promptChanged ? { prompt: { system_prompt: systemPrompt.trim(), output_type: outputType } } : {}),
+      ...(promptChanged ? { prompt: { system_prompt: fillPersonaName(systemPrompt, n).trim(), output_type: outputType } } : {}),
     };
     if (Object.keys(payload).length === 0) return onClose(); // nothing changed
     // Attach & use for a swapped-in model from another project — same rule as
@@ -809,10 +816,12 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
         />
         <div>
           <Label htmlFor="pd-role">Role</Label>
+          {/* A role saved with {PERSONA_NAME} still in it shows filled; it is
+              only rewritten on the server once the text is edited here. */}
           <textarea
             id="pd-role"
             rows={5}
-            value={systemPrompt}
+            value={fillPersonaName(systemPrompt, name)}
             onChange={(e) => setSystemPrompt(e.target.value)}
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
