@@ -149,8 +149,18 @@ export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedde
   );
 }
 
-function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CreateModelDialog({ open, onClose, attachProjectId, attachProjectName, onCreated }: {
+  open: boolean;
+  onClose: () => void;
+  // Launched inline from a project-scoped flow (persona/agent builder): the
+  // new model is attached to that project right after registration and handed
+  // back through onCreated so the host can select it — no tab-hopping.
+  attachProjectId?: string;
+  attachProjectName?: string;
+  onCreated?: (m: AIModel) => void;
+}) {
   const { data: models } = useModels();
+  const setProject = useSetModelProject();
   const [name, setName] = useState("");
   const [provider, setProvider] = useState("anthropic");
   const [modelId, setModelId] = useState("");
@@ -190,7 +200,16 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
     reset();
     onClose();
   };
-  const create = useCreateModel(close);
+  const create = useCreateModel((m) => {
+    const done = () => {
+      onCreated?.(m);
+      close();
+    };
+    // Attach failure still hands the model back — it registered fine, and the
+    // host's picker offers it under attach & use, so the flow recovers in place.
+    if (attachProjectId) setProject.mutate({ projectId: attachProjectId, modelId: m.id, attach: true }, { onSettled: done });
+    else done();
+  });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -224,13 +243,13 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
       open={open}
       onClose={close}
       size="lg"
-      title="Register an AI model"
-      description="Bring your own key. It's encrypted at rest, used only to run your personas, and never shown or returned again."
+      title={`Register an AI model${attachProjectName ? ` — ${attachProjectName}` : ""}`}
+      description={`Bring your own key. It's encrypted at rest, used only to run your personas, and never shown or returned again.${attachProjectName ? ` The model is attached to ${attachProjectName} and ready to pick right away.` : ""}`}
       icon={<KeyRound size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="m-form" size="sm" variant="primary" loading={create.isPending}>Register model</Button>
+          <Button type="submit" form="m-form" size="sm" variant="primary" loading={create.isPending || setProject.isPending}>Register model</Button>
         </div>
       }
     >
