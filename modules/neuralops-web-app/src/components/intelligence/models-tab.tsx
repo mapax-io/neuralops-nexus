@@ -216,6 +216,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   const [modelId, setModelId] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
+  const [description, setDescription] = useState("");
   const [contextWindow, setContextWindow] = useState(String(DEFAULT_CONTEXT_WINDOW));
   // The context window follows the model id until the user types a size of
   // their own — then it is theirs and the id stops overriding it.
@@ -243,6 +244,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
     setModelId("");
     setApiKey("");
     setApiBase("");
+    setDescription("");
     setContextWindow(String(DEFAULT_CONTEXT_WINDOW));
     setCtxTouched(false);
     setCaps({ supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false });
@@ -291,6 +293,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
       // A field hidden by the provider switch must not ride along — a stale
       // api_base typed for a compatible endpoint would misroute a native model.
       api_base: showsBase ? apiBase.trim() || undefined : undefined,
+      description: description.trim() || undefined,
       licence_accepted: true,
       context_window: Number(contextWindow),
       ...caps,
@@ -390,6 +393,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             <FieldError>{baseErr}</FieldError>
           </div>
         )}
+        <div>
+          <Label htmlFor="m-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="m-desc" placeholder="What is this model for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </div>
         <div>
           <Label htmlFor="m-ctx" required>Context window</Label>
           <Input id="m-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => { setContextWindow(e.target.value); setCtxTouched(true); }} className="sm:max-w-[12rem]" />
@@ -505,6 +512,7 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
             <span className="font-medium">{providerLabel(model.provider)}</span>
             <code className="font-mono text-[12.5px] text-ink2">{model.qualified_id}</code>
           </p>
+          <p className="mt-1 text-[11.5px] text-ink2/80">The server keeps these fixed: changing them would silently repoint every persona on this model. Register a new model to switch.</p>
         </div>
         <div>
           <Label htmlFor="me-key">New API key <span className="text-ink2">(optional)</span></Label>

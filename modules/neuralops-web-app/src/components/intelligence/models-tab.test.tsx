@@ -120,6 +120,20 @@ describe("ModelsTab — register", () => {
   });
 });
 
+describe("ModelsTab — register carries the description", () => {
+  it("posts the description when given, and omits it when blank", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Fast" } });
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "claude-haiku-4-5" } });
+    fireEvent.change(within(dialog).getByLabelText("API key"), { target: { value: "sk-x" } });
+    fireEvent.change(within(dialog).getByLabelText(/description/i), { target: { value: "Cheap and quick" } });
+    fireEvent.click(within(dialog).getByLabelText(/accept the model provider/i));
+    fireEvent.submit(document.getElementById("m-form")!);
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ description: "Cheap and quick" });
+  });
+});
 
 describe("ModelsTab — context window follows the model id", () => {
   it("fills the known size for the typed id, resets to the default for an unknown one, and keeps a hand-typed value", async () => {

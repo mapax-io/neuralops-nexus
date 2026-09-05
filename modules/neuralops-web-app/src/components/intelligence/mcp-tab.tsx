@@ -48,6 +48,28 @@ const isStdio = (transport: string) => transport === "stdio";
 const selectClass = "h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]";
 // What identifies a server's connection: its URL, or for STDIO its command.
 const endpointOf = (s: { transport: string; url: string | null; command: string | null }) => (isStdio(s.transport) ? s.command : s.url);
+// Server defaults for a call: 60s per tool call, 3 retries.
+const validateTimeout = (v: string) => validateNumber(v, { label: "the timeout", min: 1, max: 3600, integer: true });
+const validateRetries = (v: string) => validateNumber(v, { label: "the retry count", min: 0, max: 10, integer: true });
+
+function CallSettings({ idPrefix, timeout, retries, onTimeout, onRetries }: {
+  idPrefix: string; timeout: string; retries: string; onTimeout: (v: string) => void; onRetries: (v: string) => void;
+}) {
+  return (
+    <div className="grid max-w-sm grid-cols-2 gap-3">
+      <div>
+        <Label htmlFor={`${idPrefix}-timeout`} required>Timeout (seconds)</Label>
+        <Input id={`${idPrefix}-timeout`} type="number" required min={1} max={3600} step={1} inputMode="numeric" value={timeout} onChange={(e) => onTimeout(e.target.value)} />
+      </div>
+      <div>
+        <Label htmlFor={`${idPrefix}-retries`} required>Max retries</Label>
+        <Input id={`${idPrefix}-retries`} type="number" required min={0} max={10} step={1} inputMode="numeric" value={retries} onChange={(e) => onRetries(e.target.value)} />
+      </div>
+      <p className="col-span-2 -mt-1 text-[12px] text-ink2">Per tool call: how long to wait for the server, and how many times to retry a failed call.</p>
+    </div>
+  );
+}
+
 export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; defaultProjectId?: string } = {}) {
   // mcp_server.* create/update/delete are PROJECT-scope rights.
   const role = useConnectionStore((s) => s.connection?.role);
@@ -223,6 +245,8 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   const [url, setUrl] = useState("");
   const [command, setCommand] = useState("");
   const [description, setDescription] = useState("");
+  const [timeout, setTimeout_] = useState("60");
+  const [retries, setRetries] = useState("3");
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>("none");
   const [oauth, setOauth] = useState<OAuthDraft>(emptyOAuthDraft);
   const [err, setErr] = useState<string | null>(null);
@@ -251,6 +275,8 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     setUrl("");
     setCommand("");
     setDescription("");
+    setTimeout_("60");
+    setRetries("3");
     setAuthType("none");
     setOauth(emptyOAuthDraft());
     setErr(null);
@@ -278,6 +304,8 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     setUrlErr(ue);
     if (!projectId) return setErr("Pick the project this server belongs to.");
     if (ne || ue) return;
+    const ce = validateTimeout(timeout) ?? validateRetries(retries);
+    if (ce) return setErr(ce);
     if (authType === "oauth2") {
       const oe = validateOAuth(oauth, { isEdit: false, hasStoredSecret: false });
       if (oe) return setErr(oe);
@@ -293,6 +321,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       transport, server_type: stdio ? "local" : "remote",
       ...(stdio ? { command: command.trim() } : { url: url.trim() }),
       description: description.trim() || undefined,
+      timeout_seconds: Number(timeout), max_retries: Number(retries),
       auth_type: authType,
       ...(authType === "oauth2" ? draftToPayload(oauth)
         : authType === "static_secrets" && oauth.client_secret.trim() ? { client_secret: oauth.client_secret.trim() }
@@ -404,6 +433,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
           <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
+        <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
         <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
         {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
         <FieldError>{err}</FieldError>
@@ -417,6 +447,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
   const [url, setUrl] = useState(server.url ?? "");
   const [command, setCommand] = useState(server.command ?? "");
   const [description, setDescription] = useState(server.description ?? "");
+  const [timeout, setTimeout_] = useState(String(server.timeout_seconds));
+  const [retries, setRetries] = useState(String(server.max_retries));
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>(server.auth_type);
   const stdio = isStdio(server.transport);
   const [oauth, setOauth] = useState<OAuthDraft>(() => draftFromConfig(server.oauth_config));
@@ -444,6 +476,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
     setNameErr(ne);
     setUrlErr(ue);
     if (ne || ue) return;
+    const ce = validateTimeout(timeout) ?? validateRetries(retries);
+    if (ce) { setAuthErr(ce); return; }
     if (authType === "oauth2") {
       // A client_secret is already stored whenever the server was ALREADY
       // oauth2 (create/edit both require one) — regardless of whether the
@@ -473,6 +507,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       ...(!stdio && url.trim() !== (server.url ?? "") ? { url: url.trim() } : {}),
       ...(stdio && command.trim() !== (server.command ?? "") ? { command: command.trim() } : {}),
       ...(description.trim() !== (server.description ?? "") ? { description: description.trim() } : {}),
+      ...(Number(timeout) !== server.timeout_seconds ? { timeout_seconds: Number(timeout) } : {}),
+      ...(Number(retries) !== server.max_retries ? { max_retries: Number(retries) } : {}),
       ...authPayload,
     };
     if (Object.keys(payload).length === 0) return onClose(); // nothing changed
@@ -567,6 +603,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
         </div>
+        <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
         <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
         <FieldError>{authErr}</FieldError>
       </form>

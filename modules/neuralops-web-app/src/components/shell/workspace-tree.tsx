@@ -380,6 +380,7 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
 }) {
   const { setChannel } = useSelection();
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [nameErr, setNameErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
@@ -395,6 +396,7 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
   };
   const reset = () => {
     setName("");
+    setDescription("");
     setNameErr(null);
     setTouched(false);
   };
@@ -412,7 +414,7 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
     const err = validate(name);
     setNameErr(err);
     if (err) return;
-    create.mutate({ name: toSlug(name) });
+    create.mutate({ name: toSlug(name), description: description.trim() || undefined });
   };
   return (
     <Dialog
@@ -449,6 +451,10 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
             }}
           />
           {nameErr ? <FieldError>{nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Short and lowercase reads best — it becomes #{name.trim().toLowerCase().replace(/\s+/g, "-") || "channel-name"}.</p>}
+        </div>
+        <div>
+          <Label htmlFor="cdesc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="cdesc" placeholder="What belongs in this channel?" value={description} maxLength={500} onChange={(e) => setDescription(e.target.value)} />
         </div>
       </form>
     </Dialog>

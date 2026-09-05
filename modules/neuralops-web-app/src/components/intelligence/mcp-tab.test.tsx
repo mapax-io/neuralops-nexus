@@ -176,6 +176,29 @@ describe("McpTab — single-project ownership (spec §3.3)", () => {
     expect(screen.getByLabelText("Command")).toHaveValue("npx -y server-fs /data");
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
   });
+
+  it("posts the call settings on create and patches only a changed one on edit", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    expect(screen.getByLabelText("Timeout (seconds)")).toHaveValue(60);
+    expect(screen.getByLabelText("Max retries")).toHaveValue(3);
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "120" } });
+    fillCreate({ projectId: "p2", name: "Slow tools", url: "http://slow.internal/mcp" });
+    submitCreate();
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ timeout_seconds: 120, max_retries: 3 });
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    let patched: Record<string, unknown> | null = null;
+    server.use(http.patch(`${SERVERS_URL}:id/`, async ({ request }) => { patched = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ ...S1, ...patched }); }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Warehouse tools" }));
+    await screen.findByText("Edit Warehouse tools");
+    fireEvent.change(screen.getByLabelText("Max retries"), { target: { value: "5" } });
+    fireEvent.submit(document.getElementById("mce-form")!);
+    await waitFor(() => expect(patched).not.toBeNull());
+    expect(patched).toEqual({ max_retries: 5 });
+  });
   it("offers no project control when editing — ownership is not transferable", async () => {
     renderTab();
     await screen.findByText("Warehouse tools");
