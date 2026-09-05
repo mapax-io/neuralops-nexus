@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { ConfirmDialog, Dialog } from "./dialog";
@@ -38,6 +38,46 @@ describe("Dialog", () => {
     );
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("lets Tab move through a STACKED dialog instead of trapping on its first control", async () => {
+    // Regression: with two dialogs open, both focus traps used to fight —
+    // the host yanked focus out of the nested panel on every Tab, so focus
+    // never got past the nested dialog's first focusable (its Close button).
+    const user = userEvent.setup();
+    render(
+      <>
+        <Dialog open onClose={() => {}} title="Host">
+          <input aria-label="Host field" />
+        </Dialog>
+        <Dialog open onClose={() => {}} title="Nested">
+          <input aria-label="First" />
+          <input aria-label="Second" />
+        </Dialog>
+      </>,
+    );
+    screen.getByLabelText("First").focus();
+    await user.tab();
+    expect(screen.getByLabelText("Second")).toHaveFocus();
+    // And the trap still cycles within the nested panel, never into the host.
+    const nested = screen.getByRole("dialog", { name: "Nested" });
+    await user.tab();
+    expect(within(nested).getByRole("button", { name: "Close" })).toHaveFocus();
+  });
+
+  it("Escape closes only the topmost stacked dialog", async () => {
+    const user = userEvent.setup();
+    const closeHost = vi.fn();
+    const closeNested = vi.fn();
+    render(
+      <>
+        <Dialog open onClose={closeHost} title="Host"><p>host</p></Dialog>
+        <Dialog open onClose={closeNested} title="Nested"><p>nested</p></Dialog>
+      </>,
+    );
+    await user.keyboard("{Escape}");
+    expect(closeNested).toHaveBeenCalledTimes(1);
+    expect(closeHost).not.toHaveBeenCalled();
   });
 
   it("renders title, description and icon area", () => {

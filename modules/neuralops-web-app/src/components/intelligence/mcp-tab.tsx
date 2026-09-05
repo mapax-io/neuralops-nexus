@@ -60,7 +60,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
   const [removing, setRemoving] = useState<MCPServer | null>(null);
   const showLoading = useDelayedLoading(isLoading);
   const del = useDeleteMcpServer();
-  const projectName = (id: string | null) => projects?.find((p) => p.id === id)?.name;
+  const projectName = (id: string) => projects?.find((p) => p.id === id)?.name;
 
   return (
     <TabShell
@@ -194,7 +194,14 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
   );
 }
 
-function CreateMcpDialog({ open, onClose, defaultProjectId }: { open: boolean; onClose: () => void; defaultProjectId?: string }) {
+export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: {
+  open: boolean;
+  onClose: () => void;
+  defaultProjectId?: string;
+  // Launched inline from the agent builder: hands the new server back so the
+  // host can select it — no tab-hopping.
+  onCreated?: (s: MCPServer) => void;
+}) {
   const { data: allProjects } = useProjects();
   const { data: servers } = useMcpServers();
   const [projectId, setProjectId] = useState(defaultProjectId ?? "");
@@ -235,7 +242,11 @@ function CreateMcpDialog({ open, onClose, defaultProjectId }: { open: boolean; o
     reset();
     onClose();
   };
-  const create = useCreateMcpServer(close);
+  const create = useCreateMcpServer((s) => {
+    onCreated?.(s);
+    close();
+  });
+  const projName = allProjects?.find((p) => p.id === projectId)?.name;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,7 +283,7 @@ function CreateMcpDialog({ open, onClose, defaultProjectId }: { open: boolean; o
       open={open}
       onClose={close}
       size="2xl"
-      title="Add an MCP tool server"
+      title={`Add an MCP tool server${projName ? ` — ${projName}` : ""}`}
       description="Any server that speaks the Model Context Protocol over HTTP. Agents in the owning project can use its tools."
       icon={<Plug2 size={17} strokeWidth={2} />}
       footer={

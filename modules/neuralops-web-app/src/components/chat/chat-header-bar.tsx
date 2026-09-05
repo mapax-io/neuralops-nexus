@@ -73,7 +73,7 @@ export function ChatHeaderBar({
             title={searchShortcut ? `Search this chat (workspace-wide: ${searchShortcut})` : "Search this chat"}
             aria-pressed={searchOpen}
             onClick={onToggleSearch}
-            className={`flex size-7 items-center justify-center rounded-lg border transition-colors ${searchOpen ? "border-accent/40 bg-accent/10 text-accent" : "border-line bg-surface text-ink2 hover:border-accent hover:text-ink"}`}
+            className={`flex size-7 items-center justify-center rounded-lg transition-colors ${searchOpen ? "bg-accent/10 text-accent" : "text-ink2 hover:bg-surface hover:text-ink"}`}
           >
             <Search size={14} strokeWidth={2} />
           </button>
@@ -84,7 +84,7 @@ export function ChatHeaderBar({
             title={panelCollapsed ? "Show topics" : "Hide topics"}
             aria-pressed={!panelCollapsed}
             onClick={onTogglePanel}
-            className="hidden size-7 items-center justify-center rounded-lg border border-line bg-surface text-ink2 transition-colors hover:border-accent hover:text-ink lg:flex"
+            className="hidden size-7 items-center justify-center rounded-lg text-ink2 transition-colors hover:bg-surface hover:text-ink lg:flex"
           >
             {panelCollapsed ? <PanelRightOpen size={14} strokeWidth={2} /> : <PanelRightClose size={14} strokeWidth={2} />}
           </button>

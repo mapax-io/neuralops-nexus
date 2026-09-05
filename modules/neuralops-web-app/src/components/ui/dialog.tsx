@@ -89,11 +89,12 @@ export function Dialog({ open, onClose, title, description, icon, children, foot
     // Move focus into the dialog — unless an autofocused field already has it.
     if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
+      // Only the TOPMOST open dialog handles keys. For Escape that means a
+      // nested create-dialog closes alone; for Tab it keeps the host's focus
+      // trap from yanking focus out of the nested panel on every keypress
+      // (both traps used to fight — Tab could never leave the first control).
+      if (openDialogStack[openDialogStack.length - 1] !== stackId) return;
       if (e.key === "Escape") {
-        // Only the TOPMOST open dialog reacts — a nested create-dialog
-        // closes alone; the host underneath stays. preventDefault is left
-        // to the layer that actually consumes the key.
-        if (openDialogStack[openDialogStack.length - 1] !== stackId) return;
         e.preventDefault();
         onCloseRef.current();
         return;

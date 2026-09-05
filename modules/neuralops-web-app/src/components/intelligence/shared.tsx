@@ -1,10 +1,12 @@
 "use client";
 
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/field";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useProjects } from "@/hooks/use-workspace";
+import type { AIModel } from "@/lib/api/intelligence";
 
 // Shared chrome for the four intelligence tabs: consistent header, list
 // states, and the project selector used by project-owned resources.
@@ -135,6 +137,64 @@ export function Chip({ children, tone = "neutral" }: { children: React.ReactNode
     warn: "border-warn/30 bg-warn/10 text-warn",
   } as const;
   return <span className={`rounded-full border px-2 py-px text-[10.5px] font-semibold ${tones[tone]}`}>{children}</span>;
+}
+
+// Model picker for project-scoped builders (personas, agents). Never a dead
+// end: models not yet attached to the project are offered under an
+// "attach & use" group (the caller attaches them on submit), and a new model
+// can be registered inline without leaving the flow.
+export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew }: {
+  id: string;
+  projectId: string;
+  models: AIModel[] | undefined;
+  value: string;
+  onChange: (modelId: string) => void;
+  // Opens the stacked CreateModelDialog; omitted when the user lacks the right.
+  onRegisterNew?: () => void;
+}) {
+  // A model without project_ids predates the visibility gate — usable anywhere.
+  const inProject = models?.filter((m) => !m.project_ids || m.project_ids.includes(projectId)) ?? [];
+  const attachable = models?.filter((m) => m.project_ids && !m.project_ids.includes(projectId)) ?? [];
+  const opt = (m: AIModel) => <option key={m.id} value={m.id}>{m.name} ({m.model_id})</option>;
+  return (
+    <div>
+      <Label htmlFor={id}>Model</Label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
+      >
+        <option value="" disabled>Choose a model…</option>
+        {/* Without a chosen project the in/attachable split is meaningless —
+            one flat list; the groups appear once the project is picked. */}
+        {!projectId ? (
+          (models ?? []).map(opt)
+        ) : (
+          <>
+            {inProject.length > 0 && <optgroup label="In this project">{inProject.map(opt)}</optgroup>}
+            {attachable.length > 0 && (
+              <optgroup label="Attach & use — registered, not in this project yet">{attachable.map(opt)}</optgroup>
+            )}
+          </>
+        )}
+      </select>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+        {models?.length === 0 ? (
+          <p className="text-[12px] text-warn">No models registered on this server yet.</p>
+        ) : !projectId ? null : attachable.some((m) => m.id === value) ? (
+          <p className="text-[12px] text-ink2">This model gets attached to the project when you create.</p>
+        ) : attachable.length > 0 ? (
+          <p className="text-[12px] text-ink2">Models from other projects are attached automatically when picked.</p>
+        ) : null}
+        {onRegisterNew && (
+          <button type="button" onClick={onRegisterNew} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
+            <Plus size={12} strokeWidth={2.4} /> Register a new model
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function ProjectSelect({ id, value, onChange, only }: {

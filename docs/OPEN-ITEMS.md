@@ -162,3 +162,26 @@ changes behavior, not just style:
   variants/helpers alongside components (`badge`, `button`, `form`,
   `navigation-menu`, `sidebar`, `toggle`). Standard shadcn layout; fixing
   means splitting files and touching many imports for dev-only HMR benefit.
+
+---
+
+## neuralops-web-app: intelligence EDIT dialogs lack attach & use
+
+**Where:** `modules/neuralops-web-app` — `agents-tab.tsx` EditAgentDialog,
+`personas-tab.tsx` EditPersonaDialog.
+
+The 2026-09 create-flow rework gave the CREATE dialogs a ModelPicker with an
+"attach & use" group and inline register/add dialogs. The edit dialogs still
+use plain project-filtered selects: swapping an agent's model is limited to
+models already attached to its project, with no inline attach or register.
+Same treatment as create would close the gap.
+
+## neuralops-web-app: Escape during an in-flight create still completes it
+
+**Where:** `modules/neuralops-web-app` — all intelligence create dialogs.
+
+Pre-existing semantics (predates the create-flow rework, which only widened
+the window with the attach-first step): once submit fires, closing the dialog
+does not abort the mutation — the entity is still created and toasts. If
+cancel-on-close is ever wanted, it needs AbortSignal plumbing through the
+mutations; today the toast at least announces the outcome.

@@ -66,8 +66,12 @@ export function WorkspaceTree() {
 
   return (
     <aside aria-label="Projects and channels" className="flex w-64 flex-none flex-col border-r border-line bg-rail">
-      <div className="flex h-12 items-center gap-2 border-b border-line px-4">
-        <p className="truncate font-display text-[14px] font-bold">{companyName ?? "Workspace"}</p>
+      {/* Below lg the tree is a drawer and the top bar hides the workspace
+          name — this header titles the drawer. From lg up the name lives in
+          the top bar (after the app mark), so no duplicate here. Wraps, never
+          truncates. */}
+      <div className="flex items-center gap-2 border-b border-line px-4 py-3 lg:hidden">
+        <p className="font-display text-[14px] font-bold break-words">{companyName ?? "Workspace"}</p>
       </div>
       <div className="flex-1 overflow-y-auto p-2.5">
         <div className="mb-1.5 flex items-center px-1.5">
