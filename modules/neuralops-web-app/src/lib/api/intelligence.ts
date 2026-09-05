@@ -116,7 +116,7 @@ export interface MCPServer {
   id: string;
   name: string;
   description: string | null;
-  project_id: string | null;
+  project_id: string; // the ONE owning project — an FK server-side, never transferable
   server_type: string;
   transport: string;
   url: string | null;

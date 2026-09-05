@@ -60,7 +60,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
   const [removing, setRemoving] = useState<MCPServer | null>(null);
   const showLoading = useDelayedLoading(isLoading);
   const del = useDeleteMcpServer();
-  const projectName = (id: string | null) => projects?.find((p) => p.id === id)?.name;
+  const projectName = (id: string) => projects?.find((p) => p.id === id)?.name;
 
   return (
     <TabShell
