@@ -154,6 +154,27 @@ class Command(BaseCommand):
         admin_sees_after_detach = [m.name for m in isvc.list_model_configs(company, project_admin)]
         self.stdout.write(f"  -> project_admin's list_model_configs AFTER detach (expect [] again): {admin_sees_after_detach}")
 
+        # ── 4b. model_config.update -- COMPANY scope; provider/model_id now patchable ──
+        self._section("4b. PATCH -- provider/model_id repoint every persona on the config; guards match create")
+        self._check("owner can model_config.update", PermissionChecker.can(owner, "model_config.update", company=company), True)
+        self._check("project_admin can model_config.update -- EXPECT False (COMPANY scope)",
+                    PermissionChecker.can(project_admin, "model_config.update", company=company), False)
+        before = model.qualified_id
+        patched = isvc.update_model_config(company, str(model.id), {"provider": "anthropic", "model_id": "claude-test-flow"})
+        self._check("qualified_id follows the patched provider + bare id",
+                    patched.qualified_id, "anthropic:claude-test-flow")
+        self.stdout.write(f"  -> qualified_id {before!r} -> {patched.qualified_id!r}")
+        for bad, label in (({"model_id": "openai/gpt-4o"}, "prefixed model_id refused"),
+                           ({"provider": "litellm"}, "unknown provider refused")):
+            try:
+                isvc.update_model_config(company, str(model.id), dict(bad))
+                self._check(label, "accepted", "ValueError")
+            except ValueError as exc:
+                self._check(label, "ValueError", "ValueError")
+                self.stdout.write(f"     ({exc})")
+        # Restore the throwaway config's identity for the delete step / reruns.
+        isvc.update_model_config(company, str(model.id), {"provider": model.provider, "model_id": model.model_id})
+
         # ── 5. model_config.delete -- COMPANY scope ONLY ────────────────────
         self._section("5. DELETE -- model_config.delete (COMPANY scope ONLY)")
         self._check("owner can model_config.delete", PermissionChecker.can(owner, "model_config.delete", company=company), True)

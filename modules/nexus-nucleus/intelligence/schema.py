@@ -41,12 +41,16 @@ class ModelConfigIn(Schema):
 
 class ModelConfigPatchIn(Schema):
     """
-    provider and model_id are deliberately absent: changing either silently
-    repoints every persona using this row at a different model. Delete and
-    recreate instead -- which the delete guard will refuse until nothing
-    references it, which is the point.
+    provider and model_id ARE patchable. Changing either repoints every persona
+    that uses this row at the new model the moment it saves -- that is the
+    intended way to move personas to a successor model without deleting and
+    recreating the config (which the delete guard refuses while personas
+    reference it). The UI warns before saving; the server keeps the same
+    guards as create: a known provider, and a bare model_id with no prefix.
     """
     name: Optional[str] = None
+    provider: Optional[str] = None     # openai | anthropic | google | ollama | openai_compatible
+    model_id: Optional[str] = None     # BARE model name -- no provider prefix, no separator
     api_key: Optional[str] = None      # write-only, re-encrypted on set
     api_base: Optional[str] = None
     description: Optional[str] = None
