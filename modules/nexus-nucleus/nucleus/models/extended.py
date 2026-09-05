@@ -1,5 +1,4 @@
 from django.conf import settings
-from django.core.exceptions import ValidationError
 from django.db import models
 from .base import BaseModel, TenantBaseModel, ProjectBaseModel, TenantOperationModel
 
@@ -88,9 +87,6 @@ class ProjectMember(ProjectBaseModel):
         ]
 
 
-
-
-
 class TopicParticipant(ProjectBaseModel):
     class Role(models.TextChoices):
         OWNER = "owner", "Owner"
@@ -137,6 +133,7 @@ class TopicParticipant(ProjectBaseModel):
 
     def __str__(self):
         return f"{self.user} in {self.topic} ({self.role})"
+
 
 class Upload(TenantBaseModel):
     class Status(models.TextChoices):
@@ -203,64 +200,6 @@ class UploadPart(BaseModel):
                 name="uniq_upload_part_number",
             )
         ]
-
-
-
-class AgentRun(ProjectBaseModel):
-    class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
-        RUNNING = "running", "Running"
-        WAITING_APPROVAL = "waiting_approval", "Waiting Approval"
-        COMPLETED = "completed", "Completed"
-        FAILED = "failed", "Failed"
-        CANCELLED = "cancelled", "Cancelled"
-
-    agent = models.ForeignKey(
-        "nucleus.AIAgent",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="runs",
-    )
-
-    topic = models.ForeignKey(
-        "nucleus.ChatTopic",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="agent_runs",
-    )
-
-    triggered_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="triggered_agent_runs",
-    )
-
-    status = models.CharField(
-        max_length=30,
-        choices=Status.choices,
-        default=Status.PENDING,
-        db_index=True,
-    )
-
-    input_payload = models.JSONField(default=dict, blank=True)
-    output_payload = models.JSONField(default=dict, blank=True)
-
-    error = models.TextField(null=True, blank=True)
-
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "intelligence_agent_run"
-        indexes = [
-            models.Index(fields=["company", "project", "status"]),
-            models.Index(fields=["agent", "created_at"]),
-        ]
-
 
 
 class KnowledgeChunk(BaseModel):
@@ -492,97 +431,6 @@ class UserSession(BaseModel):
         ]
 
 
-class ModelUsageLog(TenantBaseModel):
-    model = models.ForeignKey(
-        "nucleus.AIModel",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="usage_logs",
-    )
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="model_usage_logs",
-    )
-
-    topic = models.ForeignKey(
-        "nucleus.ChatTopic",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="model_usage_logs",
-    )
-
-    prompt_tokens = models.PositiveIntegerField(default=0)
-    completion_tokens = models.PositiveIntegerField(default=0)
-    total_tokens = models.PositiveIntegerField(default=0)
-
-    latency_ms = models.PositiveIntegerField(default=0)
-    cost_usd = models.DecimalField(max_digits=12, decimal_places=6, default=0)
-
-    metadata = models.JSONField(default=dict, blank=True)
-
-    class Meta:
-        db_table = "intelligence_model_usage_log"
-        indexes = [
-            models.Index(fields=["company", "model"]),
-            models.Index(fields=["user", "created_at"]),
-        ]
-
-
-class AgentApproval(ProjectBaseModel):
-    class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
-        APPROVED = "approved", "Approved"
-        REJECTED = "rejected", "Rejected"
-        EXPIRED = "expired", "Expired"
-
-    run = models.ForeignKey(
-        "nucleus.AgentRun",
-        on_delete=models.CASCADE,
-        related_name="approvals",
-    )
-
-    requested_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="requested_agent_approvals",
-    )
-
-    approved_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="approved_agent_approvals",
-    )
-
-    title = models.CharField(max_length=255)
-    reason = models.TextField(blank=True)
-    payload = models.JSONField(default=dict, blank=True)
-
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.PENDING,
-        db_index=True,
-    )
-
-    decided_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "intelligence_agent_approval"
-        indexes = [
-            models.Index(fields=["company", "project", "status"]),
-        ]
-
-
 class SavedSearch(TenantBaseModel):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -626,3 +474,30 @@ class SearchLog(TenantBaseModel):
             models.Index(fields=["company", "search_type"]),
             models.Index(fields=["user", "created_at"]),
         ]
+
+
+# ── REMOVED MODELS ────────────────────────────────────────────────────────────
+#
+# class AgentRun(ProjectBaseModel)        -- dropped in migration 0007
+# class AgentApproval(ProjectBaseModel)   -- dropped in migration 0006
+#
+#   A matched pair from an approval-gated agent-execution design that was
+#   modelled and never built. AgentRun.status carried a "waiting_approval"
+#   member that nothing could set, because the only thing that would have
+#   set it was AgentApproval. Verified unreferenced across every service
+#   layer and mounted API module: no imports, no queries, no schemas, no
+#   endpoints, and no agent_run.* right in authn/permissions/rights.py
+#   (ObjectType had no member for them either). AgentRun.agent also FK'd
+#   into AIAgent, so both had to go before AIAgent could be deleted.
+#
+#   The pieces of that design that lived on AIAgent -- safety_mode and
+#   allow_parallel_tools -- were likewise never read and went with it.
+#   What shipped instead was synchronous SSE streaming with AIRequestLog
+#   as the after-the-fact audit trail.
+#
+# class ModelUsageLog(TenantBaseModel)    -- dropped in migration 0008
+#
+#   Correct FKs to AIModel/User/ChatTopic and a cost_usd Decimal -- clearly
+#   intended as the per-model billing table -- but ZERO writers anywhere in
+#   the codebase. AIRequestLog took the job, recording model_id/provider as
+#   plain strings rather than FKs.

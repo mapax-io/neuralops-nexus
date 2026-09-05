@@ -363,14 +363,14 @@ async def _trigger_personas(
 
     else:
         for persona in personas:
-            source_type = getattr(persona, "source_type", "model")
-            if source_type == "model" and not persona.model:
+            # One gate now, where there used to be two. A persona no longer
+            # has a source_type -- it has exactly one ModelConfig, optionally
+            # an advisor, and zero or more MCP servers, and "has tools" is
+            # just "mcp_servers is non-empty". model is NOT NULL at the
+            # database level, so this can only be falsy if the row it points
+            # at was soft-deleted.
+            if not persona.model_id:
                 logger.info("[chat/api] skipping persona=%s (no model configured)", persona)
-                continue
-            if source_type == "agent" and not (
-                getattr(persona, "agent", None) and persona.agent.model
-            ):
-                logger.info("[chat/api] skipping persona=%s (agent has no model configured)", persona)
                 continue
             asyncio.create_task(
                 chat_svc.trigger_ai_response_async(

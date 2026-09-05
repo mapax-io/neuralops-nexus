@@ -49,8 +49,12 @@ def provision_project_folder_and_mcp(project):
     folder_path = os.path.join(settings.PROJECTS_ROOT, folder_name)
     os.makedirs(folder_path, exist_ok=True)
 
+    # project is a real FK now, not an M2M that application code kept to a
+    # single entry -- so ownership is set at creation and there is no
+    # follow-up .add() to forget.
     server = MCPServer.objects.create(
         company=project.company,
+        project=project,
         name=f"{project.name} Files",
         server_type=MCPServer.ServerType.LOCAL,
         transport=MCPServer.Transport.STDIO,
@@ -59,7 +63,6 @@ def provision_project_folder_and_mcp(project):
         is_default=True,
         config={"root_path": folder_path},
     )
-    server.projects.add(project)
     return server
 
 def create_project(company, user, name: str, description: str = None):
@@ -473,11 +476,16 @@ def invite_to_project(
     # ── Persona invite ────────────────────────────────────────────────────────
     if persona_name:
         name = persona_name.lstrip("@").strip()
+        # Scoped to THIS project, not the whole company. Looking up by company
+        # let you add a persona owned by project A to project B's member list:
+        # the sidebar showed them on the team, but get_persona_by_mention()
+        # filters by project, returned None, and the @mention silently did
+        # nothing. Persona.project is the single source of ownership.
         persona = Persona.objects.filter(
-            company=company, name__iexact=name, is_active=True
+            company=company, project=project, name__iexact=name, is_active=True
         ).select_related("identity_user").first()
         if not persona:
-            raise ValueError(f"Persona '@{name}' not found on this server.")
+            raise ValueError(f"Persona '@{name}' not found in this project.")
         member = ProjectMember.objects.filter(
             company=company, project=project, user=persona.identity_user
         ).first()

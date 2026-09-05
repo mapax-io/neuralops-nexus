@@ -56,11 +56,12 @@ class ObjectType(models.TextChoices):
     TOPIC = "topic", "Chat Topic"
     SESSION = "session", "Chat Session"
     PERSONA = "persona", "Persona"
-    AGENT = "agent", "AI Agent"
     MCP_SERVER = "mcp_server", "MCP Server"
-    AI_MODEL = "ai_model", "AI Model"
+    MODEL_CONFIG = "model_config", "Model Config"
     COMPANY = "company", "Company"
     SCHEDULE = "schedule", "Persona Schedule"
+    # REMOVED: AGENT -- AIAgent is gone; Persona absorbed it.
+    # RENAMED:  AI_MODEL -> MODEL_CONFIG, matching the model rename.
 
 
 class Right(models.Model):

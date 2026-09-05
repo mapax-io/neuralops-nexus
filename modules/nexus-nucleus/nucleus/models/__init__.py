@@ -9,7 +9,6 @@ from .base import (
 
 from .account import (
     User,
-    Human,
 )
 
 from .governance import (
@@ -19,9 +18,8 @@ from .governance import (
 
 from .intelligence import (
     CompanyAIConfig,
-    AIModel,
+    ModelConfig,
     MCPServer,
-    AIAgent,
     Persona,
     AIRequestLog,
 )
@@ -58,7 +56,6 @@ from .extended import (
     TopicParticipant,
     Upload,
     UploadPart,
-    AgentRun,
     KnowledgeChunk,
     EmbeddingJob,
     VectorDocument,
@@ -67,8 +64,14 @@ from .extended import (
     AuditEvent,
     Notification,
     UserSession,
-    ModelUsageLog,
-    AgentApproval,
     SavedSearch,
     SearchLog,
 )
+
+# ── REMOVED EXPORTS ───────────────────────────────────────────────────────────
+#   AIModel        -> renamed to ModelConfig (migration 0014)
+#   AIAgent        -> deleted; Persona absorbed it (migration 0018)
+#   Human          -> deleted, never populated (migration 0008)
+#   AgentRun       -> deleted, unreferenced (migration 0007)
+#   AgentApproval  -> deleted, unreferenced (migration 0006)
+#   ModelUsageLog  -> deleted, zero writers (migration 0008)

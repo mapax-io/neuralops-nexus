@@ -174,50 +174,43 @@ def visible_topics(user, channel, include_archived=False):
     return _with_archived(user, qs, ChatTopic, "topic.archive").order_by("created_at")
 
 
-# ── AI resources (Model / Agent / MCP Server) ──────────────────────────────────
-# These three are company-owned (created/deleted only by a company-scope
-# admin -- see intelligence/api.py), but VISIBILITY is project-gated via
-# the `projects` M2M field added to each model (nucleus/models/intelligence.py).
-# A resource with no projects attached is invisible to everyone without the
-# broad company-wide *.list right, including its own creator -- attachment
-# is a separate, explicit step (see intelligence/services.py attach_*).
+# ── AI resources (Model Config / MCP Server) ───────────────────────────────────
+# ModelConfig is company-owned (created/deleted only by a company-scope
+# admin -- see intelligence/api.py) with VISIBILITY project-gated via its
+# `projects` M2M. A config with no projects attached is invisible to
+# everyone without the broad company-wide right, including its own creator
+# -- attachment is a separate, explicit step (model_config.attach).
+#
+# MCPServer is different now: it owns a real `project` FK rather than an
+# M2M, so its narrow path is a plain column filter with no join and no
+# .distinct().
+#
+# visible_agents() is GONE -- AIAgent no longer exists.
 
-def visible_ai_models(user, company):
+def visible_model_configs(user, company):
     """
-    Broad case: 'ai_model.list' company-wide right -> every model in the company.
-    Narrow case: only models attached (via the `projects` M2M) to a project
+    Broad case: 'model_config.list' company-wide right -> every config in the
+    company.
+    Narrow case: only configs attached (via the `projects` M2M) to a project
     this user can reach.
     """
-    from nucleus.models import AIModel
+    from nucleus.models import ModelConfig
 
-    if PermissionChecker.can(user, "ai_model.list", company=company):
-        return AIModel.objects.filter(company=company, is_active=True).order_by("name")
-
-    project_ids = _reachable_project_ids(user)
-    return AIModel.objects.filter(
-        company=company, is_active=True, projects__id__in=project_ids,
-    ).distinct().order_by("name")
-
-
-def visible_agents(user, company):
-    """Same broad/narrow shape as visible_ai_models, for AIAgent."""
-    from nucleus.models import AIAgent
-
-    if PermissionChecker.can(user, "agent.list", company=company):
-        return AIAgent.objects.filter(company=company, is_active=True).order_by("name")
+    if PermissionChecker.can(user, "model_config.list", company=company):
+        return ModelConfig.objects.filter(company=company, is_active=True).order_by("name")
 
     project_ids = _reachable_project_ids(user)
-    return AIAgent.objects.filter(
+    return ModelConfig.objects.filter(
         company=company, is_active=True, projects__id__in=project_ids,
     ).distinct().order_by("name")
 
 
 def visible_mcp_servers(user, company):
     """
-    Same broad/narrow shape as visible_ai_models/visible_agents. MCP servers
-    are project-owned (one project, via the `projects` M2M -- see the NOTE
-    on MCPServer in nucleus/models/intelligence.py), so the narrow path
-    filters to servers whose one project is one this user can reach.
+    Same broad/narrow shape as visible_model_configs, but MCP servers are
+    single-project by FK (see MCPServer in nucleus/models/intelligence.py),
+    so the narrow path filters project_id directly. No M2M join, therefore
+    no duplicate rows and no .distinct() needed.
     """
     from nucleus.models import MCPServer
 
@@ -226,8 +219,8 @@ def visible_mcp_servers(user, company):
 
     project_ids = _reachable_project_ids(user)
     return MCPServer.objects.filter(
-        company=company, is_active=True, projects__id__in=project_ids,
-    ).distinct().order_by("name")
+        company=company, is_active=True, project_id__in=project_ids,
+    ).order_by("name")
 
 
 def visible_personas(user, project):

@@ -1,6 +1,21 @@
 """
-AI Intelligence API — AIModel, MCPServer, AIAgent, Persona, PromptTemplate, CompanyAIConfig.
-All endpoints require Supabase JWT auth and are company-scoped.
+AI Intelligence API — ModelConfig, MCPServer, Persona, PromptTemplate,
+CompanyAIConfig. All endpoints require Supabase JWT auth and are
+company-scoped.
+
+── Removed in the AIAgent collapse ───────────────────────────────────────
+Seven endpoints are gone:
+    GET/POST/PATCH/DELETE  /agents/...
+    GET/POST/DELETE        /ai-models/{id}/mcp-servers/...   (legacy nested)
+
+The legacy nested POST had been returning 500 on every call -- it passed
+project_id and client_secret into MCPServer(**data), which has neither
+field -- and when it did work it created an AIAgent with no project
+attached, invisible to everyone under row-level visibility.
+
+/ai-models/ is now /model-configs/, and PATCH /model-configs/{id}/ is new:
+rotating an API key used to require delete-and-recreate, and delete is
+refused while any persona references the row.
 """
 from typing import List
 from ninja import Router
@@ -13,10 +28,9 @@ from nucleus.models import Project, Persona, AIRequestLog
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from .schema import (
-    AIModelIn, AIModelOut,
-    MCPServerIn, MCPServerPatchIn, MCPServerOut,
+    ModelConfigIn, ModelConfigPatchIn, ModelConfigOut, ModelConfigRef,
+    MCPServerIn, MCPServerPatchIn, MCPServerOut, MCPServerRef,
     MCPOAuthAuthorizeOut,
-    AIAgentIn, AIAgentPatchIn, AIAgentOut,
     PersonaIn, PersonaPatchIn, PersonaOut,
     PromptTemplateOut,
     CompanyAIConfigIn, CompanyAIConfigOut,
@@ -30,6 +44,7 @@ router = Router(tags=["Intelligence"], auth=SupabaseBearer())
 
 PROMPTS_DIR = (Path(__file__).resolve().parent / 'prompts').resolve()
 
+
 def _company(request):
     company = svc.get_company()
     if not company:
@@ -37,40 +52,60 @@ def _company(request):
     return company
 
 
-def _model_out(model) -> AIModelOut:
-    return AIModelOut(
-        id=str(model.id),
-        name=model.name,
-        provider=model.provider,
-        model_id=model.model_id,
-        api_base=model.api_base,
-        secret_ref=model.secret_ref,
-        description=model.description,
-        licence_accepted=model.licence_accepted,
-        temperature=model.temperature,
-        max_tokens=model.max_tokens,
-        context_window=model.context_window,
-        supports_tools=model.supports_tools,
-        supports_streaming=model.supports_streaming,
-        supports_vision=model.supports_vision,
-        supports_audio=model.supports_audio,
-        config=model.config,
-        is_active=model.is_active,
-        has_api_key=bool(model.api_key_encrypted),
-        project_ids=[str(pid) for pid in model.projects.filter(is_active=True).values_list("id", flat=True)],
+# ── Serialisers ───────────────────────────────────────────────────────────────
+
+def _oauth_connected(server) -> bool:
+    """
+    True iff a refresh token is stored. Only decrypts for oauth2 servers --
+    get_secrets() is a Fernet decrypt, and doing it for every static-secrets
+    server in a list would be pure waste.
+    """
+    if server.auth_type != "oauth2":
+        return False
+    return bool(server.get_secrets().get("refresh_token"))
+
+
+def _model_config_out(config) -> ModelConfigOut:
+    return ModelConfigOut(
+        id=str(config.id),
+        name=config.name,
+        provider=config.provider,
+        model_id=config.model_id,
+        qualified_id=config.qualified_id,
+        api_base=config.api_base,
+        description=config.description,
+        licence_accepted=config.licence_accepted,
+        context_window=config.context_window,
+        supports_tools=config.supports_tools,
+        supports_streaming=config.supports_streaming,
+        supports_vision=config.supports_vision,
+        supports_audio=config.supports_audio,
+        config=config.config,
+        is_active=config.is_active,
+        has_api_key=bool(config.api_key_encrypted),
+        project_ids=[
+            str(pid) for pid in config.projects.filter(is_active=True).values_list("id", flat=True)
+        ],
+    )
+
+
+def _model_config_ref(config) -> ModelConfigRef:
+    return ModelConfigRef(
+        id=str(config.id),
+        name=config.name,
+        provider=config.provider,
+        model_id=config.model_id,
+        qualified_id=config.qualified_id,
+        supports_tools=config.supports_tools,
     )
 
 
 def _mcp_out(server) -> MCPServerOut:
-    # Server belongs to exactly one project in practice (see
-    # create_mcp_server_standalone()) -- .first() is safe even though the
-    # underlying field is an M2M.
-    project = server.projects.first()
     return MCPServerOut(
         id=str(server.id),
         name=server.name,
         description=server.description,
-        project_id=str(project.id) if project else None,
+        project_id=str(server.project_id),
         server_type=server.server_type,
         transport=server.transport,
         url=server.url,
@@ -83,28 +118,18 @@ def _mcp_out(server) -> MCPServerOut:
         embed_output=server.embed_output,
         is_active=server.is_active,
         auth_type=server.auth_type,
-        oauth_connected=bool(server.get_secrets().get("refresh_token")),
+        oauth_connected=_oauth_connected(server),
         oauth_config=server.oauth_config,
     )
 
 
-def _agent_out(agent) -> AIAgentOut:
-    # Agent belongs to exactly one project in practice (see create_agent()) --
-    # .first() is safe even though the underlying field is an M2M.
-    project = agent.projects.first()
-    return AIAgentOut(
-        id=str(agent.id),
-        name=agent.name,
-        description=agent.description,
-        project_id=str(project.id) if project else None,
-        agent_type=agent.agent_type,
-        model_id=str(agent.model_id) if agent.model_id else None,
-        model_name=agent.model.name if agent.model else None,
-        mcp_server_id=str(agent.mcp_server_id) if agent.mcp_server_id else None,
-        mcp_server_name=agent.mcp_server.name if agent.mcp_server else None,
-        safety_mode=agent.safety_mode,
-        max_steps=agent.max_steps,
-        is_active=agent.is_active,
+def _mcp_ref(server) -> MCPServerRef:
+    return MCPServerRef(
+        id=str(server.id),
+        name=server.name,
+        transport=server.transport,
+        auth_type=server.auth_type,
+        oauth_connected=_oauth_connected(server),
     )
 
 
@@ -125,97 +150,122 @@ def _persona_out(persona) -> PersonaOut:
         name=persona.name,
         description=persona.description,
         project_id=str(persona.project_id),
-        source_type=persona.source_type,
-        model_id=str(persona.model_id) if persona.model_id else None,
-        agent_id=str(persona.agent_id) if persona.agent_id else None,
+        model=_model_config_ref(persona.model),
+        advisor_model=_model_config_ref(persona.advisor_model) if persona.advisor_model_id else None,
+        mcp_servers=[_mcp_ref(s) for s in persona.mcp_servers.all() if s.is_active],
+        temperature=persona.temperature,
+        max_tokens=persona.max_tokens,
+        max_steps=persona.max_steps,
         prompt=prompt,
         is_active=persona.is_active,
-        avatar=(persona.identity_user.avatar.url if persona.identity_user_id and persona.identity_user.avatar else None),
+        avatar=(
+            persona.identity_user.avatar.url
+            if persona.identity_user_id and persona.identity_user.avatar
+            else None
+        ),
     )
 
 
-# ── AIModel endpoints ─────────────────────────────────────────────────────────
-# Rights: ai_model.list / ai_model.create / ai_model.delete — COMPANY scope only
-# (AI infrastructure has no project boundary, see authn/permissions/rights.py).
+# ── ModelConfig endpoints ─────────────────────────────────────────────────────
+# Rights: model_config.list / .create / .update / .delete — COMPANY scope only
+# (AI infrastructure has no project boundary). model_config.attach is PROJECT
+# scope: attaching an existing config never touches its API key, so it is a
+# lighter action reachable by that project's own Admin.
 
-@router.get("/ai-models/", response=List[AIModelOut])
-def list_ai_models(request):
+@router.get("/model-configs/", response=List[ModelConfigOut])
+def list_model_configs(request):
     company = _company(request)
-    return [_model_out(m) for m in svc.list_ai_models(company, request.auth)]
+    return [_model_config_out(m) for m in svc.list_model_configs(company, request.auth)]
 
 
-@router.post("/ai-models/", response=AIModelOut)
-def create_ai_model(request, payload: AIModelIn):
+@router.post("/model-configs/", response=ModelConfigOut)
+def create_model_config(request, payload: ModelConfigIn):
     company = _company(request)
-    if not PermissionChecker.can(request.auth, "ai_model.create", company=company):
-        raise HttpError(403, "You don't have permission to create AI models.")
+    if not PermissionChecker.can(request.auth, "model_config.create", company=company):
+        raise HttpError(403, "You don't have permission to create model configs.")
     if not payload.licence_accepted:
         raise HttpError(400, "You must accept the provider's terms of service.")
-    data = payload.dict()
-    model = svc.create_ai_model(company, request.auth, data)
-    return _model_out(model)
+    try:
+        config = svc.create_model_config(company, request.auth, payload.dict())
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return _model_config_out(config)
 
 
-@router.delete("/ai-models/{model_id}/", response={204: None})
-def delete_ai_model(request, model_id: str):
+@router.patch("/model-configs/{config_id}/", response=ModelConfigOut)
+def patch_model_config(request, config_id: str, payload: ModelConfigPatchIn):
     company = _company(request)
-    if not PermissionChecker.can(request.auth, "ai_model.delete", company=company):
-        raise HttpError(403, "You don't have permission to delete AI models.")
-    if not svc.delete_ai_model(company, model_id):
-        raise HttpError(404, "AI model not found.")
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to edit model configs.")
+    try:
+        config = svc.update_model_config(company, config_id, payload.dict(exclude_none=True))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    if not config:
+        raise HttpError(404, "Model config not found.")
+    return _model_config_out(config)
+
+
+@router.delete("/model-configs/{config_id}/", response={204: None})
+def delete_model_config(request, config_id: str):
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "model_config.delete", company=company):
+        raise HttpError(403, "You don't have permission to delete model configs.")
+    try:
+        deleted = svc.delete_model_config(company, config_id)
+    except ValueError as e:
+        raise HttpError(409, str(e))
+    if not deleted:
+        raise HttpError(404, "Model config not found.")
     return 204, None
 
 
-# ── AIModel <-> Project attachment (visibility gate) ──────────────────────────
-# Distinct right from ai_model.create/delete on purpose: attaching an
-# already-existing model to a project never touches the model's API key, so
-# it's a lighter action -- reachable by that project's own Project Admin,
-# not just a COMPANY-scope Owner/Admin. See ai_model.attach in rights.py.
+# ── ModelConfig <-> Project attachment (visibility gate) ──────────────────────
 
-@router.post("/projects/{project_id}/ai-models/{model_id}/attach/", response={200: dict})
-def attach_ai_model(request, project_id: str, model_id: str):
+@router.post("/projects/{project_id}/model-configs/{config_id}/attach/", response={200: dict})
+def attach_model_config(request, project_id: str, config_id: str):
     company = _company(request)
     project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
     if not project:
         raise HttpError(404, "Project not found.")
-    if not PermissionChecker.can(request.auth, "ai_model.attach", obj=project):
-        raise HttpError(403, "You don't have permission to attach AI models to this project.")
-    if not svc.attach_ai_model_to_project(company, model_id, project_id):
-        raise HttpError(404, "AI model not found.")
+    if not PermissionChecker.can(request.auth, "model_config.attach", obj=project):
+        raise HttpError(403, "You don't have permission to attach model configs to this project.")
+    if not svc.attach_model_config_to_project(company, config_id, project_id):
+        raise HttpError(404, "Model config not found.")
     return {"ok": True}
 
 
-@router.delete("/projects/{project_id}/ai-models/{model_id}/attach/", response={200: dict})
-def detach_ai_model(request, project_id: str, model_id: str):
+@router.delete("/projects/{project_id}/model-configs/{config_id}/attach/", response={200: dict})
+def detach_model_config(request, project_id: str, config_id: str):
     company = _company(request)
     project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
     if not project:
         raise HttpError(404, "Project not found.")
-    if not PermissionChecker.can(request.auth, "ai_model.attach", obj=project):
-        raise HttpError(403, "You don't have permission to detach AI models from this project.")
-    if not svc.detach_ai_model_from_project(company, model_id, project_id):
-        raise HttpError(404, "AI model not found.")
+    if not PermissionChecker.can(request.auth, "model_config.attach", obj=project):
+        raise HttpError(403, "You don't have permission to detach model configs from this project.")
+    try:
+        detached = svc.detach_model_config_from_project(company, config_id, project_id)
+    except ValueError as e:
+        raise HttpError(409, str(e))
+    if not detached:
+        raise HttpError(404, "Model config not found.")
     return {"ok": True}
 
 
-# ── MCPServer endpoints (flat) ────────────────────────────────────────────────
+# ── MCPServer endpoints ───────────────────────────────────────────────────────
 # mcp_server.list is COMPANY scope (ordinary project members reach the list
 # through the visible_mcp_servers() row-visibility fallback, not by holding
 # this right directly). create/update/delete are PROJECT scope — a server
-# belongs to exactly one project, and that project's own Admin can manage it
-# without needing company-wide access (still reachable by a COMPANY-scope
-# Owner/Admin too, since PROJECT reach flows down from COMPANY).
+# belongs to exactly one project, and that project's own Admin can manage it.
 
 @router.get("/mcp-servers/", response=List[MCPServerOut])
 def list_mcp_servers_all(request):
-    """List all MCP servers for the company."""
     company = _company(request)
     return [_mcp_out(s) for s in svc.list_mcp_servers_all(company, request.auth)]
 
 
 @router.post("/mcp-servers/", response=MCPServerOut)
 def create_mcp_server_standalone(request, payload: MCPServerIn):
-    """Create a standalone MCP server, owned by payload.project_id."""
     company = _company(request)
     project = Project.objects.filter(company=company, id=payload.project_id, is_active=True).first()
     if not project:
@@ -237,7 +287,10 @@ def patch_mcp_server_standalone(request, server_id: str, payload: MCPServerPatch
         raise HttpError(404, "MCP server not found.")
     if not PermissionChecker.can(request.auth, "mcp_server.update", obj=server):
         raise HttpError(403, "You don't have permission to edit this MCP server.")
-    server = svc.update_mcp_server_standalone(company, server_id, payload.dict(exclude_none=True))
+    try:
+        server = svc.update_mcp_server_standalone(company, server_id, payload.dict(exclude_none=True))
+    except ValueError as e:
+        raise HttpError(400, str(e))
     return _mcp_out(server)
 
 
@@ -249,14 +302,16 @@ def delete_mcp_server_standalone(request, server_id: str):
         raise HttpError(404, "MCP server not found.")
     if not PermissionChecker.can(request.auth, "mcp_server.delete", obj=server):
         raise HttpError(403, "You don't have permission to delete this MCP server.")
-    svc.delete_mcp_server_standalone(company, server_id)
+    try:
+        svc.delete_mcp_server_standalone(company, server_id)
+    except ValueError as e:
+        raise HttpError(409, str(e))
     return 204, None
 
 
-# MCPServer has no attach/detach endpoints -- it's single-project-owned (see
-# create_mcp_server_standalone(), same pattern as AIAgent), assigned once at
-# creation via payload.project_id. Unlike AIModel, which is genuinely shared
-# across projects, there's nothing to attach/detach after the fact.
+# MCPServer has no attach/detach endpoints -- it is single-project-owned via
+# a real FK now, assigned once at creation via payload.project_id and not
+# transferable. Unlike ModelConfig, which is genuinely shared across projects.
 
 
 # ── MCPServer OAuth2 ───────────────────────────────────────────────────────────
@@ -309,111 +364,16 @@ def mcp_oauth_callback(request, code: str = None, state: str = None, error: str 
     return html(True, result["frontend_origin"], server_id=result["server_id"])
 
 
-# ── MCPServer endpoints (nested under model — legacy) ─────────────────────────
-# Same rights as the flat endpoints above — mcp_server.* doesn't distinguish
-# by nesting, it's still a company-wide resource either way.
-
-@router.get("/ai-models/{model_id}/mcp-servers/", response=List[MCPServerOut])
-def list_mcp_servers(request, model_id: str):
-    company = _company(request)
-    if not PermissionChecker.can(request.auth, "mcp_server.list", company=company):
-        raise HttpError(403, "You don't have permission to view MCP servers.")
-    return [_mcp_out(s) for s in svc.list_mcp_servers(company, model_id)]
-
-
-@router.post("/ai-models/{model_id}/mcp-servers/", response=MCPServerOut)
-def create_mcp_server(request, model_id: str, payload: MCPServerIn):
-    company = _company(request)
-    if not PermissionChecker.can(request.auth, "mcp_server.create", company=company):
-        raise HttpError(403, "You don't have permission to create MCP servers.")
-    try:
-        server = svc.create_mcp_server(company, model_id, payload.dict())
-    except ValueError as e:
-        raise HttpError(404, str(e))
-    return _mcp_out(server)
-
-
-@router.delete("/ai-models/{model_id}/mcp-servers/{server_id}/", response={204: None})
-def delete_mcp_server(request, model_id: str, server_id: str):
-    company = _company(request)
-    if not PermissionChecker.can(request.auth, "mcp_server.delete", company=company):
-        raise HttpError(403, "You don't have permission to delete MCP servers.")
-    if not svc.delete_mcp_server(company, model_id, server_id):
-        raise HttpError(404, "MCP server not found.")
-    return 204, None
-
-
-# ── AIAgent endpoints ─────────────────────────────────────────────────────────
-# agent.list is COMPANY scope (ordinary project members reach the list
-# through the visible_agents() row-visibility fallback, not by holding this
-# right directly). create/update/delete are PROJECT scope — an agent belongs
-# to exactly one project, and that project's own Admin can manage it without
-# needing company-wide access (still reachable by a COMPANY-scope Owner/Admin
-# too, since PROJECT reach flows down from COMPANY).
-
-@router.get("/agents/", response=List[AIAgentOut])
-def list_agents(request):
-    company = _company(request)
-    return [_agent_out(a) for a in svc.list_agents(company, request.auth)]
-
-
-@router.post("/agents/", response=AIAgentOut)
-def create_agent(request, payload: AIAgentIn):
-    company = _company(request)
-    project = Project.objects.filter(company=company, id=payload.project_id, is_active=True).first()
-    if not project:
-        raise HttpError(404, "Project not found.")
-    if not PermissionChecker.can(request.auth, "agent.create", obj=project):
-        raise HttpError(403, "You don't have permission to create AI agents in this project.")
-    try:
-        agent = svc.create_agent(company, payload.dict())
-    except ValueError as e:
-        raise HttpError(400, str(e))
-    return _agent_out(agent)
-
-
-@router.patch("/agents/{agent_id}/", response=AIAgentOut)
-def patch_agent(request, agent_id: str, payload: AIAgentPatchIn):
-    company = _company(request)
-    agent = svc.get_agent(company, agent_id)
-    if not agent:
-        raise HttpError(404, "Agent not found.")
-    if not PermissionChecker.can(request.auth, "agent.update", obj=agent):
-        raise HttpError(403, "You don't have permission to edit this AI agent.")
-    agent = svc.update_agent(company, agent_id, payload.dict(exclude_none=True))
-    return _agent_out(agent)
-
-
-@router.delete("/agents/{agent_id}/", response={204: None})
-def delete_agent(request, agent_id: str):
-    company = _company(request)
-    agent = svc.get_agent(company, agent_id)
-    if not agent:
-        raise HttpError(404, "Agent not found.")
-    if not PermissionChecker.can(request.auth, "agent.delete", obj=agent):
-        raise HttpError(403, "You don't have permission to delete this AI agent.")
-    svc.delete_agent(company, agent_id)
-    return 204, None
-
-
-# Agents are project-owned at creation (payload.project_id) -- no separate
-# attach/detach endpoints, since an agent never belongs to more than one
-# project. See create_agent() in intelligence/services.py.
-
-
 # ── Persona endpoints ─────────────────────────────────────────────────────────
-# Rights: persona.list / persona.create / persona.update / persona.delete — COMPANY scope.
-# Distinct from "persona.mention" (TOPIC-scoped — using an existing persona in
-# chat), which is a separate right for a separate app (chat/api.py, not yet
-# migrated).
+# persona.list is COMPANY scope; create/update/delete are PROJECT scope --
+# a persona belongs to exactly one project and that project's own Admin
+# manages it. Distinct from "persona.mention" (TOPIC-scoped, chat/api.py).
 
 @router.get("/personas/", response=List[PersonaOut])
 def list_personas(request, project_id: str):
     """
     Personas are project-owned -- always listed for one project, never
-    company-wide. Visibility is via visible_personas() (project member,
-    or company-wide persona.list right) -- same pattern as ai-models/
-    agents/mcp-servers, not a blanket permission check.
+    company-wide. Visibility is via visible_personas().
     """
     company = _company(request)
     project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
@@ -433,8 +393,6 @@ def create_persona(request, payload: PersonaIn):
     try:
         persona = svc.create_persona(company, request.auth, payload.dict())
     except ValueError as e:
-        # e.g. duplicate name in this project -- surface it as a clean 400 like
-        # the mcp-server / agent create handlers do, not a raw 500.
         raise HttpError(400, str(e))
     return _persona_out(persona)
 
@@ -442,41 +400,53 @@ def create_persona(request, payload: PersonaIn):
 @router.patch("/personas/{persona_id}/", response=PersonaOut)
 def patch_persona(request, persona_id: str, payload: PersonaPatchIn):
     company = _company(request)
-    persona_obj = Persona.objects.filter(company=company, id=persona_id, is_active=True).select_related("project").first()
+    persona_obj = Persona.objects.filter(
+        company=company, id=persona_id, is_active=True
+    ).select_related("project").first()
     if not persona_obj:
         raise HttpError(404, "Persona not found.")
     if not PermissionChecker.can(request.auth, "persona.update", obj=persona_obj.project):
         raise HttpError(403, "You don't have permission to edit this persona.")
-    
-    persona = svc.patch_persona(company, persona_id, payload.dict(exclude_none=True))
+
+    # exclude_none keeps `mcp_server_ids: []` (detach all) distinct from
+    # "not sent", which is why clear_advisor exists as a separate flag --
+    # a nullable FK has no equivalent distinct value.
+    data = payload.dict(exclude_none=True)
+    try:
+        persona = svc.patch_persona(company, persona_id, data)
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    if not persona:
+        raise HttpError(404, "Persona not found.")
     return _persona_out(persona)
 
 
 @router.delete("/personas/{persona_id}/", response={204: None})
 def delete_persona(request, persona_id: str):
     company = _company(request)
-    persona_obj = Persona.objects.filter(company=company, id=persona_id, is_active=True).select_related("project").first()
+    persona_obj = Persona.objects.filter(
+        company=company, id=persona_id, is_active=True
+    ).select_related("project").first()
     if not persona_obj:
         raise HttpError(404, "Persona not found.")
     if not PermissionChecker.can(request.auth, "persona.delete", obj=persona_obj.project):
         raise HttpError(403, "You don't have permission to delete this persona.")
-        
+
     svc.delete_persona(company, persona_id)
     return 204, None
 
 
 # ── PromptTemplate endpoints ──────────────────────────────────────────────────
 
-
 @router.get("/prompt-templates", response=ListTemplatePrompts)
 def get_prompts(request):
-    
     files = {
         base64.urlsafe_b64encode(rel_path.encode()).decode().rstrip('='): rel_path
         for f in PROMPTS_DIR.rglob('*') if f.is_file()
         for rel_path in [str(f.relative_to(PROMPTS_DIR))]
     }
     return ListTemplatePrompts(prompts=files)
+
 
 @router.get("/prompt-templates/{id}", response=TemplatePromptContent)
 def get_prompt(request, id: str):
@@ -492,10 +462,9 @@ def get_prompt(request, id: str):
             raise HttpError(404, "File not found")
 
         return TemplatePromptContent(content=target_path.read_text(encoding="utf-8"))
-    
+
     except (ValueError, binascii.Error, UnicodeDecodeError):
         raise HttpError(400, "Invalid file ID format")
-
 
 
 # ── CompanyAIConfig endpoints ─────────────────────────────────────────────────
@@ -504,6 +473,18 @@ def get_prompt(request, id: str):
 def get_ai_config(request):
     company = _company(request)
     config = svc.get_ai_config(company)
+    return CompanyAIConfigOut(
+        embedding_provider=config.embedding_provider,
+        embedding_model=config.embedding_model,
+        embedding_base_url=config.embedding_base_url,
+        default_llm_model=config.default_llm_model,
+    )
+
+
+@router.put("/ai-config/", response=CompanyAIConfigOut)
+def update_ai_config(request, payload: CompanyAIConfigIn):
+    company = _company(request)
+    config = svc.update_ai_config(company, request.auth, payload.dict())
     return CompanyAIConfigOut(
         embedding_provider=config.embedding_provider,
         embedding_model=config.embedding_model,
@@ -541,18 +522,6 @@ def list_ai_request_logs(request):
     ]
 
 
-@router.put("/ai-config/", response=CompanyAIConfigOut)
-def update_ai_config(request, payload: CompanyAIConfigIn):
-    company = _company(request)
-    config = svc.update_ai_config(company, request.auth, payload.dict())
-    return CompanyAIConfigOut(
-        embedding_provider=config.embedding_provider,
-        embedding_model=config.embedding_model,
-        embedding_base_url=config.embedding_base_url,
-        default_llm_model=config.default_llm_model,
-    )
-
-
 # ── Output Types (M7) ─────────────────────────────────────────────────────────
 
 @router.get("/output-types/")
@@ -573,9 +542,3 @@ def list_output_types(request):
         {"name": "html",     "label": "HTML Page", "icon": "globe",         "render_as": "html"},
         {"name": "terminal", "label": "Terminal",  "icon": "terminal",      "render_as": "terminal"},
     ]
-
-# Default system prompt endpoints
-
-
-
-
