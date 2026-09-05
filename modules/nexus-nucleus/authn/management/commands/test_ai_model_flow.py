@@ -1,28 +1,32 @@
 """
 Management command: python manage.py test_ai_model_flow
 
-Exercises the full AIModel lifecycle -- create -> list -> attach -> detach ->
-delete -- plus the RBAC rights checks around each step. Same shape as
-test_persona_flow.py / test_agent_flow.py / test_mcp_server_flow.py.
+Exercises the full ModelConfig lifecycle -- create -> list -> attach ->
+detach -> delete -- plus the RBAC rights checks around each step. Same shape
+as test_persona_flow.py / test_agent_flow.py / test_mcp_server_flow.py.
+
+AIModel was renamed to ModelConfig and every ai_model.* right code became
+model_config.*, so both halves of this command were repointed. The scope
+rules themselves are unchanged.
 
 Rights being verified (see authn/permissions/rights.py + USE_CASES.md UC14/UC15):
-    ai_model.create / ai_model.delete are COMPANY scope ONLY -- unlike
-    Agent/MCPServer, a Project Admin never reaches these regardless of
-    which project they administer, because creating/deleting a model
-    touches the Fernet-encrypted API key. This command's project_admin
-    (Project Admin on `project`, no company-wide role) should be denied
-    on both create and delete.
+    model_config.create / model_config.delete are COMPANY scope ONLY --
+    unlike MCPServer/Persona, a Project Admin never reaches these
+    regardless of which project they administer, because creating/deleting
+    a config touches the Fernet-encrypted API key. This command's
+    project_admin (Project Admin on `project`, no company-wide role) should
+    be denied on both create and delete.
 
-    ai_model.attach is the deliberate exception -- PROJECT scope, checked
-    as obj=project, never touches the key. project_admin SHOULD reach this
-    on their own project (and detach, which reuses the same right code),
-    but not on a different project (other_admin).
+    model_config.attach is the deliberate exception -- PROJECT scope,
+    checked as obj=project, never touches the key. project_admin SHOULD
+    reach this on their own project (and detach, which reuses the same
+    right code), but not on a different project (other_admin).
 
     Also demonstrates the "unattached = invisible to everyone but a
     company-wide list holder" rule from UC13/UC15: right after creation,
-    before any attach call, project_admin's list_ai_models() comes back
+    before any attach call, project_admin's list_model_configs() comes back
     empty even though they're a genuine member of `project` -- attachment
-    is what makes a model visible via the narrow/row-visibility path, not
+    is what makes a config visible via the narrow/row-visibility path, not
     just being in a project at all.
 """
 from django.contrib.auth import get_user_model
@@ -31,17 +35,19 @@ from django.core.management.base import BaseCommand
 from authn.permissions.checker import PermissionChecker
 from authn.permissions.models import Role
 from intelligence import services as isvc
-from nucleus.models import Company, Project
+from nucleus.models import Company, ModelConfig, Project
 
 User = get_user_model()
 
+_MODEL_NAME = "Test Model for Model Config Flow"
+
 
 class Command(BaseCommand):
-    help = "Exercise the full AIModel CRUD + attach/detach lifecycle + rights checks in one run."
+    help = "Exercise the full ModelConfig CRUD + attach/detach lifecycle + rights checks in one run."
 
     def handle(self, *args, **options):
         self._line()
-        self.stdout.write(self.style.NOTICE("AI Model lifecycle test (create -> list -> attach -> detach -> delete)"))
+        self.stdout.write(self.style.NOTICE("Model Config lifecycle test (create -> list -> attach -> detach -> delete)"))
         self._line()
 
         # ── Fixtures ─────────────────────────────────────────────────────────
@@ -84,66 +90,82 @@ class Command(BaseCommand):
         self.stdout.write(f"Test user 2: {other_admin.username} (Project Admin on '{other_project.name}' only) "
                            f"{'[created]' if created2 else '[reused]'}")
 
-        # ── 1. ai_model.create -- COMPANY scope ONLY ────────────────────────
-        self._section("1. CREATE -- ai_model.create (COMPANY scope ONLY -- touches the API key)")
-        self._check("owner can ai_model.create", PermissionChecker.can(owner, "ai_model.create", company=company), True)
-        self._check("project_admin can ai_model.create -- EXPECT False, no project-scope path for this right",
-                     PermissionChecker.can(project_admin, "ai_model.create", company=company), False)
+        # ── 1. model_config.create -- COMPANY scope ONLY ────────────────────
+        self._section("1. CREATE -- model_config.create (COMPANY scope ONLY -- touches the API key)")
+        self._check("owner can model_config.create", PermissionChecker.can(owner, "model_config.create", company=company), True)
+        self._check("project_admin can model_config.create -- EXPECT False, no project-scope path for this right",
+                     PermissionChecker.can(project_admin, "model_config.create", company=company), False)
 
-        model = isvc.create_ai_model(company, owner, {
-            "name": "Test Model for AI Model Flow", "provider": "litellm", "model_id": "openai/gpt-flow-test",
-            "api_key": "sk-fake-flow-test-key", "licence_accepted": True,
-        })
-        self.stdout.write(f"  -> model created: id={model.id} name={model.name!r} "
-                           f"has_api_key={bool(model.api_key_encrypted)}")
+        # provider and the BARE model name are two columns now -- passing
+        # "openai/gpt-flow-test" as model_id is rejected outright by
+        # create_model_config's prefix guard. qualified_id composes the
+        # "provider:model" wire string.
+        #
+        # Reused rather than recreated when a previous run left it behind:
+        # uniq_model_config_name_per_company does not ignore soft-deleted
+        # rows, so a second create with the same name would be an
+        # IntegrityError.
+        model = ModelConfig.objects.filter(company=company, name=_MODEL_NAME).first()
+        if model is None:
+            model = isvc.create_model_config(company, owner, {
+                "name": _MODEL_NAME, "provider": "openai", "model_id": "gpt-flow-test",
+                "api_key": "sk-fake-flow-test-key", "licence_accepted": True,
+            })
+        elif not model.is_active:
+            model.restore()
+        self.stdout.write(f"  -> model config created: id={model.id} name={model.name!r} "
+                           f"qualified_id={model.qualified_id!r} has_api_key={bool(model.api_key_encrypted)}")
 
-        # ── 2. ai_model.list + visibility BEFORE attach ─────────────────────
-        self._section("2. LIST (before attach) -- unattached models are invisible to everyone but a company-wide holder")
-        self._check("owner can ai_model.list (company-wide)", PermissionChecker.can(owner, "ai_model.list", company=company), True)
-        self._check("project_admin can ai_model.list (company-wide)", PermissionChecker.can(project_admin, "ai_model.list", company=company), False)
+        # ── 2. model_config.list + visibility BEFORE attach ─────────────────
+        self._section("2. LIST (before attach) -- unattached configs are invisible to everyone but a company-wide holder")
+        self._check("owner can model_config.list (company-wide)", PermissionChecker.can(owner, "model_config.list", company=company), True)
+        self._check("project_admin can model_config.list (company-wide)", PermissionChecker.can(project_admin, "model_config.list", company=company), False)
 
-        owner_sees = [m.name for m in isvc.list_ai_models(company, owner)]
-        admin_sees_before = [m.name for m in isvc.list_ai_models(company, project_admin)]
-        self.stdout.write(f"  -> owner's list_ai_models: {owner_sees}")
-        self.stdout.write(f"  -> project_admin's list_ai_models BEFORE attach "
+        owner_sees = [m.name for m in isvc.list_model_configs(company, owner)]
+        admin_sees_before = [m.name for m in isvc.list_model_configs(company, project_admin)]
+        self.stdout.write(f"  -> owner's list_model_configs: {owner_sees}")
+        self.stdout.write(f"  -> project_admin's list_model_configs BEFORE attach "
                            f"(expect [] -- unattached, even though they're a real member of '{project.name}'): {admin_sees_before}")
 
-        # ── 3. ai_model.attach -- PROJECT scope, the deliberate exception ──
-        self._section("3. ATTACH -- ai_model.attach (PROJECT scope, obj=project, never touches the key)")
-        self._check("owner can ai_model.attach to project", PermissionChecker.can(owner, "ai_model.attach", obj=project), True)
-        self._check("project_admin can ai_model.attach to project (own project)", PermissionChecker.can(project_admin, "ai_model.attach", obj=project), True)
-        self._check("other_admin can ai_model.attach to project (different project)", PermissionChecker.can(other_admin, "ai_model.attach", obj=project), False)
+        # ── 3. model_config.attach -- PROJECT scope, the deliberate exception ──
+        self._section("3. ATTACH -- model_config.attach (PROJECT scope, obj=project, never touches the key)")
+        self._check("owner can model_config.attach to project", PermissionChecker.can(owner, "model_config.attach", obj=project), True)
+        self._check("project_admin can model_config.attach to project (own project)", PermissionChecker.can(project_admin, "model_config.attach", obj=project), True)
+        self._check("other_admin can model_config.attach to project (different project)", PermissionChecker.can(other_admin, "model_config.attach", obj=project), False)
 
-        attach_result = isvc.attach_ai_model_to_project(company, str(model.id), str(project.id))
-        self.stdout.write(f"  -> attach_ai_model_to_project returned: {attach_result}")
+        attach_result = isvc.attach_model_config_to_project(company, str(model.id), str(project.id))
+        self.stdout.write(f"  -> attach_model_config_to_project returned: {attach_result}")
 
-        admin_sees_after = [m.name for m in isvc.list_ai_models(company, project_admin)]
-        self.stdout.write(f"  -> project_admin's list_ai_models AFTER attach (expect to see it now): {admin_sees_after}")
+        admin_sees_after = [m.name for m in isvc.list_model_configs(company, project_admin)]
+        self.stdout.write(f"  -> project_admin's list_model_configs AFTER attach (expect to see it now): {admin_sees_after}")
 
-        # ── 4. ai_model.attach (detach uses the SAME right code) ───────────
-        self._section("4. DETACH -- same 'ai_model.attach' right code as step 3, checked identically")
-        self._check("owner can detach (ai_model.attach)", PermissionChecker.can(owner, "ai_model.attach", obj=project), True)
-        self._check("project_admin can detach (own project)", PermissionChecker.can(project_admin, "ai_model.attach", obj=project), True)
-        self._check("other_admin can detach (different project)", PermissionChecker.can(other_admin, "ai_model.attach", obj=project), False)
+        # ── 4. model_config.attach (detach uses the SAME right code) ───────
+        self._section("4. DETACH -- same 'model_config.attach' right code as step 3, checked identically")
+        self._check("owner can detach (model_config.attach)", PermissionChecker.can(owner, "model_config.attach", obj=project), True)
+        self._check("project_admin can detach (own project)", PermissionChecker.can(project_admin, "model_config.attach", obj=project), True)
+        self._check("other_admin can detach (different project)", PermissionChecker.can(other_admin, "model_config.attach", obj=project), False)
 
-        detach_result = isvc.detach_ai_model_from_project(company, str(model.id), str(project.id))
-        self.stdout.write(f"  -> detach_ai_model_from_project returned: {detach_result}")
+        # Raises ValueError if a persona in this project still uses the
+        # config, as either its primary or its advisor -- nothing does here,
+        # since this command creates its own throwaway config.
+        detach_result = isvc.detach_model_config_from_project(company, str(model.id), str(project.id))
+        self.stdout.write(f"  -> detach_model_config_from_project returned: {detach_result}")
 
-        admin_sees_after_detach = [m.name for m in isvc.list_ai_models(company, project_admin)]
-        self.stdout.write(f"  -> project_admin's list_ai_models AFTER detach (expect [] again): {admin_sees_after_detach}")
+        admin_sees_after_detach = [m.name for m in isvc.list_model_configs(company, project_admin)]
+        self.stdout.write(f"  -> project_admin's list_model_configs AFTER detach (expect [] again): {admin_sees_after_detach}")
 
-        # ── 5. ai_model.delete -- COMPANY scope ONLY ────────────────────────
-        self._section("5. DELETE -- ai_model.delete (COMPANY scope ONLY)")
-        self._check("owner can ai_model.delete", PermissionChecker.can(owner, "ai_model.delete", company=company), True)
-        self._check("project_admin can ai_model.delete -- EXPECT False", PermissionChecker.can(project_admin, "ai_model.delete", company=company), False)
+        # ── 5. model_config.delete -- COMPANY scope ONLY ────────────────────
+        self._section("5. DELETE -- model_config.delete (COMPANY scope ONLY)")
+        self._check("owner can model_config.delete", PermissionChecker.can(owner, "model_config.delete", company=company), True)
+        self._check("project_admin can model_config.delete -- EXPECT False", PermissionChecker.can(project_admin, "model_config.delete", company=company), False)
 
-        delete_result = isvc.delete_ai_model(company, str(model.id))
-        self.stdout.write(f"  -> delete_ai_model returned: {delete_result}")
+        delete_result = isvc.delete_model_config(company, str(model.id))
+        self.stdout.write(f"  -> delete_model_config returned: {delete_result}")
         model.refresh_from_db()
         self.stdout.write(f"  -> model.is_active after delete: {model.is_active}")
 
-        owner_sees_after = [m.name for m in isvc.list_ai_models(company, owner)]
-        self.stdout.write(f"  -> owner's list_ai_models after delete (expect gone): {owner_sees_after}")
+        owner_sees_after = [m.name for m in isvc.list_model_configs(company, owner)]
+        self.stdout.write(f"  -> owner's list_model_configs after delete (expect gone): {owner_sees_after}")
 
         self._line()
         self.stdout.write(self.style.SUCCESS("Done."))
