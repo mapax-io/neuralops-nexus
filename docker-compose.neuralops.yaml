@@ -553,6 +553,44 @@ services:
     depends_on:
       - nucleus-dev
       - centrifugo-dev
+  web-app-dev:
+    image: node:22-alpine
+    profiles: ["dev"]
+    container_name: neuralops-web-app-dev
+    working_dir: /app
+    # npm install, not `npm ci` -- picks up package.json changes on restart
+    # without needing a clean lockfile-only install every time. Installs
+    # land in a NAMED volume (below), not the bind mount itself, so a
+    # Linux-built node_modules never collides with a host node_modules.
+    command: sh -c "npm install && npx next dev -H 0.0.0.0"
+    ports:
+      - "${DEV_WEB_APP_PORT:-3000}:3000"
+    volumes:
+      - ./modules/neuralops-web-app:/app
+      - neuralops_web_app_node_modules:/app/node_modules
+    env_file:
+      - ./modules/neuralops-web-app/.env.local
+    environment:
+      # next dev's file watcher is unreliable on bind mounts without
+      # polling -- same fix the module's own docker-compose.yaml uses.
+      - WATCHPACK_POLLING=true
+      # NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY deliberately
+      # NOT set here -- this service bind-mounts the whole module folder
+      # (below), .env.local included, and `next dev` reads .env.local on its
+      # own (Next's built-in convention). Setting them again here would just
+      # be a second place to keep in sync with that file for no benefit.
+      #
+      # NEXT_DEV_ALLOWED_ORIGINS, on the other hand, IS needed here.
+      # next.config.ts auto-allows this host's own LAN IPs via
+      # os.networkInterfaces() -- that works when `next dev` runs directly on
+      # the host, but inside this container networkInterfaces() only sees the
+      # container's own Docker-bridge interface, not the host's real LAN IP
+      # browsers actually hit it on. Set explicitly to unblock cross-origin
+      # dev requests (chunks/HMR) from that IP -- add more, comma-separated,
+      # if this box is reached from other LAN IPs too.
+      - NEXT_DEV_ALLOWED_ORIGINS=0.0.0.0
+    networks:
+      - neuralops-network
 
 networks:
   neuralops-network:
@@ -568,4 +606,5 @@ volumes:
   neuralops_redis_data_dev:
   neuralops_chroma_data_dev:
   neuralops_fastembed_cache_dev:
+  neuralops_projects_dev:
   neuralops_web_app_node_modules:

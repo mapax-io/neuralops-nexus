@@ -2,13 +2,19 @@
 AgentRunner interface — every agent framework implements this.
 Swap Pydantic AI for LangGraph by adding a new implementation.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, TYPE_CHECKING
+from typing import AsyncIterator, TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from apps.schemas.trigger import TriggerJob, AgentEvent, PersonaConfig
+    from apps.schemas.trigger import (
+        TriggerJob,
+        AgentEvent,
+        PersonaConfig,
+        TriggerSwarmJob,
+    )
 
 
 class AgentRunner(ABC):
@@ -21,13 +27,13 @@ class AgentRunner(ABC):
     """
 
     @abstractmethod
-    async def run_stream(
+    def run_stream(
         self,
-        job: "TriggerJob",
-        messages: list[dict],
-        persona: "PersonaConfig",
+        job: TriggerJob | TriggerSwarmJob,
+        messages: Sequence,
+        persona: PersonaConfig,
         tools: list[dict] | None = None,
-    ) -> AsyncIterator["AgentEvent"]:
+    ) -> AsyncIterator[AgentEvent]:
         """
         Run the agent loop for this job.
         persona: resolved by nucleus_client.resolve_persona() in

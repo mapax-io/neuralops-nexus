@@ -1,7 +1,10 @@
 """Schemas for the /trigger/ endpoint (nexus-nucleus → nexus-ai) and SSE events."""
 
-import typing
-from pydantic import BaseModel, Field
+from enum import Enum
+from typing import Any
+from typing import Annotated
+from pydantic import BaseModel, Field, validate_call
+from pydantic_ai import capabilities
 
 
 # ── Inbound job payload ────────────────────────────────────────────────────────
@@ -42,12 +45,112 @@ class MCPServerConfig(BaseModel):
     token_env_var: str = "OAUTH_ACCESS_TOKEN"
 
 
+class NativePydanticAICapabilities(str, Enum):
+    FILESYSTEM = "Filesystem"
+    SHELL = "Shell"
+    MCP = "MCP"
+    STACK_ONE = "Stack One"
+    LOCAL_STACK = "Local Stack"
+    WEB_SEARCH = "Web Search"
+    WEB_FETCH = "Web Fetch"
+    X_SEARCH = "X Search"
+    THINKING = "Thinking"
+    PLANNING = "Planning"
+    SUBAGENTS = "Sub Agents"
+    DYNAMIC_WORKFLOW = "Dynamic Workflow"
+    ADVISOR = "Advisor"
+    TOOL_SEARCH = "Tool Search"
+    COMPACTION = "Compaction"
+    MEMORY = "Memory"
+    SKILLS = "Skills"
+    REPO_CONTEXT = "Repo Context"
+    GAURDRAILS = "Gaurdrails"
+    SPEND_LIMITS = "Spend Limits"
+    TOOL_APPROVAL = "Tool Approval"
+    CAPABILITY_CREATION = "Capability Creation"
+
+
+FileSystemPattern = Annotated[
+    str, 
+    Field(
+        min_length=1,
+        pattern=r'^[^/\\<>:"|\x00][^<>:"|\x00]*$',
+        description="A glob pattern (e.g., '*.py', 'src/**/*'). Cannot be an absolute path.",
+        title="Glob Pattern"
+    )
+]
+
+class FileSystem(BaseModel):
+    root_dir: str = Field(
+        default=".",
+        pattern=r'^[^/\\<>:"|\x00][^<>:"|\x00]*$',
+    )
+    allowed_patterns: list[FileSystemPattern] = Field(
+        default_factory=list,
+        description="Allowlist globs. If non-empty, only matching paths are accessible."
+    )
+    denied_patterns: list[FileSystemPattern] = Field(
+        default_factory=list,
+        description="Denylist globs. Matching paths are always rejected."
+    )
+    protected_patterns: list[FileSystemPattern] = Field(
+        default_factory=lambda: [".git/*", ".env", ".env.*", "*.pem", "*.key", "**/secrets*"],
+        description="Read-only globs. Writes to matching paths are rejected."
+    )
+
+class WebSearchArgs(BaseModel):
+    local: str = Field(
+        default='duckduckgo',
+        min_length=1,
+        max_length=16,
+        pattern=r'^[^<>:"|?*\x00]+$',
+        description="Search Engine Provider",
+        title="Search Engine",
+    )
+
+class WebFetchArgs(BaseModel):
+    local: bool = True
+
+class ShellCommands(str, Enum):
+    ls = "ls"
+    touch = "touch"
+    rm = "rm"
+    git = "git"
+    cd = "cd"
+    cat = "cat"
+    echo = "echo"
+    grep = "grep"
+    pwd = "pwd"
+    mkdir = "mkdir"
+    cp = "cp"
+    mv = "mv"
+    head = "head"
+    tail = "tail"
+    curl = "curl"
+
+
+class Shell(BaseModel):
+    allowed_commands: list[ShellCommands]
+    denied_commands: list[ShellCommands]
+    allow_interactive: bool = True
+    default_timeout: float = 30.0
+    max_output_chars: int = 50_000
+
+class MCPArgs(BaseModel):...
+class Thinking(BaseModel):...
+class Planning(BaseModel):...
+class Memory(BaseModel):...
+
+# TODO *still under construction, do not touch!*
+class PersonaCapabilities(BaseModel):...
+
 class PersonaConfig(BaseModel):
     id: str
     name: str  # "NeuralBot"
     system_prompt: str
     model: ModelConfig
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
+    capabilities: PersonaCapabilities = Field(default_factory=PersonaCapabilities)
 
 
 class HistoryMessage(BaseModel):
@@ -73,21 +176,23 @@ class TriggerJob(BaseModel):
     context_sources is the one exception still pushed by nucleus -- see
     the comment on trigger_ai_response_async in chat/services.py for why.
     """
+
     job_id: str
     msg_id: str  # pre-generated UUID — used in SSE events + DB save
 
     persona_id: str
     topic_id: str
-    user_message_id: str             # the human message this is replying to --
-                                      # excluded when nucleus_client fetches history,
-                                      # since it's sent separately as `message` below
-    message: str                     # the user's current message (mentions stripped)
+    user_message_id: str  # the human message this is replying to --
+    # excluded when nucleus_client fetches history,
+    # since it's sent separately as `message` below
+    message: str  # the user's current message (mentions stripped)
     context_sources: list[ContextSourceRef] = Field(default_factory=list)
 
     # M7: output type — resolved in nexus-nucleus from @mention detection.
     # "auto" = nexus-ai should classify intent via cosine similarity.
     # Any other value = explicit override (e.g. "chart", "terminal", "code").
     output_type: str = "auto"
+
 
 class TriggerSwarmJob(BaseModel):
     """
@@ -98,15 +203,16 @@ class TriggerSwarmJob(BaseModel):
     context_sources is the one exception still pushed by nucleus -- see
     the comment on trigger_ai_response_async in chat/services.py for why.
     """
+
     job_id: str
     msg_id: str  # pre-generated UUID — used in SSE events + DB save
 
-    personas: list[list[str, str, str]]
+    personas: list[list[str]]
     topic_id: str
-    user_message_id: str             # the human message this is replying to --
-                                      # excluded when nucleus_client fetches history,
-                                      # since it's sent separately as `message` below
-    message: str                     # the user's current message (mentions stripped)
+    user_message_id: str  # the human message this is replying to --
+    # excluded when nucleus_client fetches history,
+    # since it's sent separately as `message` below
+    message: str  # the user's current message (mentions stripped)
     context_sources: list[ContextSourceRef] = Field(default_factory=list)
 
     # M7: output type — resolved in nexus-nucleus from @mention detection.
@@ -114,23 +220,34 @@ class TriggerSwarmJob(BaseModel):
     # Any other value = explicit override (e.g. "chart", "terminal", "code").
     output_type: str = "auto"
 
+
 # ── Outbound SSE events (nexus-ai → nexus-nucleus) ────────────────────────────
 
 
 class ToolCallData(BaseModel):
     name: str
-    args: dict
+    args: dict[str, Any]
+
+
+class AgentEventType(str, Enum):
+    PERSIST = "persist_internal_state"
+    START = "message_start"
+    DELTA = "message_delta"
+    END = "message_done"
+    ERROR = "message_error"
+    TOOL_CALL_START = "tool_call_start"
+    SWARM_TRANSITION = "swarm_transition"
 
 
 class AgentEvent(BaseModel):
-    type: str                        # "message_start" | "message_delta" | "message_done" | "message_error"
-    id: str                          # msg_id
+    type: AgentEventType
+    id: str  # msg_id
 
     # message_start only
     created_at: str | None = None
     persona_id: str | None = None
     persona_name: str | None = None
-    
+
     # message_delta only
     delta: str | None = None
 
