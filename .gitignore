@@ -290,3 +290,4 @@ modules/nexus-ai/.secrets/
 # Root-anchored (leading /) so this only matches the repo-root folder, not
 # any other directory named "projects" that might exist elsewhere.
 /projects/
+*.lua

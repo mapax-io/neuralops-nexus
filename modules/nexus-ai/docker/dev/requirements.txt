@@ -26,3 +26,6 @@ chromadb                 # Phase 1 — swap via VectorStoreFactory
 rich                     # Better logging
 pytest
 pytest-asyncio
+pydantic-ai[all,openai,anthropic,google,mcp,web-fetch,duckduckgo]
+pydantic-ai-harness[dynamic-workflow]
+ddgs

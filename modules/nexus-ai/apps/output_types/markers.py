@@ -21,6 +21,7 @@ Two marker formats are supported:
 MCP tool markers override AI-generated markers when both are present.
 <<<CONTEXT>>> is always stripped from clean_content and returned as embed_description.
 """
+
 from __future__ import annotations
 
 import re
@@ -60,7 +61,7 @@ _MCP_CONTEXT_RE = re.compile(
 )
 
 
-def parse_output_markers(raw: str) -> tuple[str, str | None, str | None]:
+def parse_output_markers(raw: str) -> tuple[str, str, str | None]:
     """
     Parse output type markers and optional embed description from an AI response.
 
@@ -82,14 +83,14 @@ def parse_output_markers(raw: str) -> tuple[str, str | None, str | None]:
     context_m = _MCP_CONTEXT_RE.search(text)
     if context_m:
         embed_description = context_m.group(1).strip()
-        text = text[: context_m.start()] + text[context_m.end():]
+        text = text[: context_m.start()] + text[context_m.end() :]
 
     # ── Step 2: extract <<<EMBED>>> (AI-generated, lower priority than CONTEXT)
     if not embed_description:
         embed_m = _EMBED_RE.search(text)
         if embed_m:
             embed_description = embed_m.group(1).strip()
-            text = text[: embed_m.start()] + text[embed_m.end():]
+            text = text[: embed_m.start()] + text[embed_m.end() :]
 
     # ── Step 3: detect MCP markers ────────────────────────────────────────────
     html_m = _MCP_HTML_RE.search(text)
@@ -118,4 +119,4 @@ def parse_output_markers(raw: str) -> tuple[str, str | None, str | None]:
         return clean, type_name, embed_description
 
     # ── Step 5: plain text — no markers found ─────────────────────────────────
-    return text.strip(), None, embed_description
+    return text.strip(), "text", embed_description

@@ -29,8 +29,8 @@
 FROM python:3.11-slim AS nucleus-builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libpq-dev && \
-    rm -rf /var/lib/apt/lists/*
+  build-essential libpq-dev && \
+  rm -rf /var/lib/apt/lists/*
 ENV VIRTUAL_ENV=/opt/venv/nucleus-env
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
@@ -41,8 +41,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 FROM python:3.11-slim AS nexus-ai-builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libpq-dev && \
-    rm -rf /var/lib/apt/lists/*
+  bash \
+  git \
+  curl \
+  build-essential libpq-dev && \
+  rm -rf /var/lib/apt/lists/*
 ENV VIRTUAL_ENV=/opt/venv/nexus-ai-env
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
@@ -61,14 +64,14 @@ RUN go mod download
 COPY modules/nexus-transport/ .
 ENV CGO_ENABLED=0
 RUN go build -ldflags="-s -w -X 'github.com/centrifugal/centrifugo/v6/internal/build.Version=v6.6.2-nexus'" \
-    -o nexus-transport .
+  -o nexus-transport .
 
 # ── Stage 4: final image ─────────────────────────────────────────────────────
 FROM python:3.11-slim AS final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libpq-dev curl nodejs npm && \
-    rm -rf /var/lib/apt/lists/*
+  ca-certificates libpq-dev curl nodejs npm && \
+  rm -rf /var/lib/apt/lists/*
 
 # Filesystem MCP — installed globally at build time (not left to `npx` to
 # fetch on first run), same reasoning as the old Fat-Docker image: works
@@ -132,9 +135,9 @@ RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
 #     in docker-compose.neuralops.yaml via ${VAR} in each service that
 #     needs it -- NOT set here, so there's no shared value to fall back to.
 ENV SUPABASE_URL="https://xgfsxikypxjhqlutiepw.supabase.co" \
-    SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhnZnN4aWt5cHhqaHFsdXRpZXB3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNDg3MDcsImV4cCI6MjA5NzgyNDcwN30.2_OUNTHuKSeDJh6S-aUW16IqvDTmew8ZcFuKvFkt3Dk" \
-    NEURALOPS_PORTAL_URL="https://neuralops-nexus-demo.mapax.io" \
-    NEURALOPS_VERSION="0.1.2"
+  SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhnZnN4aWt5cHhqaHFsdXRpZXB3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNDg3MDcsImV4cCI6MjA5NzgyNDcwN30.2_OUNTHuKSeDJh6S-aUW16IqvDTmew8ZcFuKvFkt3Dk" \
+  NEURALOPS_PORTAL_URL="https://neuralops-nexus-demo.mapax.io" \
+  NEURALOPS_VERSION="0.1.2"
 
 COPY --from=nucleus-builder /opt/venv/nucleus-env /opt/venv/nucleus-env
 COPY --from=nexus-ai-builder /opt/venv/nexus-ai-env /opt/venv/nexus-ai-env
@@ -167,7 +170,7 @@ COPY modules/nexus-ai/ /nexus/ai/
 # "Permission denied" the first time nexus-ai actually tries to embed
 # something -- confirmed, this is exactly the bug that was hit.
 RUN mkdir -p /nexus/projects /nexus/logs/nucleus /nexus/logs/ai /home/nexus/.cache/fastembed && \
-    chown -R nexus:nexus /nexus /home/nexus/.cache
+  chown -R nexus:nexus /nexus /home/nexus/.cache
 
 COPY neuralops/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
