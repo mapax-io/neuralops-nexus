@@ -1,54 +1,56 @@
-from apps.interfaces.agent import AgentRunner
+import logging
+import time
 from typing import AsyncIterator, Sequence
+
 from pydantic_ai import Agent
-from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.messages import (
-    ModelMessage,
-    ToolCallPart,
-    TextPartDelta,
-    TextPart,
-    PartDeltaEvent,
-    PartStartEvent,
-)
 from pydantic_ai.capabilities import (
-    NativeOrLocalTool,
-    WebSearch,
     MCP,
+    NativeOrLocalTool,
     Thinking,
     ToolSearch,
     WebFetch,
+    WebSearch,
     XSearch,
 )
+from pydantic_ai.messages import (
+    ModelMessage,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ToolCallPart,
+)
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness import (
-    FileSystem,
-    Shell,
     Advisor,
     CapabilityCreation,
-    SummarizingCompaction,
     DynamicWorkflow,
+    FileSystem,
     LocalStack,
     Memory,
     Planning,
     RepoContext,
-    SubAgents,
-    SpendLimits,
+    Shell,
     Skills,
+    SpendLimits,
+    SubAgents,
+    SummarizingCompaction,
 )
+
+from apps.interfaces.agent import AgentRunner
 from apps.schemas.trigger import (
-    PersonaConfig,
-    TriggerJob,
-    TriggerSwarmJob,
     AgentEvent,
     AgentEventType,
     NativePydanticAICapabilities,
+    PersonaConfig,
     ToolCallData,
+    TriggerJob,
+    TriggerSwarmJob,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -104,24 +106,43 @@ class PydanticAIRunner(AgentRunner):
     ) -> AsyncIterator[AgentEvent]:
         agent = PydanticAIRunner.build_agent(persona)
 
+        buffer: list[str] = []
+        previous_flush_time = time.monotonic()
+        flush_granularity: float = 0.05
+
         try:
             async with agent.run_stream_events(message_history=messages) as events:
                 async for event in events:
                     match event:
                         case PartStartEvent(part=TextPart() as text_part):
-                            yield AgentEvent(
-                                type=AgentEventType.DELTA,
-                                id=job.msg_id,
-                                delta=text_part.content,
-                            )
+                            buffer.append(text_part.content)
                         case PartDeltaEvent(delta=TextPartDelta() as text_delta):
-                            # TODO
-                            yield AgentEvent(
-                                type=AgentEventType.DELTA,
-                                id=job.msg_id,
-                                delta=text_delta.content_delta,
-                            )
+                            buffer.append(text_delta.content_delta)
+                            now = time.monotonic()
+
+                            # Flush the buffer if it has been [flush_granularity] seconds since the last flush
+                            if now - previous_flush_time >= flush_granularity:
+                                chunk = "".join(buffer)
+                                buffer.clear()
+                                previous_flush_time = now
+                                yield AgentEvent(
+                                    type=AgentEventType.DELTA,
+                                    id=job.msg_id,
+                                    delta=chunk,
+                                )
+
                         case PartStartEvent(part=ToolCallPart() as tool_call):
+                            # Flush the buffer before tending to the tool call
+                            if len(buffer) > 0:
+                                chunk = "".join(buffer)
+                                buffer.clear()
+                                previous_flush_time = time.monotonic()
+                                yield AgentEvent(
+                                    type=AgentEventType.DELTA,
+                                    id=job.msg_id,
+                                    delta=chunk
+                                )
+
                             yield AgentEvent(
                                 type=AgentEventType.TOOL_CALL_START,
                                 id=job.msg_id,
@@ -133,6 +154,15 @@ class PydanticAIRunner(AgentRunner):
                         case _:
                             pass
 
+                # Flush buffer text before wrapping up
+                if len(buffer)>0:
+                    chunk = "".join(buffer)
+                    buffer.clear()
+                    yield AgentEvent(
+                        type=AgentEventType.DELTA,
+                        id=job.msg_id,
+                        delta=chunk,
+                    )
                 # All the accrued internal states must persist!
                 yield AgentEvent(
                     type=AgentEventType.PERSIST,
