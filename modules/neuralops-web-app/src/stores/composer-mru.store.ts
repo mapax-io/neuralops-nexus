@@ -6,7 +6,7 @@ import { persist } from "zustand/middleware";
 // Composer "recently used" for the @ (personas) and / (commands) popovers, so
 // the things you reach for most float to the top for quicker selection.
 //
-// State class (see CLAUDE.md — account- vs device-scoped): DEVICE-SCOPED, but
+// State class (account- vs device-scoped): DEVICE-SCOPED, but
 // CLEARED ON SIGN-OUT for privacy — exactly like `nx-selection` (workspace
 // selection). It is genuinely about this device (a convenience ordering, not
 // account data the user expects to follow them across browsers), yet leaving a

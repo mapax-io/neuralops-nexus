@@ -82,8 +82,14 @@ describe("ModelsTab — register", () => {
     expect(posted).toMatchObject({
       name: "Mini", provider: "openai", model_id: "gpt-4o-mini", api_key: "sk-test", licence_accepted: true,
       // gpt-4o-mini is a known family — the context window defaulted from the id, not the server's 8192.
-      supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false, context_window: 128000,
+      // Tool use is the only capability asked at registration and defaults on (the
+      // server would default it OFF, which blocks MCP attachment); the rest is left
+      // to the server and adjustable in Edit.
+      supports_tools: true, context_window: 128000,
     });
+    expect(posted).not.toHaveProperty("supports_streaming");
+    expect(posted).not.toHaveProperty("supports_vision");
+    expect(posted).not.toHaveProperty("supports_audio");
     expect(posted).not.toHaveProperty("api_base");
   });
 
@@ -117,6 +123,38 @@ describe("ModelsTab — register", () => {
     const dialog = await openRegister();
     const options = within(within(dialog).getByLabelText("Provider")).getAllByRole("option").map((o) => (o as HTMLOptionElement).value);
     expect(options).toEqual(["anthropic", "openai", "google", "ollama", "openai_compatible"]);
+  });
+});
+
+describe("ModelsTab — register asks only about tool use", () => {
+  it("offers a ticked tool-use box and no other capability on register, but all four on edit", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    expect(within(dialog).getByLabelText(/supports tool use/i)).toBeChecked();
+    for (const rx of [/streams responses/i, /understands images/i, /understands audio/i]) {
+      expect(within(dialog).queryByLabelText(rx)).not.toBeInTheDocument();
+    }
+    expect(within(dialog).getByLabelText(/accept the model provider/i)).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Edit model House model" }));
+    const edit = screen.getByRole("dialog");
+    expect(within(edit).getByLabelText(/supports tool use/i)).toBeChecked();
+    expect(within(edit).getByLabelText(/streams responses/i)).toBeChecked();
+    expect(within(edit).getByLabelText(/understands images/i)).not.toBeChecked();
+    expect(within(edit).getByLabelText(/understands audio/i)).not.toBeChecked();
+  });
+
+  it("posts supports_tools false when the box is unticked — a chat-only model must not be mistaken for a tool model", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    fireEvent.change(within(dialog).getByLabelText("Provider"), { target: { value: "ollama" } });
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Chat only" } });
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "llama3" } });
+    fireEvent.click(within(dialog).getByLabelText(/supports tool use/i));
+    fireEvent.click(within(dialog).getByLabelText(/accept the model provider/i));
+    fireEvent.submit(document.getElementById("m-form")!);
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ provider: "ollama", model_id: "llama3", supports_tools: false });
   });
 });
 
