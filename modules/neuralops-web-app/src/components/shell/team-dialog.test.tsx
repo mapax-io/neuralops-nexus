@@ -14,8 +14,8 @@ const LAYLA: Persona = {
   model: { id: "m1", name: "House model", provider: "anthropic", model_id: "claude-sonnet-5", qualified_id: "anthropic:claude-sonnet-5", supports_tools: true },
   advisor_model: null,
   mcp_servers: [
-    { id: "s1", name: "Warehouse tools", transport: "http", auth_type: "none", oauth_connected: false },
-    { id: "s2", name: "Jira", transport: "http", auth_type: "oauth2", oauth_connected: true },
+    { id: "s1", name: "Warehouse tools", is_internal: false, transport: "http", auth_type: "none", oauth_connected: false },
+    { id: "s2", name: "Jira", is_internal: false, transport: "http", auth_type: "oauth2", oauth_connected: true },
   ],
   temperature: 0.7, max_tokens: 4096, max_steps: 10, prompt: null, is_active: true, avatar: null,
 };

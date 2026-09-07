@@ -1,3 +1,4 @@
+import type { CapabilityConfig } from "@/lib/mcp-capabilities";
 import { apiJson } from "./client";
 
 // ── Model configs ─────────────────────────────────────────────────────────────
@@ -111,10 +112,26 @@ export interface MCPServer {
   name: string;
   description: string | null;
   project_id: string; // the ONE owning project — an FK server-side, never transferable
-  server_type: string; // remote (URL transports) | local (stdio)
+  // Two kinds share the table. EXTERNAL (false): a real MCP server reached
+  // over a transport — every field from server_type down applies. INTERNAL
+  // (true): built-in capabilities the AI worker provides in-process — only
+  // capability_config is read; the server clears every protocol field and
+  // forces auth_type to "none".
+  is_internal: boolean;
+  capability_config: CapabilityConfig; // {} on external rows
+  // The row project provisioning creates ("<Project> Capabilities"): the
+  // project's default tool source, and not removable (the server refuses).
+  is_protected: boolean;
+  is_default: boolean;
+  server_type: string; // remote | local | docker | kubernetes | hosted — where it runs; fixed after creation
   transport: string;   // http | sse | websocket | stdio
   url: string | null;      // URL transports
   command: string | null;  // stdio: the command NeuralOps runs
+  // Container / cluster runtime details, stored with the server for the
+  // runtime that starts it (the AI worker reaches URL and STDIO servers).
+  docker_image: string | null;
+  docker_command: string | null;
+  kubernetes_service: string | null;
   timeout_seconds: number;
   max_retries: number;
   // Non-secret runtime configuration handed to the worker with the server
@@ -135,6 +152,7 @@ export interface MCPServer {
 export interface MCPServerRef {
   id: string;
   name: string;
+  is_internal: boolean; // badge it as built-in, never show a URL
   transport: string;
   auth_type: McpAuthType;
   oauth_connected: boolean; // so the UI can flag one needing reconnect
@@ -146,9 +164,17 @@ export interface MCPServerCreate {
   name: string;
   description?: string;
   project_id: string; // MCP servers are project-owned
+  // Internal row: send is_internal with capability_config and nothing below —
+  // the server ignores and clears the protocol fields. An empty
+  // capability_config is seeded with the server's template on create.
+  is_internal?: boolean;
+  capability_config?: CapabilityConfig;
   url?: string;       // http / sse / websocket
   command?: string;   // stdio
-  server_type?: string;
+  docker_image?: string;
+  docker_command?: string;
+  kubernetes_service?: string;
+  server_type?: string; // remote | local | docker | kubernetes | hosted — fixed after creation, like transport
   transport?: string; // fixed after creation — the server's PATCH has no transport field
   timeout_seconds?: number;
   max_retries?: number;
@@ -166,8 +192,15 @@ export const createMcpServer = (payload: MCPServerCreate) =>
 export interface MCPServerPatch {
   name?: string;
   description?: string;
+  // Flipping is_internal re-normalises the row server-side (external →
+  // internal wipes the endpoint and credentials). The UI keeps the kind fixed.
+  is_internal?: boolean;
+  capability_config?: CapabilityConfig;
   url?: string;
   command?: string;
+  docker_image?: string;
+  docker_command?: string;
+  kubernetes_service?: string;
   timeout_seconds?: number;
   max_retries?: number;
   config?: Record<string, unknown>;
@@ -221,9 +254,6 @@ export interface Persona {
   is_active: boolean;
   avatar?: string | null;
 }
-
-// Mirrors intelligence/services.py — a guard rail, not a database constraint.
-export const MAX_MCP_SERVERS_PER_PERSONA = 5;
 
 // project_id is a required query param server-side.
 export const listPersonas = (projectId: string) => apiJson<Persona[]>(`/api/v1/personas/?project_id=${encodeURIComponent(projectId)}`);

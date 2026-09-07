@@ -34,8 +34,8 @@ const MODELS = [
 
 function mcp(id: string, name: string, over: Partial<MCPServer> = {}): MCPServer {
   return {
-    id, name, description: null, project_id: "p1", server_type: "remote", transport: "http",
-    url: `http://${id}.internal/mcp`, command: null, timeout_seconds: 60, max_retries: 3, config: {}, is_first_party: false, embed_output: false,
+    id, name, description: null, project_id: "p1", is_internal: false, capability_config: {}, is_protected: false, is_default: false, server_type: "remote", transport: "http",
+    url: `http://${id}.internal/mcp`, command: null, docker_image: null, docker_command: null, kubernetes_service: null, timeout_seconds: 60, max_retries: 3, config: {}, is_first_party: false, embed_output: false,
     auth_type: "none", oauth_config: null, oauth_connected: false, ...over,
   };
 }
@@ -45,8 +45,8 @@ const LAYLA: Persona = {
   id: "per0", name: "Layla", description: "Product analyst", project_id: "p1",
   model: ref(MODELS[0]), advisor_model: ref(MODELS[2]),
   mcp_servers: [
-    { id: "s1", name: "Warehouse tools", transport: "http", auth_type: "none", oauth_connected: false },
-    { id: "s2", name: "Jira", transport: "http", auth_type: "oauth2", oauth_connected: false },
+    { id: "s1", name: "Warehouse tools", is_internal: false, transport: "http", auth_type: "none", oauth_connected: false },
+    { id: "s2", name: "Jira", is_internal: false, transport: "http", auth_type: "oauth2", oauth_connected: false },
   ],
   temperature: 0.3, max_tokens: 2048, max_steps: 12,
   prompt: { system_prompt: "You are the analyst.", output_type: "chart" },
@@ -256,15 +256,48 @@ describe("CreatePersonaDialog — composition", () => {
     expect(within(dialog).getByText(/isn't marked tool-capable/i)).toBeInTheDocument();
   });
 
-  it("caps tool servers at five", async () => {
+  it("no longer caps tool sources — six tick and all six are posted", async () => {
     servers = ["s1", "s2", "s3", "s4", "s5", "s6"].map((id) => mcp(id, `Server ${id}`));
     renderTab();
     const dialog = await openCreate();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Toolsmith" } });
     fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });
-    for (const id of ["s1", "s2", "s3", "s4", "s5"]) fireEvent.click(toolBox(dialog, `Server ${id}`));
-    expect(toolBox(dialog, "Server s6").disabled).toBe(true);
-    expect(toolBox(dialog, "Server s1").disabled).toBe(false); // ticked ones stay untickable
-    expect(within(dialog).getByText(/up to 5/i)).toBeInTheDocument();
+    for (const id of ["s1", "s2", "s3", "s4", "s5", "s6"]) fireEvent.click(toolBox(dialog, `Server ${id}`));
+    expect(toolBox(dialog, "Server s6").checked).toBe(true);
+    expect(within(dialog).queryByText(/up to 5/i)).not.toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Role"), { target: { value: "You build tools." } });
+    fireEvent.submit(document.getElementById("pe-form")!);
+    await waitFor(() => expect(personaBody).not.toBeNull());
+    expect(personaBody!.mcp_server_ids).toEqual(["s1", "s2", "s3", "s4", "s5", "s6"]);
+  });
+
+  it("pre-ticks the project's default built-in capabilities on a new persona, badges them, and lets the user untick", async () => {
+    servers = [mcp("s0", "Apollo Capabilities", { is_internal: true, is_default: true, is_protected: true, url: null, capability_config: { Filesystem: {}, Shell: {} } }), ...servers];
+    renderTab();
+    const dialog = await openCreate();
+    fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });
+    await waitFor(() => expect(toolBox(dialog, "Apollo Capabilities").checked).toBe(true));
+    expect(toolBox(dialog, "Warehouse tools").checked).toBe(false);
+    const row = toolBox(dialog, "Apollo Capabilities").closest("label")!;
+    expect(within(row).getByText("built-in")).toBeInTheDocument();
+    expect(within(row).getByText("default")).toBeInTheDocument();
+    fireEvent.click(toolBox(dialog, "Apollo Capabilities"));
+    expect(toolBox(dialog, "Apollo Capabilities").checked).toBe(false);
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Plain" } });
+    fireEvent.change(within(dialog).getByLabelText("Role"), { target: { value: "You answer." } });
+    fireEvent.submit(document.getElementById("pe-form")!);
+    await waitFor(() => expect(personaBody).not.toBeNull());
+    expect(personaBody!.mcp_server_ids).toEqual([]);
+  });
+
+  it("does not pre-tick the default row for a model that cannot call tools", async () => {
+    servers = [mcp("s0", "Apollo Capabilities", { is_internal: true, is_default: true, is_protected: true, url: null }), ...servers];
+    renderTab();
+    const dialog = await openCreate();
+    fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m3" } }); // Chat only
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toolBox(dialog, "Apollo Capabilities").checked).toBe(false);
+    expect(toolBox(dialog, "Apollo Capabilities").disabled).toBe(true);
   });
 
   it("ignores a second submit while the attach is still in flight", async () => {

@@ -25,7 +25,6 @@ import {
 import { useProjects } from "@/hooks/use-workspace";
 import {
   fetchPromptTemplate,
-  MAX_MCP_SERVERS_PER_PERSONA,
   type ModelConfig,
   type ModelConfigRef,
   type Persona,
@@ -234,6 +233,10 @@ function useBacking(
   const [modelId, setModelId] = useState(initial.modelId);
   const [advisorId, setAdvisorId] = useState(initial.advisorId);
   const [serverIds, setServerIds] = useState<string[]>(initial.serverIds);
+  const [touchedServers, setTouchedServers] = useState(false);
+  // Mirrors touchedServers synchronously: a programmatic pre-tick scheduled
+  // before the user's first click must not land after it and wipe the tick.
+  const touchedRef = useRef(false);
   const [clearedTools, setClearedTools] = useState(false);
   const resolve = (id: string) => models?.find((m) => m.id === id) ?? knownRefs.find((r) => r?.id === id) ?? undefined;
   const model = modelId ? resolve(modelId) : undefined;
@@ -252,26 +255,36 @@ function useBacking(
   };
   const toggleServer = (id: string) => {
     setClearedTools(false);
+    touchedRef.current = true;
+    setTouchedServers(true);
     setServerIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+  };
+  // Programmatic ticks (the project's default capabilities) — not a touch,
+  // and never over the user's own.
+  const replaceServers = (ids: string[]) => {
+    if (touchedRef.current) return;
+    setServerIds(ids);
   };
   const clearAll = () => {
     setModelId("");
     setAdvisorId("");
     setServerIds([]);
+    touchedRef.current = false;
+    setTouchedServers(false);
     setClearedTools(false);
   };
-  return { modelId, advisorId, serverIds, model, lacksTools, clearedTools, pickModel, setAdvisorId, toggleServer, clearAll };
+  return { modelId, advisorId, serverIds, model, lacksTools, clearedTools, touchedServers, pickModel, setAdvisorId, toggleServer, replaceServers, clearAll };
 }
 
 function ToolServerPicker({ servers, selected, onToggle, disabledReason, clearedNote, onAdd }: {
-  servers: { id: string; name: string }[];
+  servers: { id: string; name: string; is_internal?: boolean; is_default?: boolean }[];
   selected: string[];
   onToggle: (id: string) => void;
   disabledReason: string | null; // set when the chosen model can't call tools
   clearedNote: boolean;          // ticks were just cleared by a model switch
   onAdd: () => void;
 }) {
-  const full = selected.length >= MAX_MCP_SERVERS_PER_PERSONA;
+  // No cap: the server dropped MAX_MCP_SERVERS_PER_PERSONA in #104.
   return (
     <fieldset>
       <legend className="mb-1.5 block text-[13px] font-medium text-ink2">MCP tool servers <span className="text-ink2">(optional)</span></legend>
@@ -283,12 +296,14 @@ function ToolServerPicker({ servers, selected, onToggle, disabledReason, cleared
         <ul className="grid gap-1.5 sm:grid-cols-2">
           {servers.map((s) => {
             const on = selected.includes(s.id);
-            const off = !!disabledReason || (!on && full);
+            const off = !!disabledReason;
             return (
               <li key={s.id}>
                 <label className={`flex items-center gap-2.5 rounded-[10px] border px-3 py-2 text-[13px] transition-colors ${on ? "border-accent bg-accent/10" : "border-line bg-surface"} ${off ? "opacity-60" : "cursor-pointer hover:border-accent/50"}`}>
-                  <input type="checkbox" checked={on} disabled={off} onChange={() => onToggle(s.id)} className="accent-[var(--accent)]" />
+                  <input type="checkbox" aria-label={s.name} checked={on} disabled={off} onChange={() => onToggle(s.id)} className="accent-[var(--accent)]" />
                   <span className="truncate">{s.name}</span>
+                  {s.is_internal && <Chip tone="accent">built-in</Chip>}
+                  {s.is_default && <Chip tone="ok">default</Chip>}
                 </label>
               </li>
             );
@@ -299,7 +314,7 @@ function ToolServerPicker({ servers, selected, onToggle, disabledReason, cleared
         {disabledReason ? (
           <p className="text-[12px] text-warn">{disabledReason}{clearedNote ? " Your ticks were cleared." : ""}</p>
         ) : (
-          <p className="text-[12px] text-ink2">Up to {MAX_MCP_SERVERS_PER_PERSONA} MCP tool servers per persona — this project&apos;s only, since a server belongs to one project.</p>
+          <p className="text-[12px] text-ink2">This project&apos;s tool sources only — a source belongs to one project.</p>
         )}
         <button type="button" onClick={onAdd} className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-semibold text-accent hover:underline">
           <Plus size={12} strokeWidth={2.4} /> Add an MCP tool server
@@ -449,6 +464,18 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
   // MCP servers are project-owned — only this project's can be mounted.
   const projectServers = servers?.filter((s) => s.project_id === projectId) ?? [];
   const projName = projects?.find((p) => p.id === projectId)?.name;
+  // The project's default capabilities row (provisioned with the project)
+  // starts ticked on a new persona — untick to opt out. Re-applied when the
+  // project changes; never once the user has touched the ticks, and not for a
+  // model that cannot call tools.
+  const defaultIds = projectServers.filter((s) => s.is_default).map((s) => s.id).join(",");
+  const { replaceServers, touchedServers, lacksTools } = backing;
+  useEffect(() => {
+    if (!projectId || touchedServers || lacksTools) return;
+    const raf = requestAnimationFrame(() => replaceServers(defaultIds ? defaultIds.split(",") : []));
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- replaceServers is recreated per render; the guards above are in the deps
+  }, [projectId, defaultIds, touchedServers, lacksTools]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -465,7 +492,6 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     // Mirrors the server's wiring rules — unreachable through the controls,
     // kept so a stale list can never produce a confusing round-trip 400.
     if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
-    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} MCP tool servers.`);
     if (!systemPrompt.trim()) return setErr("Write the role — it's the persona's job description.");
     const ge = validateGeneration(temp, tokens, steps);
     if (ge) return setErr(ge);
@@ -697,7 +723,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
   const projectServers = [
     ...(servers?.filter((s) => s.project_id === persona.project_id) ?? []),
     ...persona.mcp_servers.filter((m) => !servers?.some((s) => s.id === m.id)),
-  ].map((s) => ({ id: s.id, name: s.name }));
+  ].map((s) => ({ id: s.id, name: s.name, is_internal: s.is_internal, is_default: (s as { is_default?: boolean }).is_default }));
 
   const validateName = (v: string) => {
     const n = v.trim();
@@ -718,7 +744,6 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
     if (ne) return;
     if (!backing.modelId) return setErr("Pick the model that powers them.");
     if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
-    if (backing.serverIds.length > MAX_MCP_SERVERS_PER_PERSONA) return setErr(`A persona can mount at most ${MAX_MCP_SERVERS_PER_PERSONA} MCP tool servers.`);
     if (!systemPrompt.trim()) return setErr("The role can't be empty — it's the persona's job description.");
     const ge = validateGeneration(temp, tokens, steps);
     if (ge) return setErr(ge);
