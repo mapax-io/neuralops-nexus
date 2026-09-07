@@ -356,3 +356,40 @@ under construction) and which the web app should reflect now — in particular w
 to hide the three unsupported providers and the MCP/advisor/generation controls until
 the runner reads them, or keep the nucleus contract as the source of truth (current
 choice).
+
+---
+
+## Chat realtime events: what nucleus publishes vs what a client can show
+
+**Where:** `modules/nexus-nucleus/chat/services.py` (`trigger_ai_response_async`,
+`trigger_ai_swarm_response_async`), `chat/api.py` (`typing`, `send_message`), `chat/tasks.py`.
+
+Audit of every `publish`/`publish_async` call site (2026-09-07) against the web app's
+`lib/realtime/events.ts` + `message-store.ts`. Published on `topic-{id}`: `message`
+(human, persona, system — `_serialise()` carries the type), `user_typing`,
+`message_start`, `message_delta`, `message_done`, `message_error`, `swarm_transition`.
+The web app binds all seven (swarm ids are remapped to the DB message by nucleus, so
+dones and transitions land on the right bubble). Nothing published is dropped. What the
+web app cannot show because nothing is published:
+
+- **Tool activity.** The AI worker emits `tool_call_start` (built-in web search, shell,
+  filesystem after #101) and the swarm path receives it, but neither relay forwards it
+  (single path: `chat/services.py` L583-607 handles delta/done/error only; swarm path
+  L815-897 handles start/delta/done/transition/error). A "using web search…" cue is
+  one relayed event away; the web app's `parseEvent` ignores unknown types, so adding
+  the relay is additive.
+- **Persona typing / thinking.** No persona-side counterpart to `user_typing` exists;
+  the only signal is the gap between `message_start` and the first `message_delta`,
+  which the web app renders as an in-bubble "Thinking…" cue.
+- **Swarm failure.** The swarm relay marks the message FAILED but publishes no
+  `message_error` (the single path does), so clients fall back to stall detection.
+- **Workspace-level channel.** Nothing is published outside topic channels (no unread
+  counts, invitations, new topics/channels), so those refresh by polling only.
+- **Dead path.** `chat/tasks.py generate_ai_response` (Celery) publishes `token` /
+  `done` / `error` on `topic:{id}` (colon, a different channel) — no caller anywhere
+  (`grep -rn ".delay(\|apply_async(" modules/nexus-nucleus` → none). Safe to delete.
+
+**Decision needed:** relay `tool_call_start` (and a `tool_call_done`) on both paths,
+and publish `message_error` on swarm failure — the web app will bind each the day it
+appears.
+
