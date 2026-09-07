@@ -181,7 +181,7 @@ describe("McpTab — single-project ownership (spec §3.3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Local files" }));
     await screen.findByText("Edit Local files");
     expect(screen.queryByLabelText("Transport")).not.toBeInTheDocument();
-    expect(screen.getByText(/stdio/i, { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("STDIO")).toBeInTheDocument();
     expect(screen.getByLabelText("Command")).toHaveValue("npx -y server-fs /data");
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
   });

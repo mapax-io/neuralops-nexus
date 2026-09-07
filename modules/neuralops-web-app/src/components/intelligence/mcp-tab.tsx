@@ -45,10 +45,10 @@ function connSignature(
 // (https://, wss://), so each transport names the schemes it takes and the
 // address field shows an example of the right shape.
 const TRANSPORTS = [
-  { value: "http", label: "HTTP — a streamable HTTP endpoint", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/mcp", hint: "The server's streamable-HTTP endpoint, http:// or https:// — many servers serve it at /mcp." },
-  { value: "sse", label: "SSE — a server-sent events endpoint", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/sse", hint: "The server's SSE endpoint, http:// or https:// — many servers serve it at /sse." },
-  { value: "websocket", label: "WebSocket", schemes: ["ws:", "wss:"], placeholder: "wss://tools.example.com/mcp", hint: "The server's WebSocket endpoint, ws:// or wss://." },
-  { value: "stdio", label: "STDIO — a local command", schemes: [], placeholder: "npx -y @modelcontextprotocol/server-filesystem /data", hint: "The program and its arguments, as you would type them in a shell. It runs on the NeuralOps server; its tools are read over stdin/stdout." },
+  { value: "http", label: "HTTP — a streamable HTTP endpoint", short: "HTTP", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/mcp", hint: "The server's streamable-HTTP endpoint, http:// or https:// — many servers serve it at /mcp." },
+  { value: "sse", label: "SSE — a server-sent events endpoint", short: "SSE", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/sse", hint: "The server's SSE endpoint, http:// or https:// — many servers serve it at /sse." },
+  { value: "websocket", label: "WebSocket", short: "WebSocket", schemes: ["ws:", "wss:"], placeholder: "wss://tools.example.com/mcp", hint: "The server's WebSocket endpoint, ws:// or wss://." },
+  { value: "stdio", label: "STDIO — a local command", short: "STDIO", schemes: [], placeholder: "npx -y @modelcontextprotocol/server-filesystem /data", hint: "The program and its arguments, as you would type them in a shell. It runs on the NeuralOps server; its tools are read over stdin/stdout." },
 ] as const;
 const transportOf = (value: string) => TRANSPORTS.find((t) => t.value === value) ?? TRANSPORTS[0];
 const isStdio = (transport: string) => transport === "stdio";
@@ -138,6 +138,18 @@ const KINDS: { value: Kind; label: string; blurb: string }[] = [
   { value: "external", label: "External MCP server", blurb: "Reached over HTTP, SSE or WebSocket, or run as a local STDIO command." },
   { value: "internal", label: "Built-in capabilities", blurb: "Filesystem, shell, web search and more — provided in-process, no server to run." },
 ];
+
+// A value fixed after creation, in the same shape as the field beside it —
+// caption above, input-height box — so the row lines up, and never a form
+// control: there is nothing to submit.
+function FixedField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[13px] font-medium text-ink2">{label} <span className="text-ink2/70">(fixed)</span></p>
+      <div className="flex h-10 items-center truncate rounded-[10px] border border-line bg-surface2/60 px-3 text-[13.5px]">{children}</div>
+    </div>
+  );
+}
 
 function KindSwitch({ value, onChange }: { value: Kind; onChange: (k: Kind) => void }) {
   return (
@@ -777,10 +789,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           <FieldError>{form.error("name")}</FieldError>
         </div>
         {server.is_internal && (
-          <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-            <p className="text-[12px] text-ink2">Kind <span className="text-ink2/70">(fixed)</span></p>
-            <p className="mt-0.5">Built-in capabilities{server.is_default ? " — this project's default" : ""}</p>
-          </div>
+          <FixedField label="Kind">Built-in capabilities{server.is_default ? " — this project's default" : ""}</FixedField>
         )}
         <div>
           <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
@@ -796,11 +805,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
         {!server.is_internal && (
           <>
         <DialogSection title="Connection" hint="How the AI worker reaches the server. Transport and runtime are fixed after creation.">
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
-          <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-            <p className="text-[12px] text-ink2">Transport <span className="text-ink2/70">(fixed)</span></p>
-            <p className="mt-0.5"><code className="font-mono text-[12.5px]">{server.transport}</code></p>
-          </div>
+        <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+          <FixedField label="Transport">{transportOf(server.transport).short}</FixedField>
           {stdio ? (
             <div>
               <Label htmlFor="mce-command" required>Command</Label>
@@ -834,11 +840,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
             </div>
           )}
         </div>
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
-              <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-                <p className="text-[12px] text-ink2">Runs as <span className="text-ink2/70">(fixed)</span></p>
-                <p className="mt-0.5">{runtimeLabel(server.server_type)}</p>
-              </div>
+            <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+              <FixedField label="Runs as">{runtimeLabel(server.server_type)}</FixedField>
               <RuntimeDetails idPrefix="mce" runtime={server.server_type} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
             </div>
         </DialogSection>
