@@ -22,15 +22,19 @@ express them:
 
 _validate_persona_wiring() is the single place all three are applied.
 """
+import copy
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-# Soft cap on tool servers per persona. Each one means a live MCP session
-# per trigger and every one of its tools lands in the model's tool list, so
-# an unbounded number bloats the prompt and slows the run. Not a database
-# constraint -- a guard rail with a number we can revisit.
-MAX_MCP_SERVERS_PER_PERSONA = 5
+# NOTE: there is deliberately no cap on tool sources per persona. There was
+# one (MAX_MCP_SERVERS_PER_PERSONA = 5), removed on purpose: it counted
+# internal capabilities and external servers together, so the
+# auto-provisioned capabilities row ate a slot despite opening no session,
+# and the real limit is a product decision better made where they are
+# attached than enforced as a blanket number here.
 
 
 def get_company():
@@ -203,6 +207,52 @@ def list_mcp_servers_all(company, user):
     return visible_mcp_servers(user, company)
 
 
+# The fields each kind of row must NOT have. Named as delete lists, because
+# that is what they are: whichever list applies gets wiped, and whatever is
+# not on it survives untouched.
+#
+#     internal row -> _PROTOCOL_FIELDS wiped   -> capability_config survives
+#     external row -> _CAPABILITY_FIELDS wiped -> url/command/auth survive
+_PROTOCOL_FIELDS = (
+    "url", "command", "docker_image", "docker_command",
+    "kubernetes_service", "oauth_config",
+)
+_CAPABILITY_FIELDS = ("capability_config",)
+
+
+def _blank_out(server, fields) -> None:
+    """Empty every named field: None for nullables, {} for the JSON one."""
+    for field in fields:
+        setattr(server, field, {} if field == "capability_config" else None)
+
+
+def _apply_internal_normalisation(server) -> None:
+    """
+    Make an MCPServer row consistent with its own `is_internal` flag.
+
+    An internal row is a pydantic-ai capability: in-process, no protocol, no
+    endpoint, no credentials. The mcp_internal_has_no_endpoint constraint
+    already says so at the database level, but a constraint can only REJECT a
+    bad row -- it cannot clean one up. Two things follow:
+
+      * auth_type defaults to "static_secrets", so an internal row created
+        without touching it would fail the constraint with an opaque
+        IntegrityError rather than doing the obvious thing. Forced to "none".
+      * a payload carrying a stale url/command (the UI greys those fields out
+        but a direct API call need not) is silently cleared instead of 400ing
+        on a field the caller was told to ignore.
+
+    The mirror case matters too: capability_config is meaningless on an
+    external server, so it is emptied there. That half is not DB-enforced --
+    it is a tidiness rule, not a correctness one.
+    """
+    if server.is_internal:
+        _blank_out(server, _PROTOCOL_FIELDS)   # internal rows keep capability_config
+        server.auth_type = "none"              # not nullable, so blanked by value
+    else:
+        _blank_out(server, _CAPABILITY_FIELDS)  # external rows keep the protocol fields
+
+
 def create_mcp_server_standalone(company, data: dict):
     """
     MCP servers are project-owned via a real FK now, so the per-project name
@@ -219,15 +269,34 @@ def create_mcp_server_standalone(company, data: dict):
     if not project:
         raise ValueError("Project not found.")
 
+    # Built then saved rather than .create()d, so normalisation lands before
+    # the row hits the database and the constraint stays a backstop.
+    server = MCPServer(company=company, project=project, **data)
+
+    # Internal rows start from settings.MCP_CAPABILITY_TEMPLATE unless the
+    # caller sent their own JSON. Seeded on CREATE only: on update, an empty
+    # capability_config is a deliberate "clear it", not "reload the default",
+    # and silently refilling it would make the field impossible to empty.
+    #
+    # deepcopy is load-bearing -- handing rows a reference to the settings
+    # dict means one user editing Filesystem.protected_patterns mutates the
+    # module-level constant, and every row created afterwards in that worker
+    # process inherits the change.
+    if server.is_internal and not server.capability_config:
+        server.capability_config = copy.deepcopy(settings.MCP_CAPABILITY_TEMPLATE)
+
+    _apply_internal_normalisation(server)
     try:
-        server = MCPServer.objects.create(company=company, project=project, **data)
+        server.save()
     except IntegrityError:
         raise ValueError(
             "An MCP server named '%s' already exists in this project."
             % data.get("name")
         )
 
-    if client_secret:
+    # An internal row has no credentials of any kind -- a client_secret sent
+    # alongside one is dropped, not stored.
+    if client_secret and not server.is_internal:
         server.set_secrets({**server.get_secrets(), "client_secret": client_secret})
         server.save()
     return server
@@ -257,7 +326,16 @@ def update_mcp_server_standalone(company, server_id: str, data: dict):
     for field, value in data.items():
         if value is not None:
             setattr(server, field, value)
-    if client_secret:
+
+    # AFTER the setattr loop, and deliberately not inside it: the loop skips
+    # None values (that is how PATCH distinguishes "not sent"), so clearing a
+    # field to None can only be done here. Note this reads server.is_internal,
+    # i.e. the value the patch may have just flipped -- switching a row from
+    # external to internal wipes its endpoint and credentials in the same
+    # request.
+    _apply_internal_normalisation(server)
+
+    if client_secret and not server.is_internal:
         server.set_secrets({**server.get_secrets(), "client_secret": client_secret})
     server.save()
     return server
@@ -315,11 +393,6 @@ def _validate_persona_wiring(company, project, model_config, advisor, servers):
         )
 
     if servers:
-        if len(servers) > MAX_MCP_SERVERS_PER_PERSONA:
-            raise ValueError(
-                "A persona can mount at most %d MCP servers."
-                % MAX_MCP_SERVERS_PER_PERSONA
-            )
         if not model_config.supports_tools:
             raise ValueError(
                 "'%s' is not marked as tool-capable, so MCP servers cannot be "

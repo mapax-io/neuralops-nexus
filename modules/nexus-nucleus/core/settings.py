@@ -161,6 +161,74 @@ NEXUS_AI_URL = os.getenv("NEXUS_AI_URL", "")          # e.g. http://nexus-ai:800
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")  # shared secret with nexus-ai
 
 # =========================================================
+# pydantic-ai capability template
+# =========================================================
+# The starting JSON handed to a user creating an INTERNAL MCPServer row
+# (is_internal=True). Keys are NativePydanticAICapabilities members from
+# modules/nexus-ai/apps/schemas/trigger.py; values are the field defaults of
+# each capability's argument model.
+#
+# MCP is deliberately ABSENT. That capability is what an EXTERNAL server
+# becomes -- nexus-ai builds MCPArgs(url=..., authorization_token=...) from
+# the row's own url/auth fields at trigger time -- so it is never something
+# anyone configures by hand here.
+#
+# {} means nexus-ai does not accept arguments for that capability yet: most
+# of the argument models in trigger.py are still bare `...` stubs. The keys
+# are listed anyway so the full menu of what pydantic-ai offers is visible.
+#
+# nucleus NEVER interprets this. It seeds the field on create, then stores
+# and forwards whatever the user saved, verbatim. The shape belongs to
+# trigger.py, and duplicating its validation rules here would just be a
+# second place to get them wrong.
+#
+# Because nucleus cannot import from nexus-ai (separate service, venv and
+# container), this is a COPY across the service boundary and can drift.
+# Re-derive it whenever trigger.py's argument models change.
+PROJECTS_ROOT = Path("/nexus/projects")
+MCP_CAPABILITY_TEMPLATE = {
+    "Filesystem": {
+        "root_dir": ".",
+        "allowed_patterns": [],
+        "denied_patterns": [],
+        "protected_patterns": [
+            ".git/*", ".env", ".env.*", "*.pem", "*.key", "**/secrets*",
+        ],
+    },
+    "Shell": {
+        "cwd": ".",
+        # Valid values, from trigger.py's ShellCommands enum: ls touch rm git
+        # cd cat echo grep sed pwd mkdir cp mv head tail curl wget. Anything
+        # outside that set is rejected by nexus-ai, not by nucleus.
+        "allowed_commands": ["ls", "touch", "cat", "cd", "grep", "cp", "mkdir"],
+        "denied_commands": [],
+        "allow_interactive": True,
+        "default_timeout": 30.0,
+        "max_output_chars": 50000,
+    },
+    "Stack One": {},
+    "Local Stack": {},
+    "Web Search": {"local": "duckduckgo"},
+    "Web Fetch": {"local": True},
+    "X Search": {},
+    # effort: minimal | low | medium | high | xhigh
+    "Thinking": {"effort": "medium"},
+    "Planning": {},
+    "Sub Agents": {},
+    "Dynamic Workflow": {},
+    "Advisor": {},
+    "Tool Search": {},
+    "Compaction": {},
+    "Memory": {},
+    "Skills": {},
+    "Repo Context": {},
+    "Gaurdrails": {},
+    "Spend Limits": {},
+    "Tool Approval": {},
+    "Capability Creation": {},
+}
+
+# =========================================================
 # Celery — Async Task Queue
 # =========================================================
 

@@ -60,6 +60,8 @@ def _oauth_connected(server) -> bool:
     get_secrets() is a Fernet decrypt, and doing it for every static-secrets
     server in a list would be pure waste.
     """
+    # Internal rows have auth_type forced to "none", so they short-circuit
+    # here too -- an in-process pydantic-ai capability has nothing to connect.
     if server.auth_type != "oauth2":
         return False
     return bool(server.get_secrets().get("refresh_token"))
@@ -106,6 +108,8 @@ def _mcp_out(server) -> MCPServerOut:
         name=server.name,
         description=server.description,
         project_id=str(server.project_id),
+        is_internal=server.is_internal,
+        capability_config=server.capability_config,
         server_type=server.server_type,
         transport=server.transport,
         url=server.url,
@@ -127,6 +131,7 @@ def _mcp_ref(server) -> MCPServerRef:
     return MCPServerRef(
         id=str(server.id),
         name=server.name,
+        is_internal=server.is_internal,
         transport=server.transport,
         auth_type=server.auth_type,
         oauth_connected=_oauth_connected(server),

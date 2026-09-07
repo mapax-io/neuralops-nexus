@@ -33,7 +33,39 @@ router = Router(tags=["Internal"], auth=internal_auth)
 # ── Response schemas ──────────────────────────────────────────────────────────
 
 
+class CapabilityInternal(Schema):
+    """
+    One INTERNAL row: a pydantic-ai capability, configured entirely by
+    `capability_config`. Nothing is dialled and nothing is spawned, so it
+    carries none of the transport/url/command/secrets machinery that
+    MCPServerInternal below is made of -- which is exactly why it is a
+    separate schema and a separate list rather than a flag on that one.
+
+    `capability_config` is a dict of capability name -> that capability's
+    arguments, e.g.
+
+        {"Filesystem": {"root_dir": "/nexus/projects/aurora-a1b2c3d4", ...},
+         "Shell":      {"cwd": "/nexus/projects/aurora-a1b2c3d4", ...},
+         "Web Search": {"local": "duckduckgo"},
+         "Web Fetch":  {"local": true}}
+
+    One row can therefore declare several capabilities at once -- which is
+    how project provisioning creates them. nucleus never interprets any of
+    it: stored opaque, forwarded verbatim, turned into real capabilities on
+    the nexus-ai side.
+    """
+    id: str
+    name: str
+    capability_config: dict = Field(default_factory=dict)
+
+
 class MCPServerInternal(Schema):
+    """
+    One EXTERNAL MCP server -- a real server reached over a protocol
+    (GitHub, Monday.com, a local stdio addon). Internal pydantic-ai
+    capabilities are NOT in this list; they arrive separately as
+    PersonaInternal.capabilities (see CapabilityInternal above).
+    """
     id: str
     name: str
     server_type: str
@@ -103,6 +135,21 @@ class PersonaInternal(Schema):
     `mcp_servers` is genuinely 0..N now. It used to come from
     AIAgent.mcp_server, a single FK, so it was never longer than one entry
     even though the consumer side has always handled a list.
+
+    ── Two lists, not one ────────────────────────────────────────────────
+    A persona's tool sources are stored in ONE table (MCPServer, split by
+    is_internal) but arrive here as TWO fields, because they are consumed
+    completely differently:
+
+        mcp_servers  -- external servers. nexus-ai dials or spawns each one,
+                        with its transport, credentials and reauth state.
+        capabilities -- internal rows. Nothing is dialled; nexus-ai reads
+                        capability_config and builds pydantic-ai
+                        capabilities from it.
+
+    This mirrors nexus-ai's own PersonaConfig, which has had exactly these
+    two fields all along -- so the split happens here, once, rather than
+    every consumer re-filtering a mixed list on a flag.
     """
     id: str
     name: str
@@ -110,6 +157,7 @@ class PersonaInternal(Schema):
     model: ModelInternal
     advisor_model: Optional[ModelInternal] = None
     mcp_servers: list[MCPServerInternal] = Field(default_factory=list)
+    capabilities: list[CapabilityInternal] = Field(default_factory=list)
     temperature: float
     max_tokens: int
     max_steps: int
@@ -181,6 +229,15 @@ def _model_internal(model) -> ModelInternal:
     )
 
 
+def _capability_internal(server) -> CapabilityInternal:
+    """Serialise one internal row. No secrets, no auth, no endpoint."""
+    return CapabilityInternal(
+        id=str(server.id),
+        name=server.name,
+        capability_config=server.capability_config,
+    )
+
+
 def _mcp_internal(server, needs_reauth: bool) -> MCPServerInternal:
     return MCPServerInternal(
         id=str(server.id),
@@ -212,7 +269,8 @@ def get_persona_internal(request, persona_id: str):
     Fetch full persona config for nexus-ai to use on trigger.
 
     Returns: prompt + model (decrypted key) + optional advisor model +
-    0..N MCP servers + generation settings.
+    0..N EXTERNAL MCP servers + 0..N INTERNAL capabilities + generation
+    settings.
 
     No source_type branch any more -- a persona has one model, optionally an
     advisor, and zero or more tool servers. "Agent-ness" is emergent: no MCP
@@ -257,8 +315,16 @@ def get_persona_internal(request, persona_id: str):
     # returns True immediately for any non-oauth2 server and returns early
     # for an oauth2 server whose token is still valid, so iterating is cheap:
     # only an actually-expiring token costs a network round trip.
+    #
+    # The single mcp_servers M2M is split into two lists here -- internal
+    # rows never touch the OAuth path at all (they have no credentials to
+    # refresh), and the consumer wants them apart anyway.
     mcp_servers = []
+    capabilities = []
     for server in persona.mcp_servers.filter(is_active=True):
+        if server.is_internal:
+            capabilities.append(_capability_internal(server))
+            continue
         ok = oauth_client.refresh_if_needed(server)
         mcp_servers.append(_mcp_internal(server, needs_reauth=not ok))
 
@@ -273,6 +339,7 @@ def get_persona_internal(request, persona_id: str):
         model=_model_internal(persona.model),
         advisor_model=_model_internal(advisor) if advisor else None,
         mcp_servers=mcp_servers,
+        capabilities=capabilities,
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
         max_steps=persona.max_steps,
