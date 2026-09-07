@@ -129,9 +129,14 @@ in `docker-compose.neuralops.yaml`, so they take effect the moment the
 container is (re)created — no special flag needed on the `up` command for
 them specifically.
 
-Everything else (Supabase URL/anon key, portal URL, version) is baked into
-the image itself and isn't settable from these files — see the comment block
-in `neuralops/app.env.example` if you're curious why. There's also no AI
+Everything else (portal URL, version) is baked into the image itself and
+isn't settable from these files — see the comment block in
+`neuralops/app.env.example` if you're curious why. The Supabase identity
+project is the exception: the image bakes the shared platform project as the
+default, and `SUPABASE_URL` / `SUPABASE_ANON_KEY` (plus the optional
+`SUPABASE_SERVICE_KEY`, which turns on invitation emails) can be set in
+`app.env` to run against your own project — the web app must then point at
+the same project. There's also no AI
 provider key here on purpose — you add that from inside the chat after
 connecting (step 8), not as an env var.
 

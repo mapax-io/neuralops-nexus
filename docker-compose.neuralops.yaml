@@ -19,8 +19,10 @@
 # Secrets note: SUPABASE_*, NEURALOPS_PORTAL_URL, and NEURALOPS_VERSION are
 # deliberately NOT set anywhere in this file — they're baked into the
 # neuralops image itself (see neuralops/Dockerfile), one shared default for
-# every deployment (SUPABASE_URL/ANON_KEY genuinely are shared -- one real
-# Supabase project every deployment's login talks to). There is also no
+# every deployment. SUPABASE_URL/ANON_KEY (and the optional SERVICE_KEY)
+# can be overridden per deployment from neuralops/app.env, which the
+# nucleus services load via env_file: -- a deployment on its own identity
+# project sets them there (see app.env.example). There is also no
 # OPENAI_API_KEY/ANTHROPIC_API_KEY anywhere in this file on purpose — no
 # shared default exists for those, ever; nucleus's /add-model UI is the
 # real path for those, not an env var.

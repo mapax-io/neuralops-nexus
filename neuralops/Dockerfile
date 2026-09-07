@@ -112,14 +112,14 @@ RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
 #     DB instead.
 #   - SUPABASE_SERVICE_KEY -- removed once this repo went public. It's a
 #     full-admin key for the whole shared Supabase project (bypasses RLS,
-#     full Auth Admin API), and traced usage showed nothing in the app
-#     actually needs it: neither POST /api/v1/members/invite/
-#     (members_services.py:send_invite) nor the /invite slash command
-#     (team_services.py:invite_to_project) call authn/supabase.py's
-#     invite_user_by_email() -- both just create a pending Invitation row
-#     and leave the person to share the link manually. settings.py
-#     already defaults it to "" via os.getenv(), so leaving it unset here
-#     is safe.
+#     full Auth Admin API). It is OPTIONAL and per deployment: a server
+#     whose owner controls the identity project can set it in app.env,
+#     and invitations then also email the invitee through
+#     invite_user_by_email() (workspace/services.py:_send_invite_email);
+#     unset, an invite is a pre-authorised address the inviter passes on.
+#     settings.py defaults it to "" via os.getenv().
+#     SUPABASE_URL / SUPABASE_ANON_KEY below are likewise only defaults now
+#     -- app.env can point a deployment at its own identity project.
 #   - FIELD_ENCRYPTION_KEY / INTERNAL_API_KEY / CENTRIFUGO_API_KEY /
 #     CENTRIFUGO_HMAC_SECRET -- used to be baked as one shared default
 #     here too, but that stopped being safe once this image went public:

@@ -108,11 +108,21 @@ AUTH_USER_MODEL = "nucleus.User"
 # Supabase JWT verification
 # =========================================================
 
-SUPABASE_URL = "https://xgfsxikypxjhqlutiepw.supabase.co"
+# The identity project this server verifies tokens against. The image bakes
+# the shared platform project as the default (neuralops/Dockerfile ENV); a
+# deployment that runs its own Supabase project sets SUPABASE_URL and
+# SUPABASE_ANON_KEY in neuralops/app.env -- and the web app it is used with
+# must point its NEXT_PUBLIC_SUPABASE_* at the same project, or every token
+# is rejected as "not issued by this server's identity project".
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://xgfsxikypxjhqlutiepw.supabase.co").rstrip("/")
 SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_JWT_ISSUER = f"{SUPABASE_URL}/auth/v1"
-SUPABASE_JWT_AUDIENCE = "authenticated"
+SUPABASE_JWT_AUDIENCE = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+# Optional. The project's service_role key: when set, invitations also send
+# the invitee an email through Supabase's admin invite API (see
+# workspace/services.py:_send_invite_email). Only ever set it on a server
+# whose identity project you control -- it is a full-admin key.
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 # =========================================================
