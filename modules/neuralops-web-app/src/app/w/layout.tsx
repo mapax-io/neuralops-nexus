@@ -7,7 +7,7 @@ import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { TopBar } from "@/components/shell/top-bar";
 import { WorkspaceTree } from "@/components/shell/workspace-tree";
-import { Skeleton } from "@/components/ui/surfaces";
+import { FullPageLoader } from "@/components/ui/full-page-loader";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useSelection } from "@/stores/selection.store";
 
@@ -66,12 +66,10 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount when authenticated
   }, [hydrated, !!token, serverUrl]);
 
+  // Held behind hydration/auth: the same full-page loader every other page
+  // uses — a lone skeleton here read as an empty box on every reload.
   if (!hydrated || !token || !serverUrl) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-bg">
-        <Skeleton className="h-40 w-80" />
-      </div>
-    );
+    return <FullPageLoader />;
   }
 
   return (
