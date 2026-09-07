@@ -10,8 +10,9 @@ const signInWithPassword = vi.fn();
 const signUp = vi.fn();
 const resetPasswordForEmail = vi.fn();
 const signInWithOAuth = vi.fn();
+const resend = vi.fn();
 vi.mock("@/lib/supabase", () => ({
-  supabase: () => ({ auth: { signInWithPassword, signUp, signInWithOAuth, resetPasswordForEmail } }),
+  supabase: () => ({ auth: { signInWithPassword, signUp, signInWithOAuth, resetPasswordForEmail, resend } }),
 }));
 
 beforeEach(() => {
@@ -19,6 +20,7 @@ beforeEach(() => {
   signInWithPassword.mockReset();
   signUp.mockReset();
   signInWithOAuth.mockReset();
+  resend.mockReset();
 });
 
 describe("LoginForm", () => {
@@ -71,6 +73,20 @@ describe("LoginForm", () => {
     await user.click(screen.getByRole("button", { name: /create account/i }));
     expect(await screen.findByText(/check your email/i)).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("offers to resend the confirmation email, and reports the result", async () => {
+    signUp.mockResolvedValue({ data: { session: null }, error: null });
+    resend.mockResolvedValue({ error: null });
+    const user = userEvent.setup();
+    render(<LoginForm />);
+    await user.click(screen.getByRole("button", { name: /create an account/i }));
+    await user.type(screen.getByLabelText(/email/i), "new@b.co");
+    await user.type(screen.getByLabelText(/password/i), "secret12");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+    await user.click(await screen.findByRole("button", { name: /resend/i }));
+    expect(resend).toHaveBeenCalledWith({ type: "signup", email: "new@b.co" });
+    expect(await screen.findByText(/sent again/i)).toBeInTheDocument();
   });
 
   it("sends a reset link in forgot mode without demanding a password", async () => {

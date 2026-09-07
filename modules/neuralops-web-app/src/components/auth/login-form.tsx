@@ -34,6 +34,9 @@ export function LoginForm() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  // Set after a sign-up that needs email confirmation — offers a resend.
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
   const form = useForm<FormValues>({
     resolver: zodResolver(mode === "forgot" ? emailOnlySchema : mode === "signup" ? signUpSchema : signInSchema),
     defaultValues: { email: "", password: "" },
@@ -60,6 +63,7 @@ export function LoginForm() {
       if (error) throw error;
       if (!data.session) {
         setNotice("Check your email to confirm your account, then sign in.");
+        if (mode === "signup") setUnconfirmedEmail(email);
         return;
       }
       router.push("/servers");
@@ -69,6 +73,22 @@ export function LoginForm() {
       setPending(false);
     }
   });
+
+  // Confirmation mails go missing; the identity provider can send another.
+  const resendConfirmation = async () => {
+    if (!unconfirmedEmail) return;
+    setResending(true);
+    setServerError(null);
+    try {
+      const { error } = await supabase().auth.resend({ type: "signup", email: unconfirmedEmail });
+      if (error) throw error;
+      setNotice("Sent again — check your inbox (and spam) for the confirmation email.");
+    } catch (e) {
+      setServerError(e instanceof Error ? e.message : "Couldn't resend the email. Try again in a minute.");
+    } finally {
+      setResending(false);
+    }
+  };
 
   const [githubPending, setGithubPending] = useState(false);
   const github = async () => {
@@ -106,7 +126,19 @@ export function LoginForm() {
         </div>
       )}
       {serverError && <p role="alert" className="rounded-lg border border-crit/30 bg-crit/10 px-3 py-2 text-[13px] text-crit">{serverError}</p>}
-      {notice && <p role="status" className="rounded-lg border border-ok/30 bg-ok/10 px-3 py-2 text-[13px] text-ok">{notice}</p>}
+      {notice && (
+        <p role="status" className="rounded-lg border border-ok/30 bg-ok/10 px-3 py-2 text-[13px] text-ok">
+          {notice}
+          {unconfirmedEmail && (
+            <>
+              {" "}
+              <button type="button" onClick={resendConfirmation} disabled={resending} className="font-semibold underline underline-offset-2 disabled:opacity-60">
+                {resending ? "Resending…" : "Resend the email"}
+              </button>
+            </>
+          )}
+        </p>
+      )}
       <Button type="submit" variant="primary" size="lg" loading={pending}>
         {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send reset link"}
       </Button>
@@ -114,7 +146,7 @@ export function LoginForm() {
         <Button type="button" onClick={github} loading={githubPending}>Continue with GitHub</Button>
       )}
       <div className="flex justify-between text-[13px] text-ink2">
-        <button type="button" className="hover:text-ink" onClick={() => { form.clearErrors(); setNotice(null); setServerError(null); setMode(mode === "signin" ? "signup" : "signin"); }}>
+        <button type="button" className="hover:text-ink" onClick={() => { form.clearErrors(); setNotice(null); setServerError(null); setUnconfirmedEmail(null); setMode(mode === "signin" ? "signup" : "signin"); }}>
           {mode === "signin" ? "New here? Create an account" : "Have an account? Sign in"}
         </button>
         {mode === "signin" && (
