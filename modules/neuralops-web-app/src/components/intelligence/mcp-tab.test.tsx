@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
@@ -7,8 +7,15 @@ import { useConnectionStore } from "@/stores/connection.store";
 import type { MCPServer } from "@/lib/api/intelligence";
 import { McpTab } from "./mcp-tab";
 
+const toastSuccess = vi.fn();
+vi.mock("sonner", () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn(), warning: vi.fn() } }));
+
 const BASE = "http://server.test:8096";
 const SERVERS_URL = `${BASE}/api/v1/mcp-servers/`;
+const VERIFY_URL = `${BASE}/api/v1/mcp-servers/verify/`;
+const CHECK_OK = { ok: true, code: "ok", error: null, tools: [{ name: "search", description: "" }], latency_ms: 5 };
+const CHECK_DOWN = { ok: false, code: "unreachable", error: "Nothing answered at that address -- check the URL (host, port, http vs https) and that the server is running.", tools: [], latency_ms: null };
+const CHECK_NO_WORKER = { ok: false, code: "worker_unavailable", error: "The AI worker isn't reachable right now, so the connection can't be checked.", tools: [], latency_ms: null };
 const PROJECTS_URL = `${BASE}/api/v1/projects/`;
 
 // MCP servers belong to exactly ONE project (FK, non-transferable) — the
@@ -70,6 +77,7 @@ const submitCreate = () => fireEvent.submit(document.getElementById("mcp-form")!
 
 beforeEach(() => {
   posted = null;
+  toastSuccess.mockReset();
   useConnectionStore.setState({
     serverUrl: BASE,
     token: "jwt",
@@ -82,6 +90,8 @@ beforeEach(() => {
       posted = (await request.json()) as Record<string, unknown>;
       return HttpResponse.json({ ...S1, id: "s2", ...posted });
     }),
+    // The connection check that precedes every save; individual tests override it.
+    http.post(VERIFY_URL, () => HttpResponse.json(CHECK_OK)),
   );
 });
 
@@ -452,5 +462,114 @@ describe("McpTab — the Add button follows every rule", () => {
     for (const rx of [/^Filesystem/, /^Shell/, /^Web search/, /^Web fetch/]) fireEvent.click(screen.getByLabelText(rx));
     expect(add).toBeDisabled();
     expect(screen.getByText("Turn on at least one capability.")).toBeInTheDocument();
+  });
+});
+
+describe("McpTab — Add server checks the connection before anything is saved", () => {
+  it("a passing check adds the server and says how many tools it found", async () => {
+    let checked: Record<string, unknown> | null = null;
+    server.use(http.post(VERIFY_URL, async ({ request }) => { checked = (await request.json()) as Record<string, unknown>; return HttpResponse.json(CHECK_OK); }));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fillCreate({ projectId: "p1", name: "New tools", url: "http://new.internal/mcp" });
+    submitCreate();
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(checked).toMatchObject({ project_id: "p1", transport: "http", url: "http://new.internal/mcp", auth_type: "none" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toastSuccess).toHaveBeenCalledWith('"New tools" added — 1 tool available.');
+  });
+
+  it("a failing check keeps the dialog open with what went wrong, and saves nothing", async () => {
+    server.use(http.post(VERIFY_URL, () => HttpResponse.json(CHECK_DOWN)));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fillCreate({ projectId: "p1", name: "New tools", url: "http://new.internal/mcp" });
+    submitCreate();
+    const alert = await within(screen.getByRole("dialog")).findByRole("alert");
+    expect(alert).toHaveTextContent(/couldn't connect/i);
+    expect(alert).toHaveTextContent(/nothing answered at that address/i);
+    expect(posted).toBeNull();
+    // The form is still there to fix, and the button is ready for another go.
+    expect(screen.getByLabelText("URL")).toHaveValue("http://new.internal/mcp");
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: /add server/i })).toBeEnabled();
+  });
+
+  it("when the worker can't run the check, it offers to save without one", async () => {
+    server.use(http.post(VERIFY_URL, () => HttpResponse.json(CHECK_NO_WORKER)));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fillCreate({ projectId: "p1", name: "New tools", url: "http://new.internal/mcp" });
+    submitCreate();
+    const alert = await within(screen.getByRole("dialog")).findByRole("alert");
+    expect(alert).toHaveTextContent(/worker isn't reachable/i);
+    expect(posted).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /save without checking/i }));
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(toastSuccess).toHaveBeenCalledWith('"New tools" added without a connection check.');
+  });
+
+  it("an older server without the check route gets the same offer", async () => {
+    server.use(http.post(VERIFY_URL, () => HttpResponse.json({ detail: "Not Found" }, { status: 404 })));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fillCreate({ projectId: "p1", name: "New tools", url: "http://new.internal/mcp" });
+    submitCreate();
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(/older version/i);
+    expect(posted).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /save without checking/i }));
+    await waitFor(() => expect(posted).not.toBeNull());
+  });
+
+  it("OAuth: a reachable server that wants a sign-in is saved, then the sign-in opens; a blocked window leaves the dialog open with a Sign in button", async () => {
+    server.use(
+      http.post(VERIFY_URL, () => HttpResponse.json({ ...CHECK_DOWN, code: "auth_required", error: "The server asked for credentials (HTTP 401)." })),
+      http.get(`${SERVERS_URL}:id/oauth/authorize/`, () => HttpResponse.json({ authorize_url: "https://provider.example/authorize" })),
+    );
+    const open = vi.fn(() => null); // the popup blocker's answer
+    vi.stubGlobal("open", open);
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fillCreate({ projectId: "p1", name: "Provider tools", url: "http://tools.example/mcp" });
+    fireEvent.change(screen.getByLabelText("Authentication"), { target: { value: "oauth2" } });
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "cid" } });
+    fireEvent.change(screen.getByLabelText("Client Secret"), { target: { value: "shh" } });
+    fireEvent.change(screen.getByLabelText("Authorize endpoint"), { target: { value: "https://provider.example/authorize" } });
+    fireEvent.change(screen.getByLabelText("Token endpoint"), { target: { value: "https://provider.example/token" } });
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /add & sign in/i })).toBeEnabled();
+    submitCreate();
+    await waitFor(() => expect(posted).not.toBeNull()); // saved despite the 401 — that is what the sign-in is for
+    expect(posted).toMatchObject({ auth_type: "oauth2" });
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent(/blocked the sign-in window/i);
+    expect(alert).toHaveTextContent(/the server is saved/i);
+    expect(within(dialog).getByRole("button", { name: /^sign in$/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /done for now/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /save & sign in/i })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("editing checks the changed connection first; a failed check leaves the row untouched", async () => {
+    let patched: Record<string, unknown> | null = null;
+    let checked: Record<string, unknown> | null = null;
+    server.use(
+      http.post(VERIFY_URL, async ({ request }) => { checked = (await request.json()) as Record<string, unknown>; return HttpResponse.json(CHECK_DOWN); }),
+      http.patch(`${SERVERS_URL}:id/`, async ({ request }) => { patched = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ ...S1, ...patched }); }),
+    );
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Warehouse tools" }));
+    await screen.findByText("Edit Warehouse tools");
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "http://moved.internal/mcp" } });
+    fireEvent.submit(document.getElementById("mce-form")!);
+    const alert = await within(screen.getByRole("dialog")).findByRole("alert");
+    expect(alert).toHaveTextContent(/couldn't connect/i);
+    expect(checked).toMatchObject({ server_id: "s1", url: "http://moved.internal/mcp" });
+    expect(patched).toBeNull();
   });
 });

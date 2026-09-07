@@ -217,6 +217,39 @@ export const patchMcpServer = (serverId: string, payload: MCPServerPatch) =>
 export const deleteMcpServer = (serverId: string) =>
   apiJson<undefined>(`/api/v1/mcp-servers/${serverId}/`, { method: "DELETE" });
 
+// Ask the server to open an MCP server the way a persona run would and list
+// its tools. A draft carries its own connection fields; `server_id` names a
+// stored row whose secrets fill in what the draft leaves out. The answer is
+// always a result (200): `ok` plus a `code` to branch on — a failed probe is
+// not an HTTP error. Older servers without this route answer 404.
+export interface McpVerifyRequest {
+  server_id?: string;
+  project_id?: string;
+  transport?: string;
+  url?: string;
+  command?: string;
+  config?: Record<string, unknown>;
+  timeout_seconds?: number;
+  auth_type?: McpAuthType;
+  client_secret?: string;
+  oauth_config?: McpOAuthConfig;
+}
+
+export type McpVerifyCode =
+  | "ok" | "nothing_to_connect" | "unreachable" | "timeout" | "auth_required" | "auth_rejected"
+  | "not_mcp" | "command_not_found" | "error" | "worker_unavailable";
+
+export interface McpVerifyResult {
+  ok: boolean;
+  code: McpVerifyCode;
+  error: string | null;
+  tools: { name: string; description: string }[];
+  latency_ms: number | null;
+}
+
+export const verifyMcpConnection = (payload: McpVerifyRequest) =>
+  apiJson<McpVerifyResult>(`/api/v1/mcp-servers/verify/`, { method: "POST", body: JSON.stringify(payload) });
+
 // Begin the OAuth2 authorization-code flow for an oauth2 MCP server. Returns
 // the provider consent URL; the caller opens it in a popup. The backend's
 // public /oauth/callback/ exchanges the code and postMessages the result back.

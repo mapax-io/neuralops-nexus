@@ -422,6 +422,8 @@ describe("CreatePersonaDialog — composition", () => {
   });
 
   it("adds an MCP tool server inline and ticks it on return", async () => {
+    // The add flow checks the connection before it saves.
+    server.use(http.post(`${BASE}/api/v1/mcp-servers/verify/`, () => HttpResponse.json({ ok: true, code: "ok", error: null, tools: [], latency_ms: 1 })));
     renderTab();
     const dialog = await openCreate();
     // The block names the protocol — "tool servers" alone left users guessing.
