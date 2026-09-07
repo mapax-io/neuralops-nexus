@@ -272,3 +272,87 @@ mangle soft-deleted rows, drop project-less inactive rows) so a self-hoster's
 upgrade does not stop with a traceback, and whether `delete_mcp_server_standalone`
 should mangle the name on soft delete like `delete_persona` does.
 
+---
+
+## After upstream #101/#102: what the pydantic-ai runner does with a persona's composition
+
+**Where:** `modules/nexus-ai/apps/implementations/agents/pydantic_ai_runner.py`,
+`apps/managers/agentic_manager.py` (`NewImprovedAgenticManager`),
+`apps/managers/prompt_builder.py` (`NewImprovedPromptBuilder`), `apps/routers/trigger.py`,
+`apps/factories/agent.py`, `apps/managers/nucleus_client.py` (`resolve_persona`).
+
+#101 ("Switched to pydantic AI for model response streaming") and #102 (50 ms delta
+buffering) rewired the single-persona trigger path. The Centrifugo events nucleus
+publishes keep their shape (`chat/services.py` is untouched), so the web app needs
+no contract change — but several things the web app lets an admin configure do not
+reach the model on that path. Verified against the merged code on 2026-09-07, with
+each gap attributed to the PR that opened it (the pre-#101 runner at `a52cac4` is the
+baseline):
+
+Introduced by #101:
+
+- **MCP servers are no longer mounted.** The old runner opened every
+  `persona.mcp_servers` entry and raised `MCPReauthRequiredError` for one flagged
+  `needs_reauth`; `PydanticAIRunner._resolve_capabilities` now returns
+  `_DEFAULT_CAPABILITY_REGISTRY` (WebSearch, WebFetch, Shell, FileSystem, Thinking,
+  Planning) for every persona and never references `persona.mcp_servers`. So the
+  servers attached in the persona dialog do nothing, the OAuth reconnect prompt can
+  no longer be triggered (`trigger.py` now imports `MCPReauthRequiredError` from
+  `litellm_runner.py`, which `AgentFactory` never instantiates), and `supports_tools`
+  gates nothing at runtime (nucleus still enforces it on attach).
+- **Providers.** The old runner handed LiteLLM the model id and let it route;
+  `_MODEL_REGISTRY` now resolves only `openai` and `anthropic`. A persona on a
+  `google`, `ollama` or `openai_compatible` config raises `KeyError` in
+  `_resolve_model`, surfaced as the generic `message_error` copy. The web app still
+  offers the five providers nucleus accepts (`_reject_unknown_provider`).
+- **Output directives.** The old manager resolved `job.output_type` (the
+  `@chart`/`@table`… directive nucleus extracts from the message, else the
+  classifier) and injected the registry's instruction text. `NewImprovedPromptBuilder`
+  ignores `job.output_type` and appends the classifier's type *name* ("chart") as the
+  "OUTPUT FORMAT INSTRUCTION". Rich output now depends on the model emitting markers
+  unprompted. `NewImprovedAgenticManager` also omits `output_type` from `message_done`,
+  so nucleus stores `"text"` beside a marker-derived `render_as` (e.g. `html`); the web
+  app renders by `render_as`, so charts still frame (regression tests:
+  `message-store.test.ts`, `message-render.test.tsx`).
+- **Swarm hand-offs.** `AgenticSwarmManager` is unchanged: it still passes
+  `PromptBuilder`'s `list[dict]` messages and the handoff/delegate/continue `tools`
+  to `run_stream`, which the new runner types as pydantic-ai `ModelMessage`s and whose
+  `tools` argument it never reads. The old runner merged `injected_tools` into the
+  call; multi-persona hand-offs cannot be triggered by the model on this runner.
+- **Errors.** Every runner exception becomes `message_error` with
+  `error_code="sorry"`; nucleus maps anything but `mcp_reauth_required` to the
+  generic copy, so users get no hint that, e.g., their provider is unsupported.
+- **Tool activity is invisible.** The runner emits `tool_call_start` for the built-in
+  tools, but nucleus's single-persona relay only handles `message_delta`/
+  `message_done`/`message_error` (it never relayed tool events; now every persona has
+  tools, so the silence is routine): the browser shows the in-bubble "Thinking…" cue,
+  then the 90 s stall notice. `persist_internal_state` is consumed by the manager and
+  its payload discarded (`internal_model_state` assigned, never used).
+- **DECISIONS.md §19** ("DO NOT use pydantic-ai Agent for LLM calls. Use
+  `FastMCPClient` + `litellm` directly.") is contradicted by the new runner, which
+  builds `pydantic_ai.Agent` directly and adds `pydantic-ai[all,…]` +
+  `pydantic-ai-harness` to the image.
+- **Dev compose:** the new `web-app-dev` service `env_file`s
+  `modules/neuralops-web-app/.env.local`; compose refuses to start the dev profile
+  until that file exists (`cp .env.example .env.local` per the module README).
+
+Already unread before #101 — a `resolve_persona` mapping gap left by #99:
+
+- **Generation settings.** `nucleus_client.resolve_persona` reads `max_tokens` and
+  `temperature` off the `model` sub-object, but since #99 nucleus sends them on the
+  persona (`PersonaInternal.temperature/max_tokens/max_steps`), so the worker has
+  used 4096 / 0.7 regardless of the persona dialog. `max_steps` and `advisor_model`
+  are not mapped at all (`PersonaConfig` has no such fields), and neither is
+  `api_base`, so `openai_compatible` could not have worked on the old runner either.
+- **Persona output type.** `PromptInternal.output_type` (the dialog's "Output type"
+  select, shown as "answers as …" on the card) is forwarded but not mapped either;
+  the job's `output_type` comes only from the `@chart`-style directive in the
+  message (`extract_output_type`), so the persona setting has no runtime effect.
+  The persona dialog still edits all of these because nucleus stores and returns them.
+
+**Decision needed:** which of these are transitional (the PR body says tool
+configuration "needs to be passed to the backend" and `PersonaCapabilities` is marked
+under construction) and which the web app should reflect now — in particular whether
+to hide the three unsupported providers and the MCP/advisor/generation controls until
+the runner reads them, or keep the nucleus contract as the source of truth (current
+choice).
