@@ -63,7 +63,6 @@ from .extended import (
     TopicContext,
     AuditEvent,
     Notification,
-    UserSession,
     SavedSearch,
     SearchLog,
 )

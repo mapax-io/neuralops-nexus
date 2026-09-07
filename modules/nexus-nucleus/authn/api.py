@@ -1,14 +1,12 @@
-import hashlib
 import re
 from typing import Optional
 
 from django.conf import settings
-from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
-from .schema import AuthVerifyResponse, SignInRequest, SignInResponse
-from .services import SignInError, auth_verify, signin_with_supabase_token
+from .schema import AuthVerifyResponse
+from .services import auth_verify
 from .supabase import SupabaseTokenError
 from .versions import read_module_versions
 from authn.auth import SupabaseBearer
@@ -32,12 +30,6 @@ class ServerConfigOut(Schema):
     nucleus_version: Optional[str] = None
     nexus_ai_version: Optional[str] = None
     nexus_transport_version: Optional[str] = None
-
-class InvitePreviewOut(Schema):
-    company_name: str
-    inviter_name: str
-    email: str
-    expires_at: Optional[str] = None
 
 class ChangeUsernameIn(Schema):
     new_name: str
@@ -63,15 +55,6 @@ def server_config(request):
         **read_module_versions(),
     }
 
-# ── Supabase JWT sign-in ─────────────────────────────────────────────────────
-
-@router.post("/signin", response=SignInResponse)
-def signin(request, payload: SignInRequest):
-    try:
-        return signin_with_supabase_token(payload.access_token)
-    except (SignInError, SupabaseTokenError) as exc:
-        raise HttpError(401, str(exc))
-
 # ── Server connection verify ─────────────────────────────────────────────────
 
 @router.get("/verify/", response=AuthVerifyResponse)
@@ -93,42 +76,6 @@ def verify(request):
         raise HttpError(401, str(exc))
     except PermissionError as exc:
         raise HttpError(403, str(exc))
-
-# ── Public invite preview (no auth — called by portal invite page) ──────────
-
-@router.get("/invite-preview/", response=InvitePreviewOut, auth=None)
-def invite_preview(request, token: str):
-    """
-    Public endpoint — no auth required.
-    Called by the portal invite page to show invite details before the user logs in.
-    """
-    import hashlib
-    from nucleus.models import Invitation
-    from django.utils import timezone
-
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    invitation = Invitation.objects.filter(
-        token_hash=token_hash,
-        status=Invitation.Status.PENDING,
-        is_active=True,
-    ).select_related("company", "invited_by").first()
-
-    if not invitation:
-        raise HttpError(404, "Invite link is invalid or has already been used.")
-
-    if invitation.expires_at and invitation.expires_at < timezone.now():
-        raise HttpError(410, "This invite link has expired.")
-
-    inviter_name = ""
-    if invitation.invited_by:
-        inviter_name = invitation.invited_by.get_display_name() or invitation.invited_by.email or ""
-
-    return {
-        "company_name": invitation.company.name if invitation.company else "NeuralOps Server",
-        "inviter_name": inviter_name,
-        "email": invitation.email,
-        "expires_at": invitation.expires_at.isoformat() if invitation.expires_at else None,
-    }
 
 # ── Change display name ───────────────────────────────────────────────────────
 

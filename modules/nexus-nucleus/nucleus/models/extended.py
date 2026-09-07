@@ -406,31 +406,6 @@ class Notification(TenantBaseModel):
         ]
 
 
-class UserSession(BaseModel):
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="local_sessions",
-    )
-
-    provider = models.CharField(max_length=50, default="supabase")
-    provider_session_id = models.CharField(max_length=255, null=True, blank=True)
-
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(null=True, blank=True)
-
-    started_at = models.DateTimeField(auto_now_add=True)
-    ended_at = models.DateTimeField(null=True, blank=True)
-
-    is_current = models.BooleanField(default=True, db_index=True)
-
-    class Meta:
-        db_table = "accounts_user_session"
-        indexes = [
-            models.Index(fields=["user", "is_current"]),
-        ]
-
-
 class SavedSearch(TenantBaseModel):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

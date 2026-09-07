@@ -135,14 +135,6 @@ NEURALOPS_SERVER_URL = os.getenv("NEURALOPS_SERVER_URL", "")  # public URL of th
 # for the dev profile (set in docker-compose.yaml). Surfaced in
 # GET /api/v1/auth/verify/ so the frontend can flag an out-of-date server.
 NEURALOPS_VERSION = os.getenv("NEURALOPS_VERSION", "unknown")
-SUPABASE_DEVICE_REQUEST_URL = os.getenv(
-    "SUPABASE_DEVICE_REQUEST_URL",
-    "https://xgfsxikypxjhqlutiepw.supabase.co/functions/v1/device-request",
-)
-SUPABASE_DEVICE_POLL_URL = os.getenv(
-    "SUPABASE_DEVICE_POLL_URL",
-    "https://xgfsxikypxjhqlutiepw.supabase.co/functions/v1/device-poll",
-)
 NEURALOPS_PORTAL_URL = os.getenv(
     "NEURALOPS_PORTAL_URL",
     "https://neuralops-nexus-auth.mapax.io",
