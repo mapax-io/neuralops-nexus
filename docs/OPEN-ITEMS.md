@@ -478,8 +478,18 @@ Gaps and dead code found on the backend:
   image; a self-hosted frontend must point at the same project (the web app's
   `.env.example` now says so).
 
-**Decision needed:** delete the dead invite-email path and token endpoint or wire them
-up for real (a real email would need `SUPABASE_SERVICE_KEY` per deployment); store `sub`
-and key identity on it; make `SUPABASE_URL` configurable if self-hosted identity is ever
-a goal.
+**Done since (backend PR "configurable identity project + invitation emails"):** the
+identity project is settable per deployment (`SUPABASE_URL`/`ANON_KEY`/`SERVICE_KEY` in
+`app.env`, image values as defaults); invitations email the invitee through the admin
+invite API when a service key is set and report `email_sent`/`email_note` otherwise (the
+invite also seeds the new account's launcher with this server); token rejections say why
+(expired / wrong identity project / no email claim / keys unreachable / unknown here);
+the dead `/auth/signin`, `/auth/invite-preview/`, device-flow settings and the never-used
+`UserSession` model are gone (migration 0018); `change-username` no longer requires a
+topic id. Still open: identity keyed by email (no `sub` stored — email change would split
+the account) and the password-only `create_owner`; `Invitation.token_hash` stays as a
+column nothing reads.
+
+**Decision needed:** store `sub` and key identity on it; a token-based (or
+install-token-gated) owner setup for GitHub-only accounts.
 
