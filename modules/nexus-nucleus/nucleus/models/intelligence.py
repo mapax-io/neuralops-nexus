@@ -496,15 +496,29 @@ class Persona(TenantBaseModel):
 
 class MCPServer(TenantBaseModel):
     """
-    MCP server/backend a Persona can mount as a tool source.
+    A tool source a Persona can mount. Two kinds, split by `is_internal`.
 
-    It can represent:
+    EXTERNAL (is_internal=False, the default) -- a real MCP server reached
+    over a protocol. It can represent:
     - local stdio MCP server
     - Docker-based MCP server
     - Kubernetes service
     - remote HTTP MCP server
     - remote SSE MCP server
-    - external hosted MCP provider
+    - external hosted MCP provider (GitHub, Monday.com, ...)
+
+    INTERNAL (is_internal=True) -- a capability pydantic-ai provides
+    in-process: Filesystem, Shell, Thinking, Planning, Web Search, Memory
+    and the rest. No protocol, no endpoint, no credentials: the row is
+    name + description + project + capability_config, and the
+    mcp_internal_has_no_endpoint constraint below enforces exactly that.
+    nucleus never interprets capability_config -- it stores it and forwards
+    it in the internal API payload, and nexus-ai turns it into the
+    persona's capabilities.
+
+    Both kinds live in one table on purpose: a persona mounts them the same
+    way (the `mcp_servers` M2M), they are listed and managed together, and
+    the user thinks of both as "tools I gave this persona".
 
     ── Project ownership is a real FK now ─────────────────────────────────
     This used to be a ManyToMany to Project that application code restricted
@@ -548,6 +562,44 @@ class MCPServer(TenantBaseModel):
         on_delete=models.CASCADE,
         related_name="mcp_servers",
         help_text="The single project this MCP server belongs to. Not transferable.",
+    )
+
+    # -- Internal vs external --------------------------------------------------
+    # THE discriminator for this model. Two genuinely different kinds of row:
+    #
+    #   external (default) -- a real MCP server reached over a protocol:
+    #       GitHub, Monday.com, a local stdio addon. Uses transport/url/
+    #       command/auth_type/oauth_config/secrets and every other field
+    #       below.
+    #
+    #   internal -- a capability pydantic-ai provides in-process
+    #       (Filesystem, Shell, Thinking, Planning, Web Search, ...). There
+    #       is NO protocol involved: nothing is dialled, nothing is spawned,
+    #       no credentials exist. Such a row is name + description + project
+    #       + capability_config, and the check constraints below make that
+    #       true at the database level rather than only in the UI.
+    is_internal = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            "True = a pydantic-ai capability configured purely through "
+            "capability_config. False = a real MCP server reached over a "
+            "transport."
+        ),
+    )
+
+    capability_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Internal rows only: the pydantic-ai capability configuration, "
+            "read and interpreted by nexus-ai. Deliberately opaque here -- "
+            "nucleus stores and forwards it without validating the shape, "
+            "which is owned by apps/schemas/trigger.py on the nexus-ai side. "
+            "Kept separate from `config` below, which belongs to external "
+            "servers and is already in use (the auto-provisioned filesystem "
+            "MCP writes root_path into it)."
+        ),
     )
 
     server_type = models.CharField(
@@ -659,18 +711,47 @@ class MCPServer(TenantBaseModel):
                 fields=["project", "name"],
                 name="uniq_mcp_server_name_per_project",
             ),
+            # Both transport constraints now exempt internal rows. They have
+            # to: `transport` is NOT NULL with default "http", so an internal
+            # row lands on "http" whatever the API does, and the url rule
+            # below would then reject every single internal insert.
             models.CheckConstraint(
                 name="mcp_stdio_requires_command",
                 condition=(
-                    ~models.Q(transport="stdio")
+                    models.Q(is_internal=True)
+                    | ~models.Q(transport="stdio")
                     | models.Q(command__isnull=False)
                 ),
             ),
             models.CheckConstraint(
                 name="mcp_http_sse_ws_requires_url",
                 condition=(
-                    ~models.Q(transport__in=["http", "sse", "websocket"])
+                    models.Q(is_internal=True)
+                    | ~models.Q(transport__in=["http", "sse", "websocket"])
                     | models.Q(url__isnull=False)
+                ),
+            ),
+            # The other half: an internal row may not carry protocol data at
+            # all. The two rules above only stop internal rows being REJECTED;
+            # this one stops them being wrong. "If it's internal, only the
+            # JSON" is enforced here, in the database -- greying the fields
+            # out in the UI then matches what the backend actually allows,
+            # instead of being the only thing preventing it.
+            #
+            # NOTE: auth_type defaults to "static_secrets", so the service
+            # layer must force it to "none" on internal rows or this rejects
+            # them. See intelligence/services.py.
+            models.CheckConstraint(
+                name="mcp_internal_has_no_endpoint",
+                condition=(
+                    models.Q(is_internal=False)
+                    | (
+                        models.Q(url__isnull=True)
+                        & models.Q(command__isnull=True)
+                        & models.Q(docker_image__isnull=True)
+                        & models.Q(kubernetes_service__isnull=True)
+                        & models.Q(auth_type="none")
+                    )
                 ),
             ),
         ]

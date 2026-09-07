@@ -2,6 +2,7 @@
 Business logic for Workspace (Projects, Channels, Topics), Members, and Team.
 All queries are scoped to company — safe for multi-tenant use.
 """
+import copy
 import hashlib
 import secrets
 from datetime import timedelta
@@ -42,28 +43,69 @@ def list_projects(company, user, include_archived=False):
 def get_project_folder_name(project) -> str:
     return f"{project.slug}-{str(project.id)[:8]}"
 
+# Capabilities every new project is provisioned with, as INTERNAL MCPServer
+# rows (pydantic-ai in-process, no protocol). This replaces the single
+# external stdio row that used to spawn
+# `npx -y @modelcontextprotocol/server-filesystem` -- pydantic-ai does
+# filesystem access natively, so shelling out to a Node subprocess for it was
+# a whole extra moving part serving no purpose.
+#
+# All four live in ONE row, as four keys of its capability_config -- which is
+# the shape capability_config was built for (one JSON, many capability keys)
+# and the shape nexus-ai reads. A persona mounts the row and gets all four.
+#
+# The trade-off, so it is a known one: there is no way to give a persona
+# Filesystem without also giving it Shell. If that ever needs to be possible,
+# split this into a row per capability -- the model already supports it, only
+# this function would change.
+DEFAULT_PROJECT_CAPABILITIES = ("Filesystem", "Shell", "Web Search", "Web Fetch")
+
+# Capability keys whose value must point at THIS project's folder rather than
+# the template's container-wide default of ".".
+_PROJECT_SCOPED_KEYS = {
+    "Filesystem": "root_dir",
+    "Shell": "cwd",
+}
+
+
 def provision_project_folder_and_mcp(project):
+    """
+    Create the project's folder on disk and its default tool capabilities.
 
-
+    Returns the single MCPServer row created. The folder is still needed even
+    though nothing spawns a filesystem server any more -- it is what
+    Filesystem.root_dir and Shell.cwd point at, and nexus-ai sees it at the
+    same path because both containers bind-mount ./projects to /nexus/projects.
+    """
     folder_name = get_project_folder_name(project)
     folder_path = os.path.join(settings.PROJECTS_ROOT, folder_name)
     os.makedirs(folder_path, exist_ok=True)
 
-    # project is a real FK now, not an M2M that application code kept to a
-    # single entry -- so ownership is set at creation and there is no
-    # follow-up .add() to forget.
-    server = MCPServer.objects.create(
+    capability_config = {}
+    for capability in DEFAULT_PROJECT_CAPABILITIES:
+        # Defaults come from the template so there is ONE source of truth for
+        # them; only the path-bound key is overridden per project.
+        config = copy.deepcopy(settings.MCP_CAPABILITY_TEMPLATE.get(capability, {}))
+        scoped_key = _PROJECT_SCOPED_KEYS.get(capability)
+        if scoped_key:
+            config[scoped_key] = folder_path
+        capability_config[capability] = config
+
+    return MCPServer.objects.create(
         company=project.company,
-        project=project,
-        name=f"{project.name} Files",
-        server_type=MCPServer.ServerType.LOCAL,
-        transport=MCPServer.Transport.STDIO,
-        command=f"npx -y @modelcontextprotocol/server-filesystem {folder_path}",
-        is_protected=True,
+        project=project,          # a real FK -- ownership set at creation
+        name=f"{project.name} Capabilities",
+        is_internal=True,
+        capability_config=capability_config,
+        # REQUIRED, not cosmetic: auth_type defaults to "static_secrets", and
+        # the mcp_internal_has_no_endpoint constraint rejects any internal row
+        # that is not "none". .objects.create() bypasses
+        # intelligence/services.py's normalisation, so it has to be set by
+        # hand here or every project creation dies on an IntegrityError.
+        auth_type=MCPServer.AuthType.NONE,
+        is_protected=True,        # not user-deletable
         is_default=True,
-        config={"root_path": folder_path},
     )
-    return server
 
 def create_project(company, user, name: str, description: str = None):
     # Project, Channel, ProjectMember, Role, PermissionChecker — imported at top of file.

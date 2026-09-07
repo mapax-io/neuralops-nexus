@@ -104,6 +104,12 @@ class MCPServerIn(Schema):
     name: str
     description: Optional[str] = None
     project_id: str        # MCP servers are project-owned (a real FK now)
+    # is_internal=True means a pydantic-ai capability: no protocol, no
+    # endpoint, no credentials. Every field below from server_type down is
+    # ignored and cleared server-side in that case -- see
+    # _apply_internal_normalisation() -- and only capability_config is read.
+    is_internal: bool = False
+    capability_config: dict = {}
     server_type: str = "remote"
     transport: str = "http"
     url: Optional[str] = None
@@ -126,6 +132,10 @@ class MCPServerIn(Schema):
 class MCPServerPatchIn(Schema):
     name: Optional[str] = None
     description: Optional[str] = None
+    # Flipping this re-normalises the row: external -> internal wipes the
+    # endpoint fields and credentials in the same request.
+    is_internal: Optional[bool] = None
+    capability_config: Optional[dict] = None
     url: Optional[str] = None
     command: Optional[str] = None
     docker_image: Optional[str] = None
@@ -146,6 +156,8 @@ class MCPServerOut(Schema):
     name: str
     description: Optional[str] = None
     project_id: str                    # non-null now -- it is a real FK
+    is_internal: bool
+    capability_config: dict            # {} on external rows
     server_type: str
     transport: str
     url: Optional[str] = None
@@ -170,6 +182,7 @@ class MCPServerRef(Schema):
     """Compact form, embedded in PersonaOut."""
     id: str
     name: str
+    is_internal: bool                  # so the UI can badge it, not show a URL
     transport: str
     auth_type: str
     oauth_connected: bool              # so the UI can flag one needing reconnect

@@ -70,7 +70,8 @@ def create_project(request, payload: ProjectCreateRequest):
     if not PermissionChecker.can(user, "project.create", company=company):
         raise HttpError(403, "You don't have permission to create projects.")
     try:
-        project = svc.create_project(company=company, user=user, name=payload.name, description=payload.description)
+        project = svc.create_project(company=company, user=user, name=payload.name, 
+                                     description=payload.description)
     except ValueError as exc:
         raise HttpError(400, str(exc))
     svc.provision_project_folder_and_mcp(project)
