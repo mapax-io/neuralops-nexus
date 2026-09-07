@@ -45,6 +45,14 @@ describe("TopBar", () => {
     expect(screen.getByRole("button", { name: LONG_NAME })).toContainElement(name);
   });
 
+  it("reads as the control it is: pointer cursor, a hover surface, and a pressed state", () => {
+    renderBar();
+    const home = screen.getByRole("button", { name: LONG_NAME });
+    expect(home.className).toMatch(/cursor-pointer/);
+    expect(home.className).toMatch(/hover:bg-surface/);
+    expect(home.className).toMatch(/active:/);
+  });
+
   it("falls back to a generic label without a connection", () => {
     useConnectionStore.setState({ connection: null });
     renderBar();
