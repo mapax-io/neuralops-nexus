@@ -302,8 +302,8 @@ services:
     image: neuralops:dev-local
     profiles: ["dev"]
     container_name: neuralops-nucleus-dev
-    command: ["nucleus-env", "uvicorn", "core.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-    # command: ["nucleus-env", "tail", "-f", "/dev/null"]
+    # command: ["nucleus-env", "uvicorn", "core.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["nucleus-env", "tail", "-f", "/dev/null"]
     volumes:
       - ./modules/nexus-nucleus:/nexus/nucleus
       # Bind mount, not a named volume -- same ./projects folder production
@@ -349,6 +349,7 @@ services:
     profiles: ["dev"]
     container_name: neuralops-nucleus-celery-dev
     command: ["nucleus-env", "celery", "-A", "core", "worker", "-l", "info"]
+    # command: ["nexus-ai-env", "tail", "-f", "/dev/null"]
     restart: unless-stopped
     volumes:
       - ./modules/nexus-nucleus:/nexus/nucleus
