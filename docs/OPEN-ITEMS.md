@@ -393,3 +393,46 @@ web app cannot show because nothing is published:
 and publish `message_error` on swarm failure — the web app will bind each the day it
 appears.
 
+---
+
+## After upstream #104: internal capabilities rows, and what still does not reach the worker
+
+**Where:** `modules/nexus-nucleus/intelligence/{schema,api,services}.py`, `internal/api.py`,
+`workspace/services.py`, `core/settings.py`; `modules/nexus-ai/apps/managers/nucleus_client.py`.
+
+#104 split `MCPServer` into external servers and internal (built-in) capabilities
+(`is_internal`, `capability_config`), provisions every new project with one
+protected default row ("<Project> Capabilities": Filesystem, Shell, Web Search, Web
+Fetch), and sends internal rows to the worker as `PersonaInternal.capabilities`. The web
+app follows the contract (kind switch, capability editor, badges, default row
+pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-07:
+
+- **The worker ignores `capabilities`.** `nucleus_client.resolve_persona` maps
+  `mcp_servers` only; `PersonaConfig.capabilities` stays at its default and
+  `PydanticAIRunner._resolve_capabilities` returns the fixed default registry (see the
+  #101/#102 entry). Everything the capability editor saves is stored and forwarded,
+  and then not read. Nothing the web app can do until `resolve_persona` maps
+  `capabilities` → `capability_config` and the runner builds capabilities from it.
+- **Template drift, already.** `settings.MCP_CAPABILITY_TEMPLATE`'s Shell comment lists
+  `sed` and `wget` as valid commands; `trigger.py`'s `ShellCommands` enum has neither.
+  The web app's catalogue (`src/lib/mcp-capabilities.ts`) mirrors the enum, and is a
+  third copy of the same shape. An endpoint serving the template would end the copies.
+- **`is_protected` / `is_default` were not exposed or enforced.** Both existed on the
+  model (the provisioned row sets them) but `MCPServerOut` did not carry them and
+  `delete_mcp_server_standalone` did not check `is_protected`, so the default row was
+  deletable through the API. Added in this PR: both fields in `MCPServerOut`, and a
+  409 on deleting a protected row (the web app hides the action and shows a lock).
+- **Flipping kind on PATCH** (`is_internal` on `MCPServerPatchIn`) wipes the endpoint
+  and credentials server-side. The web app keeps the kind fixed after creation
+  (delete and recreate instead) rather than offer a destructive flip.
+- **Dev compose regressions.** `nucleus-dev`'s command is now `tail -f /dev/null` (the
+  uvicorn line is commented out), so `docker compose up` no longer starts nucleus in
+  the dev profile; and the `web-app-dev` service added in #101 is commented out again.
+  Both look like local debugging state that was committed.
+- **Existing projects** keep their old external "<Project> Files" stdio row; only new
+  projects get the internal capabilities row. No backfill was shipped.
+
+**Decision needed:** map `capabilities` in the worker (the point of the split); serve the
+capability template from nucleus instead of copying it; restore the compose commands;
+decide whether to backfill existing projects.
+
