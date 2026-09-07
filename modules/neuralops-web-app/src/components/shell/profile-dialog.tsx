@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, KeyRound, LogOut, UserRound } from "lucide-react";
+import { BadgeCheck, Check, KeyRound, LogOut, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
+import { Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { changeUsername, USERNAME_RE } from "@/lib/api/account";
 import { absolutizeMedia } from "@/lib/api/client";
@@ -100,6 +100,7 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       title="Your profile"
       description="Your password belongs to your NeuralOps account; your display name lives on this server."
       icon={<UserRound size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end">
           <Button type="button" size="sm" variant="ghost" onClick={onSignOut}>
@@ -131,7 +132,8 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
         </div>
       </div>
 
-      <form onSubmit={submitName} noValidate className="mt-5">
+      <DialogSection title="Your name" hint="How teammates and personas see you on this server." className="mt-5">
+      <form onSubmit={submitName} noValidate>
         <Label htmlFor="prof-name" required>Display name on {connection?.companyName ?? "this server"}</Label>
         <div className="flex gap-2">
           <Input
@@ -146,16 +148,16 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
               if (nameErr) setNameErr(validateName(e.target.value));
             }}
           />
-          <Button type="submit" size="sm" variant="primary" loading={rename.isPending} disabled={!name.trim()} className="flex-none self-start">
-            Save
+          <Button type="submit" size="sm" variant="primary" loading={rename.isPending} disabled={!name.trim()} className="flex-none self-start"><Check size={14} strokeWidth={2} /> Save
           </Button>
         </div>
         {nameErr ? <FieldError>{nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Teammates and personas will see this name. 2–30 characters, no spaces.</p>}
       </form>
+      </DialogSection>
 
+      <DialogSection title="Change password" hint="Belongs to your NeuralOps account, not to this server.">
       {/* method=post: an un-hydrated native submit keeps the password out of the URL. */}
-      <form onSubmit={submitPw} method="post" noValidate className="mt-5 border-t border-line pt-4">
-        <p className="mb-2.5 flex items-center gap-1.5 text-[13px] font-semibold"><KeyRound size={14} strokeWidth={2} /> Change password</p>
+      <form onSubmit={submitPw} method="post" noValidate>
         <div className="flex flex-col gap-3">
           <div>
             <Label htmlFor="prof-pw" required>New password</Label>
@@ -167,12 +169,12 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
           </div>
           <FieldError>{pwErr}</FieldError>
           <div className="flex">
-            <Button type="submit" size="sm" variant="primary" loading={changePw.isPending} disabled={!pw || !pw2}>
-              Update password
+            <Button type="submit" size="sm" variant="primary" loading={changePw.isPending} disabled={!pw || !pw2}><KeyRound size={14} strokeWidth={2} /> Update password
             </Button>
           </div>
         </div>
       </form>
+      </DialogSection>
     </Dialog>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarClock, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Check, Pause, Pencil, Play, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName } from "@/lib/validation";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -249,14 +249,16 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
       title="New schedule"
       description={`The persona runs your instruction in this chat on the clock you set (times in ${tz}).`}
       icon={<CalendarClock size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="sc-form" size="sm" variant="primary" loading={create.isPending}>Create schedule</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="sc-form" size="sm" variant="primary" loading={create.isPending}><Plus size={14} strokeWidth={2} /> Create schedule</Button>
         </div>
       }
     >
-      <form id="sc-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="sc-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="What" hint="Who runs, and the instruction they get each time.">
         <div>
           <Label htmlFor="sc-persona" required>Persona</Label>
           <select id="sc-persona" required autoFocus value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
@@ -279,6 +281,8 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
         </div>
+        </DialogSection>
+        <DialogSection title="When">
         <div>
           <Label>When</Label>
           <div
@@ -373,7 +377,8 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
             If the server was down at run time, run it once on restart
           </label>
         </div>
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );
@@ -407,10 +412,11 @@ function EditScheduleDialog({ schedule, pid, cid, tid, onClose }: { schedule: Sc
       title={`Edit schedule for @${schedule.persona_name}`}
       description={`${schedule.schedule_summary} — the clock stays; change the instruction or the label.`}
       icon={<Pencil size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="se-form" size="sm" variant="primary" disabled={!query.trim()} loading={edit.isPending}>Save changes</Button>
+          <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="se-form" size="sm" variant="primary" disabled={!query.trim()} loading={edit.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
