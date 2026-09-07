@@ -52,6 +52,11 @@ class TopicOut(Schema):
 class InviteRequest(Schema):
     email: str
     role: str = "member"
+    # Where Supabase's invitation email should land the invitee (the web
+    # app's origin + /reset-password, where they set a password). Must be on
+    # the identity project's redirect allow-list. Only used when the server
+    # holds SUPABASE_SERVICE_KEY; ignored otherwise.
+    redirect_to: Optional[str] = None
 
 
 class InviteResponse(Schema):
@@ -64,6 +69,11 @@ class InviteResponse(Schema):
     # existing platform user was added on the spot. invite_to_system() has
     # returned this all along -- the schema just dropped it.
     is_new_user: bool = False
+    # A pending invite also sends the invitee an email when this server holds
+    # the identity project's service key. email_note explains why not
+    # otherwise (no key, address already registered, provider error).
+    email_sent: bool = False
+    email_note: Optional[str] = None
     # Optional now that invite_to_system() has two non-pending outcomes
     # (already a member / granted immediately) with no Invitation row,
     # hence no expiry -- only the "brand new person, pending invite"
@@ -108,6 +118,7 @@ class InviteToProjectRequest(Schema):
     scope: str = "topic"
     topic_id: Optional[str] = None
     role: str = "member"
+    redirect_to: Optional[str] = None   # see InviteRequest.redirect_to
 
 
 class InviteToProjectOut(Schema):
@@ -118,6 +129,8 @@ class InviteToProjectOut(Schema):
     message: str
     server_url: Optional[str] = None
     invite_url: Optional[str] = None   # full link to share with the invitee
+    email_sent: bool = False           # see InviteResponse.email_sent
+    email_note: Optional[str] = None
 
 
 class AvailableUserOut(Schema):
