@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { FolderKanban, Pencil, Plus, Sparkles, Trash2, UserRound } from "lucide-react";
+import { Check, FolderKanban, Pencil, Plus, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { absolutizeMedia } from "@/lib/api/client";
 import { isMentionableName } from "@/lib/composer/directives";
@@ -346,7 +346,6 @@ function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, o
 }) {
   return (
     <div>
-      <p className="mb-1.5 text-[13px] font-medium text-ink2">Generation settings</p>
       <div className="grid grid-cols-3 gap-3">
         <div>
           <Label htmlFor={`${idPrefix}-temp`} required>Temperature</Label>
@@ -537,15 +536,17 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       title={`New persona${projName ? ` — ${projName}` : ""}`}
       description="An AI teammate for this project. The role you write here is their standing instructions for every answer."
       icon={<Sparkles size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
           {/* The name is the @mention handle — nothing to create without it. */}
-          <Button type="submit" form="pe-form" size="sm" variant="primary" disabled={!name.trim()} loading={create.isPending || setProject.isPending}>Create persona</Button>
+          <Button type="submit" form="pe-form" size="sm" variant="primary" disabled={!name.trim()} loading={create.isPending || setProject.isPending}><Plus size={14} strokeWidth={2} /> Create persona</Button>
         </div>
       }
     >
-      <form id="pe-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="pe-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics" hint="The project they work in, and the @name teammates will use.">
         <ProjectSelect
           id="pe-project"
           value={projectId}
@@ -583,6 +584,12 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
             <p className="mt-1.5 text-[12px] text-ink2">Teammates will type @{name.trim() || "name"} to bring them in.</p>
           )}
         </div>
+        <div>
+          <Label htmlFor="pe-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="pe-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
+        </div>
+        </DialogSection>
+        <DialogSection title="Models" hint="Every answer comes from the model; the advisor is a second opinion it can ask for.">
         <ModelPicker
           id="pe-model"
           projectId={projectId}
@@ -606,6 +613,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           registerLabel="Register a second model"
           hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
         />
+        </DialogSection>
+        <DialogSection title="Tools" hint="Tool sources from this project the persona may use.">
         <ToolServerPicker
           servers={projectServers}
           selected={backing.serverIds}
@@ -614,6 +623,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           clearedNote={backing.clearedTools}
           onAdd={() => setAddingMcp(true)}
         />
+        </DialogSection>
+        <DialogSection title="Instructions" hint="Their standing instructions, and the format answers default to.">
         {Object.keys(templates?.prompts ?? {}).length > 0 && (
           <div>
             <Label htmlFor="pe-template">Start from a template <span className="text-ink2">(optional)</span></Label>
@@ -658,12 +669,11 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           </select>
           <p className="mt-1.5 text-[12px] text-ink2">Anyone can still override per message with @chart, @table, and friends.</p>
         </div>
+        </DialogSection>
+        <DialogSection title="Generation">
         <GenerationSettings idPrefix="pe" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} />
-        <div>
-          <Label htmlFor="pe-desc">Description <span className="text-ink2">(optional)</span></Label>
-          <Input id="pe-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
-        </div>
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
     {/* Stacked prerequisite dialogs — the flow never leaves this screen. */}
@@ -795,14 +805,16 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
       title={`Edit @${persona.name}`}
       description="Changes apply to every future answer — a swapped model or tool set takes effect on the next @mention. Past messages stay as they were."
       icon={<Pencil size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="pd-form" size="sm" variant="primary" disabled={!name.trim()} loading={patch.isPending || setProject.isPending}>Save changes</Button>
+          <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="pd-form" size="sm" variant="primary" disabled={!name.trim()} loading={patch.isPending || setProject.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
-      <form id="pd-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="pd-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics">
         <div>
           <Label htmlFor="pd-name" required>Name</Label>
           <Input
@@ -829,6 +841,12 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             <p className="mt-1.5 text-[12px] text-ink2">Renaming updates the @mention everywhere from now on.</p>
           )}
         </div>
+        <div>
+          <Label htmlFor="pd-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="pd-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
+        </div>
+        </DialogSection>
+        <DialogSection title="Models" hint="Every answer comes from the model; the advisor is a second opinion it can ask for.">
         <ModelPicker
           id="pd-model"
           projectId={persona.project_id}
@@ -852,6 +870,8 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           registerLabel="Register a second model"
           hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
         />
+        </DialogSection>
+        <DialogSection title="Tools" hint="Tool sources from this project the persona may use.">
         <ToolServerPicker
           servers={projectServers}
           selected={backing.serverIds}
@@ -860,6 +880,8 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           clearedNote={backing.clearedTools}
           onAdd={() => setAddingMcp(true)}
         />
+        </DialogSection>
+        <DialogSection title="Instructions" hint="Their standing instructions, and the format answers default to.">
         <div>
           <Label htmlFor="pd-role" required>Role</Label>
           {/* A role saved with {PERSONA_NAME} still in it shows filled; it is
@@ -886,12 +908,11 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             ))}
           </select>
         </div>
+        </DialogSection>
+        <DialogSection title="Generation">
         <GenerationSettings idPrefix="pd" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} />
-        <div>
-          <Label htmlFor="pd-desc">Description <span className="text-ink2">(optional)</span></Label>
-          <Input id="pd-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
-        </div>
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
     {addingModelFor && (

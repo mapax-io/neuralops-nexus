@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { Boxes, Cpu, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { Boxes, Check, Cpu, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
 import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
@@ -312,14 +312,16 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
       title={`Register an AI model${attachProjectName ? ` — ${attachProjectName}` : ""}`}
       description={`Bring your own key. It's encrypted at rest, used only to run your personas, and never shown or returned again.${attachProjectName ? ` The model is attached to ${attachProjectName} and ready to pick right away.` : ""}`}
       icon={<KeyRound size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="m-form" size="sm" variant="primary" loading={create.isPending || setProject.isPending}>Register model</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="m-form" size="sm" variant="primary" loading={create.isPending || setProject.isPending}><KeyRound size={14} strokeWidth={2} /> Register model</Button>
         </div>
       }
     >
-      <form id="m-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="m-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Identity" hint="A name for this workspace, and the provider’s bare model id.">
         <div>
           <Label htmlFor="m-name" required>Name</Label>
           <Input
@@ -384,6 +386,8 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             {idErr ? <FieldError>{idErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Bare model name — no provider prefix. Becomes {provider}:{modelId.trim() || prov.placeholder}.</p>}
           </div>
         </div>
+        </DialogSection>
+        <DialogSection title="Access" hint="Your own key — encrypted at rest, used only to run personas.">
         <div>
           <Label htmlFor="m-key" required={prov.needsKey}>API key{!prov.needsKey && <span className="text-ink2"> (optional)</span>}</Label>
           <Input id="m-key" type="password" required={prov.needsKey} autoComplete="off" placeholder="sk-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
@@ -397,6 +401,8 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             <FieldError>{baseErr}</FieldError>
           </div>
         )}
+        </DialogSection>
+        <DialogSection title="Details">
         <div>
           <Label htmlFor="m-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="m-desc" placeholder="What is this model for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
@@ -418,7 +424,8 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
           <input type="checkbox" checked={licence} onChange={(e) => setLicence(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
           I accept the model provider&apos;s terms of service for this key and usage.
         </label>
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );
@@ -491,14 +498,16 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
       title={`Edit ${model.name}`}
       description="Changes apply to the next call — including a swapped provider or model id."
       icon={<Pencil size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="me-form" size="sm" variant="primary" loading={patch.isPending}>Save changes</Button>
+          <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="me-form" size="sm" variant="primary" loading={patch.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
-      <form id="me-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="me-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Identity" hint="Changing the provider or model id repoints every persona on this config.">
         <div>
           <Label htmlFor="me-name" required>Name</Label>
           <Input
@@ -564,6 +573,8 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
             ? `Every persona on this model follows to ${provider}:${modelId.trim() || "…"} the moment you save.`
             : "Every persona on this model follows a changed provider or model id the moment you save."}
         </p>
+        </DialogSection>
+        <DialogSection title="Access" hint="Rotate the key here; the current one stays until you do.">
         <div>
           <Label htmlFor="me-key">New API key <span className="text-ink2">(optional)</span></Label>
           <Input id="me-key" type="password" autoComplete="off" placeholder={model.has_api_key ? "Leave blank to keep the current key" : "No key stored yet"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
@@ -577,6 +588,8 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
             <FieldError>{baseErr}</FieldError>
           </div>
         )}
+        </DialogSection>
+        <DialogSection title="Details">
         <div>
           <Label htmlFor="me-desc">Description <span className="text-ink2">(optional)</span></Label>
           <Input id="me-desc" placeholder="What is this model for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
@@ -586,7 +599,8 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
           <Input id="me-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
         </div>
         <CapabilityChecks value={caps} onChange={setCaps} />
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );
@@ -621,9 +635,10 @@ function ModelProjectsDialog({ modelId, onClose }: { modelId: string; onClose: (
       title={`Projects for ${model?.name ?? "this model"}`}
       description="Attaching makes the model visible in a project so its personas can be built on it. Detaching is refused while a persona there still uses it."
       icon={<Boxes size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end">
-          <Button size="sm" onClick={onClose}>Done</Button>
+          <Button size="sm" onClick={onClose}><Check size={14} strokeWidth={2} /> Done</Button>
         </div>
       }
     >

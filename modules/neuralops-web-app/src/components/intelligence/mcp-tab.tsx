@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { CircleCheck, CircleX, Link2, Lock, Pencil, Plug2, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { Check, CircleCheck, CircleX, Link2, Lock, Pencil, Plug2, Plus, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateRequired, validateUrl as vUrl } from "@/lib/validation";
 import { useCreateMcpServer, useDeleteMcpServer, useMcpOAuthConnect, useMcpServers, usePatchMcpServer } from "@/hooks/use-intelligence";
@@ -531,14 +531,16 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
         ? "Capabilities the AI worker provides in-process — filesystem, shell, web search and more. Personas in the owning project mount them like any tool source."
         : "Any server that speaks the Model Context Protocol — reached by URL over HTTP, SSE or WebSocket, or run as a local command over STDIO. Personas in the owning project can mount its tools."}
       icon={internal ? <Sparkles size={17} strokeWidth={2} /> : <Plug2 size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="mcp-form" size="sm" variant="primary" loading={create.isPending}>{internal ? "Add capabilities" : "Add server"}</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mcp-form" size="sm" variant="primary" loading={create.isPending}><Plus size={14} strokeWidth={2} /> {internal ? "Add capabilities" : "Add server"}</Button>
         </div>
       }
     >
-      <form id="mcp-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="mcp-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics" hint="What kind of tool source this is, and the project that owns it.">
         <KindSwitch value={kind} onChange={(k) => { setKind(k); setErr(null); setUrlErr(null); }} />
         <ProjectSelect id="mcp-project" value={projectId} onChange={setProjectId} only={allProjects ?? []} />
         <div>
@@ -564,16 +566,19 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
           />
           <FieldError>{nameErr}</FieldError>
         </div>
+        <div>
+          <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="mcp-desc" placeholder={internal ? "What are these for?" : "What tools does it expose?"} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </div>
+        </DialogSection>
         {internal && (
-          <>
-            <div>
-              <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mcp-desc" placeholder="What are these for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-            </div>
+          <DialogSection title="Capabilities" hint="What a persona mounting this row can do, and how each capability is configured.">
             <CapabilityEditor idPrefix="mcp" value={caps} onChange={setCaps} onError={setCapErr} />
-          </>
+          </DialogSection>
         )}
         {!internal && (
+          <>
+        <DialogSection title="Connection" hint="How the AI worker reaches the server.">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
           <div>
             <Label htmlFor="mcp-transport">Transport</Label>
@@ -634,9 +639,6 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
             </div>
           )}
         </div>
-        )}
-        {!internal && (
-          <>
             <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
               <div>
                 <Label htmlFor="mcp-runtime">Runs as</Label>
@@ -646,17 +648,20 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
               </div>
               <RuntimeDetails idPrefix="mcp" runtime={serverType} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
             </div>
-            <div>
-              <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-            </div>
+        </DialogSection>
+        <DialogSection title="Calls">
             <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
+        </DialogSection>
+        <DialogSection title="Runtime">
             <RuntimeFields idPrefix="mcp" config={config} onConfig={setConfig} firstParty={firstParty} onFirstParty={setFirstParty} embed={embed} onEmbed={setEmbed} />
+        </DialogSection>
+        <DialogSection title="Access" hint="How the worker authenticates to the server.">
             <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
             {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
+        </DialogSection>
           </>
         )}
-        <FieldError>{err}</FieldError>
+        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );
@@ -771,14 +776,16 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       title={`Edit ${server.name}`}
       description={server.is_internal ? "Changes apply to the persona's next run." : "Changes apply to the next tool call — personas pick up the new address automatically."}
       icon={<Pencil size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="mce-form" size="sm" variant="primary" loading={patch.isPending}>Save changes</Button>
+          <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mce-form" size="sm" variant="primary" loading={patch.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
-      <form id="mce-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="mce-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics">
         <div>
           <Label htmlFor="mce-name" required>Name</Label>
           <Input
@@ -802,19 +809,24 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           <FieldError>{nameErr}</FieldError>
         </div>
         {server.is_internal && (
-          <>
-            <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-              <p className="text-[12px] text-ink2">Kind <span className="text-ink2/70">(fixed)</span></p>
-              <p className="mt-0.5">Built-in capabilities{server.is_default ? " — this project's default" : ""}</p>
-            </div>
-            <div>
-              <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mce-desc" placeholder="What are these for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-            </div>
+          <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
+            <p className="text-[12px] text-ink2">Kind <span className="text-ink2/70">(fixed)</span></p>
+            <p className="mt-0.5">Built-in capabilities{server.is_default ? " — this project's default" : ""}</p>
+          </div>
+        )}
+        <div>
+          <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="mce-desc" placeholder={server.is_internal ? "What are these for?" : "What tools does it expose?"} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </div>
+        </DialogSection>
+        {server.is_internal && (
+          <DialogSection title="Capabilities" hint="What a persona mounting this row can do, and how each capability is configured.">
             <CapabilityEditor idPrefix="mce" value={caps} onChange={setCaps} onError={setCapErr} />
-          </>
+          </DialogSection>
         )}
         {!server.is_internal && (
+          <>
+        <DialogSection title="Connection" hint="How the AI worker reaches the server. Transport and runtime are fixed after creation.">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
           <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
             <p className="text-[12px] text-ink2">Transport <span className="text-ink2/70">(fixed)</span></p>
@@ -861,9 +873,6 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
             </div>
           )}
         </div>
-        )}
-        {!server.is_internal && (
-          <>
             <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
               <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
                 <p className="text-[12px] text-ink2">Runs as <span className="text-ink2/70">(fixed)</span></p>
@@ -871,16 +880,19 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
               </div>
               <RuntimeDetails idPrefix="mce" runtime={server.server_type} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
             </div>
-            <div>
-              <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-            </div>
+        </DialogSection>
+        <DialogSection title="Calls">
             <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
+        </DialogSection>
+        <DialogSection title="Runtime">
             <RuntimeFields idPrefix="mce" config={config} onConfig={setConfig} firstParty={server.is_first_party} firstPartyFixed embed={embed} onEmbed={setEmbed} />
+        </DialogSection>
+        <DialogSection title="Access" hint="How the worker authenticates to the server.">
             <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+        </DialogSection>
           </>
         )}
-        <FieldError>{authErr}</FieldError>
+        {authErr && <div className="mt-2"><FieldError>{authErr}</FieldError></div>}
       </form>
     </Dialog>
   );
