@@ -145,3 +145,38 @@ describe("CreateScheduleDialog — run flags", () => {
     expect(within(dialog).getByLabelText(/label/i)).not.toBeRequired();
   });
 });
+
+describe("CreateScheduleDialog — the button follows every rule", () => {
+  it("stays disabled until persona and instruction are given; the active clock's rule gates and explains too", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    const dialog = screen.getByRole("dialog");
+    const create = within(dialog).getByRole("button", { name: /create schedule/i });
+    expect(create).toBeDisabled();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument(); // a blank form is not covered in red
+    fireEvent.blur(within(dialog).getByLabelText("Persona"));
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument(); // pristine and empty: quiet
+    fireEvent.change(within(dialog).getByLabelText("Persona"), { target: { value: "pe1" } });
+    const query = within(dialog).getByLabelText(/what should they do/i);
+    fireEvent.change(query, { target: { value: "x" } });
+    fireEvent.blur(query);
+    fireEvent.change(query, { target: { value: "" } });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/say what they should do/i); // judged once: live
+    fireEvent.change(query, { target: { value: "Daily digest." } });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(create).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Weekly" }));
+    expect(create).toBeDisabled(); // no day ticked yet
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Mon" }));
+    expect(create).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Mon" }));
+    expect(create).toBeDisabled();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Pick at least one day of the week.");
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Once" }));
+    expect(create).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Fire at"), { target: { value: "2000-01-01T09:00" } });
+    fireEvent.blur(within(dialog).getByLabelText("Fire at"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("That time is in the past.");
+    expect(create).toBeDisabled();
+  });
+});

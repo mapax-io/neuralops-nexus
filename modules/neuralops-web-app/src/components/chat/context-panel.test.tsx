@@ -200,3 +200,29 @@ describe("ContextPanel", () => {
     expect(await screen.findByText("No chat history in context")).toBeInTheDocument();
   });
 });
+
+describe("ContextPanel — the add-link form follows its rules", () => {
+  it("keeps Add to context disabled until the address is a URL; a visited field explains itself live", async () => {
+    // The form lives on the Web tab, which exists once the panel has a web group.
+    server.use(http.get(PANEL_URL, () => HttpResponse.json([...PANEL, { directive: "web", label: "Web", icon: "globe", can_delete_source: true, can_delete_items: true, items: [] }])));
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /add link/i }));
+    const add = screen.getByRole("button", { name: /add to context/i });
+    expect(add).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // a blank form is not covered in red
+    const url = screen.getByLabelText("Web address");
+    fireEvent.change(url, { target: { value: "example.com" } });
+    expect(add).toBeDisabled();
+    fireEvent.blur(url);
+    expect(screen.getByRole("alert")).toHaveTextContent(/valid URL/);
+    fireEvent.change(url, { target: { value: "https://example.com/report" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(add).toBeEnabled();
+    // An optional label still has to be a sane one once given.
+    const name = screen.getByLabelText(/^name/i);
+    fireEvent.change(name, { target: { value: "<script>" } });
+    expect(add).toBeDisabled();
+    fireEvent.blur(name);
+    expect(screen.getByRole("alert")).toHaveTextContent(/letters, numbers/);
+  });
+});

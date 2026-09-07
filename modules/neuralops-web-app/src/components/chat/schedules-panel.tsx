@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Skeleton } from "@/components/ui/surfaces";
 import { usePersonas } from "@/hooks/use-intelligence";
@@ -178,11 +179,26 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [monthDay, setMonthDay] = useState("1");
   const [onceAt, setOnceAt] = useState("");
+  // Judged when the value is typed (and again at submit) — the clock is not
+  // something a render may read.
+  const [oncePast, setOncePast] = useState(false);
   // Server defaults: announce each run in the chat; make up a run missed
   // while the server was down.
   const [triggerVisible, setTriggerVisible] = useState(true);
   const [catchUpMissed, setCatchUpMissed] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const clocked = mode === "daily" || mode === "weekly" || mode === "monthly";
+  // Every rule the submit needs, derived live for the active clock: the
+  // button gates on all of them, each field shows its own once visited.
+  const form = useFormErrors({
+    persona: [personaId, personaId ? null : "Pick the persona that runs."],
+    query: [query, query.trim() ? null : "Say what they should do each run — it's sent as their instruction."],
+    label: [label, label.trim() ? vName(label, { label: "label", max: 80 }) : null],
+    every: [every, mode === "interval" && (!Number.isFinite(every) || every < 1) ? "Repeat interval must be at least 1." : null],
+    time: [dailyTime, clocked && !/^\d{2}:\d{2}$/.test(dailyTime) ? "Pick a time of day." : null],
+    weekdays: mode === "weekly" && weekdays.length === 0 ? "Pick at least one day of the week." : null,
+    monthDay: [monthDay, mode === "monthly" && !/^([1-9]|[12]\d|3[01])$/.test(monthDay) ? "Day of month must be between 1 and 31." : null],
+    once: [onceAt, mode !== "once" ? null : !onceAt ? "Pick when it should fire." : oncePast ? "That time is in the past." : null],
+  });
 
   const reset = () => {
     setPersonaId("");
@@ -195,9 +211,10 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
     setWeekdays([]);
     setMonthDay("1");
     setOnceAt("");
+    setOncePast(false);
     setTriggerVisible(true);
     setCatchUpMissed(true);
-    setErr(null);
+    form.reset();
   };
   const close = () => {
     reset();
@@ -208,18 +225,13 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    if (!personaId) return setErr("Pick the persona that runs.");
-    if (!query.trim()) return setErr("Say what they should do each run — it's sent as their instruction.");
-    if (label.trim()) { const le = vName(label, { label: "label", max: 80 }); if (le) return setErr(le); }
-    if (mode === "interval" && (!Number.isFinite(every) || every < 1)) return setErr("Repeat interval must be at least 1.");
-    const clocked = mode === "daily" || mode === "weekly" || mode === "monthly";
-    if (clocked && !/^\d{2}:\d{2}$/.test(dailyTime)) return setErr("Pick a time of day.");
-    if (mode === "weekly" && weekdays.length === 0) return setErr("Pick at least one day of the week.");
-    if (mode === "monthly" && !/^([1-9]|[12]\d|3[01])$/.test(monthDay)) return setErr("Day of month must be between 1 and 31.");
-    if (mode === "once") {
-      if (!onceAt) return setErr("Pick when it should fire.");
-      if (new Date(onceAt).getTime() <= Date.now()) return setErr("That time is in the past.");
+    // The button is gated on form.invalid; a submit that slips through
+    // reveals every message instead of posting.
+    if (form.invalid) return form.touchAll();
+    // The clock moved on since the value was typed: judge it again now.
+    if (mode === "once" && new Date(onceAt).getTime() <= Date.now()) {
+      setOncePast(true);
+      return form.touch("once");
     }
     const [hh, mm] = dailyTime.split(":");
     create.mutate({
@@ -253,7 +265,7 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
-          <Button type="submit" form="sc-form" size="sm" variant="primary" loading={create.isPending}><Plus size={14} strokeWidth={2} /> Create schedule</Button>
+          <Button type="submit" form="sc-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending}><Plus size={14} strokeWidth={2} /> Create schedule</Button>
         </div>
       }
     >
@@ -261,12 +273,13 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
         <DialogSection title="What" hint="Who runs, and the instruction they get each time.">
         <div>
           <Label htmlFor="sc-persona" required>Persona</Label>
-          <select id="sc-persona" required autoFocus value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
+          <select id="sc-persona" required autoFocus value={personaId} aria-invalid={!!form.error("persona")} onChange={(e) => setPersonaId(e.target.value)} onBlur={() => form.touch("persona")} className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]">
             <option value="" disabled>Choose a persona…</option>
             {personas?.map((p) => (
               <option key={p.id} value={p.id}>@{p.name}</option>
             ))}
           </select>
+          <FieldError>{form.error("persona")}</FieldError>
           {personas?.length === 0 && <p className="mt-1.5 text-[12px] text-warn">This project has no personas yet — create one under Intelligence.</p>}
         </div>
         <div>
@@ -276,10 +289,13 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
             required
             rows={3}
             value={query}
+            aria-invalid={!!form.error("query")}
             onChange={(e) => setQuery(e.target.value)}
+            onBlur={() => form.touch("query")}
             placeholder="Summarize yesterday's messages in this chat and flag anything blocking the launch."
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
+          <FieldError>{form.error("query")}</FieldError>
         </div>
         </DialogSection>
         <DialogSection title="When">
@@ -319,32 +335,35 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
                 const on = weekdays.includes(d.n);
                 return (
                   <label key={d.n} className={`flex cursor-pointer items-center gap-1.5 rounded-[10px] border px-2.5 py-1.5 text-[13px] ${on ? "border-accent bg-accent/10" : "border-line bg-surface hover:border-accent/50"}`}>
-                    <input type="checkbox" checked={on} onChange={() => setWeekdays((cur) => (cur.includes(d.n) ? cur.filter((x) => x !== d.n) : [...cur, d.n]))} className="accent-[var(--accent)]" />
+                    <input type="checkbox" checked={on} onChange={() => { form.touch("weekdays"); setWeekdays((cur) => (cur.includes(d.n) ? cur.filter((x) => x !== d.n) : [...cur, d.n])); }} className="accent-[var(--accent)]" />
                     {d.label}
                   </label>
                 );
               })}
             </div>
+            <FieldError>{form.error("weekdays")}</FieldError>
           </fieldset>
         )}
         {mode === "monthly" && (
           <div className="max-w-[180px]">
             <Label htmlFor="sc-monthday" required>Day of month</Label>
-            <Input id="sc-monthday" type="number" required min={1} max={31} step={1} inputMode="numeric" value={monthDay} onChange={(e) => setMonthDay(e.target.value)} />
-            <p className="mt-1.5 text-[12px] text-ink2">Months without that day are skipped (e.g. the 31st).</p>
+            <Input id="sc-monthday" type="number" required min={1} max={31} step={1} inputMode="numeric" value={monthDay} aria-invalid={!!form.error("monthDay")} onChange={(e) => setMonthDay(e.target.value)} onBlur={() => form.touch("monthDay")} />
+            {form.error("monthDay") ? <FieldError>{form.error("monthDay")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Months without that day are skipped (e.g. the 31st).</p>}
           </div>
         )}
         {(mode === "daily" || mode === "weekly" || mode === "monthly") && (
           <div className="max-w-[180px]">
             <Label htmlFor="sc-time" required>At</Label>
-            <Input id="sc-time" type="time" required value={dailyTime} onChange={(e) => setDailyTime(e.target.value)} />
+            <Input id="sc-time" type="time" required value={dailyTime} aria-invalid={!!form.error("time")} onChange={(e) => setDailyTime(e.target.value)} onBlur={() => form.touch("time")} />
+            <FieldError>{form.error("time")}</FieldError>
           </div>
         )}
         {mode === "interval" && (
           <div className="grid max-w-sm grid-cols-2 gap-3">
             <div>
               <Label htmlFor="sc-every" required>Every</Label>
-              <Input id="sc-every" type="number" required min={1} value={every} onChange={(e) => setEvery(Number(e.target.value))} />
+              <Input id="sc-every" type="number" required min={1} value={every} aria-invalid={!!form.error("every")} onChange={(e) => setEvery(Number(e.target.value))} onBlur={() => form.touch("every")} />
+              <FieldError>{form.error("every")}</FieldError>
             </div>
             <div>
               <Label htmlFor="sc-period">Period</Label>
@@ -360,12 +379,14 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
         {mode === "once" && (
           <div className="max-w-[260px]">
             <Label htmlFor="sc-once" required>Fire at</Label>
-            <Input id="sc-once" type="datetime-local" required value={onceAt} onChange={(e) => setOnceAt(e.target.value)} />
+            <Input id="sc-once" type="datetime-local" required value={onceAt} aria-invalid={!!form.error("once")} onChange={(e) => { setOnceAt(e.target.value); setOncePast(!!e.target.value && new Date(e.target.value).getTime() <= Date.now()); }} onBlur={() => form.touch("once")} />
+            <FieldError>{form.error("once")}</FieldError>
           </div>
         )}
         <div>
           <Label htmlFor="sc-label">Label <span className="text-ink2">(optional)</span></Label>
-          <Input id="sc-label" placeholder="e.g. Morning digest" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={80} />
+          <Input id="sc-label" placeholder="e.g. Morning digest" value={label} aria-invalid={!!form.error("label")} onChange={(e) => setLabel(e.target.value)} onBlur={() => form.touch("label")} maxLength={80} />
+          <FieldError>{form.error("label")}</FieldError>
         </div>
         <div className="flex flex-col gap-2">
           <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
@@ -378,7 +399,6 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
           </label>
         </div>
         </DialogSection>
-        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );
@@ -389,14 +409,15 @@ function CreateScheduleDialog({ open, onClose, pid, cid, tid }: { open: boolean;
 function EditScheduleDialog({ schedule, pid, cid, tid, onClose }: { schedule: Schedule; pid: string; cid: string; tid: string; onClose: () => void }) {
   const [query, setQuery] = useState(schedule.query_text);
   const [label, setLabel] = useState(schedule.label ?? "");
-  const [err, setErr] = useState<string | null>(null);
   const edit = useEditSchedule(pid, cid, tid, onClose);
+  const form = useFormErrors({
+    query: [query, query.trim() ? null : "Say what they should do each run — it's sent as their instruction."],
+    label: [label, label.trim() ? vName(label, { label: "label", max: 80 }) : null],
+  });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    if (!query.trim()) return setErr("Say what they should do each run — it's sent as their instruction.");
-    if (label.trim()) { const le = vName(label, { label: "label", max: 80 }); if (le) return setErr(le); }
+    if (form.invalid) return form.touchAll();
     const patch = {
       ...(query.trim() !== schedule.query_text ? { query_text: query.trim() } : {}),
       ...(label.trim() !== (schedule.label ?? "") ? { label: label.trim() } : {}),
@@ -416,7 +437,7 @@ function EditScheduleDialog({ schedule, pid, cid, tid, onClose }: { schedule: Sc
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
-          <Button type="submit" form="se-form" size="sm" variant="primary" disabled={!query.trim()} loading={edit.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
+          <Button type="submit" form="se-form" size="sm" variant="primary" disabled={form.invalid} loading={edit.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
@@ -429,15 +450,18 @@ function EditScheduleDialog({ schedule, pid, cid, tid, onClose }: { schedule: Sc
             autoFocus
             rows={3}
             value={query}
+            aria-invalid={!!form.error("query")}
             onChange={(e) => setQuery(e.target.value)}
+            onBlur={() => form.touch("query")}
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
+          <FieldError>{form.error("query")}</FieldError>
         </div>
         <div>
           <Label htmlFor="se-label">Label <span className="text-ink2">(optional)</span></Label>
-          <Input id="se-label" placeholder="e.g. Morning digest" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={80} />
+          <Input id="se-label" placeholder="e.g. Morning digest" value={label} aria-invalid={!!form.error("label")} onChange={(e) => setLabel(e.target.value)} onBlur={() => form.touch("label")} maxLength={80} />
+          <FieldError>{form.error("label")}</FieldError>
         </div>
-        <FieldError>{err}</FieldError>
       </form>
     </Dialog>
   );
