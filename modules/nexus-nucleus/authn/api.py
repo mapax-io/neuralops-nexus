@@ -33,7 +33,9 @@ class ServerConfigOut(Schema):
 
 class ChangeUsernameIn(Schema):
     new_name: str
-    topic_id: str
+    # Optional: when given, the rename is announced in that topic as a
+    # system message. A profile-screen rename sends none.
+    topic_id: Optional[str] = None
 
 class ChangeUsernameOut(Schema):
     ok: bool
@@ -100,17 +102,18 @@ def change_username(request, payload: ChangeUsernameIn):
     user.display_name = name
     user.save(update_fields=["display_name"])
 
-    try:
-        topic = ChatTopic.objects.get(id=payload.topic_id, is_active=True)
-        company = Company.objects.filter(is_active=True).first()
-        sys_msg = save_system_message(
-            company=company,
-            project=topic.project,
-            topic=topic,
-            content=f"{old_name} changed their username to {name}",
-        )
-        publish(topic_channel(payload.topic_id), sys_msg)
-    except Exception:
-        pass
+    if payload.topic_id:
+        try:
+            topic = ChatTopic.objects.get(id=payload.topic_id, is_active=True)
+            company = Company.objects.filter(is_active=True).first()
+            sys_msg = save_system_message(
+                company=company,
+                project=topic.project,
+                topic=topic,
+                content=f"{old_name} changed their username to {name}",
+            )
+            publish(topic_channel(payload.topic_id), sys_msg)
+        except Exception:
+            pass
 
     return {"ok": True, "display_name": name}
