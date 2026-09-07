@@ -221,7 +221,9 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   // The context window follows the model id until the user types a size of
   // their own — then it is theirs and the id stops overriding it.
   const [ctxTouched, setCtxTouched] = useState(false);
-  const [caps, setCaps] = useState<Capabilities>({ supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false });
+  // The one capability that changes behaviour: the server refuses MCP servers
+  // on a persona whose model lacks it, and defaults a new model to "no tools".
+  const [supportsTools, setSupportsTools] = useState(true);
   const [licence, setLicence] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [nameErr, setNameErr] = useState<string | null>(null);
@@ -247,7 +249,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
     setDescription("");
     setContextWindow(String(DEFAULT_CONTEXT_WINDOW));
     setCtxTouched(false);
-    setCaps({ supports_tools: true, supports_streaming: true, supports_vision: false, supports_audio: false });
+    setSupportsTools(true);
     setLicence(false);
     setErr(null);
     setNameErr(null);
@@ -296,7 +298,9 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
       description: description.trim() || undefined,
       licence_accepted: true,
       context_window: Number(contextWindow),
-      ...caps,
+      // Streaming, vision and audio are left to the server defaults — nothing
+      // downstream reads them yet — and stay adjustable in the edit dialog.
+      supports_tools: supportsTools,
     });
   };
 
@@ -406,7 +410,10 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
               : "Tokens the model can take in one call — check the provider\u2019s model page."}
           </p>
         </div>
-        <CapabilityChecks value={caps} onChange={setCaps} />
+        <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
+          <input type="checkbox" checked={supportsTools} onChange={(e) => setSupportsTools(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+          Supports tool use — personas can only mount MCP tool servers on a tool-capable model; untick for a model without function calling.
+        </label>
         <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
           <input type="checkbox" checked={licence} onChange={(e) => setLicence(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
           I accept the model provider&apos;s terms of service for this key and usage.
