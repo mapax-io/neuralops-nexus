@@ -9,6 +9,7 @@ import { validateName as vName } from "@/lib/validation";
 import { Constellation } from "@/components/brand/constellation";
 import { Nebula } from "@/components/brand/nebula";
 import { Wordmark } from "@/components/brand/wordmark";
+import { MissingEmailNotice } from "@/components/auth/missing-email-notice";
 import { ServerChooser, type ChooserEntry } from "@/components/servers/server-chooser";
 import { InsecureContextNotice } from "@/components/security/insecure-context-notice";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -69,7 +70,7 @@ export default function ServersPage() {
   }, [servers, configs]);
 
   const connect = async (s: SavedServer) => {
-    if (!token) return;
+    if (!token || !email) return; // no email claim → every server would 401 (see MissingEmailNotice)
     setErrors((e) => ({ ...e, [s.id]: "" }));
     if (compareServerVersion(configs[s.id]?.server_version) === "breaking") return;
     setConnecting(s.id);
@@ -180,9 +181,10 @@ export default function ServersPage() {
               Welcome back{firstName ? `, ${firstName}` : ""}
             </p>
             <h1 className="mt-2 font-display text-[28px] font-extrabold">Where are you working today?</h1>
-            <p className="mb-7 mt-1.5 text-[14px] text-ink2">Signed in as {email}</p>
+            <p className="mb-7 mt-1.5 text-[14px] text-ink2">{email ? `Signed in as ${email}` : "Signed in"}</p>
 
             <InsecureContextNotice className="mb-5" />
+            {!email && <MissingEmailNotice onSignOut={() => setConfirmingSignOut(true)} />}
             <ServerChooser entries={entries} loading={syncing || showSync} onConnect={connect} onRemove={setRemoving} onAdd={() => setAdding(true)} />
 
             <p className="mt-5 text-center text-[12.5px] text-ink2">
