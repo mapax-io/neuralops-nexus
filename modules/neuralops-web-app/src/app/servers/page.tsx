@@ -92,6 +92,10 @@ export default function ServersPage() {
         useConnectionStore.getState().connect(out.connection);
         if (compareServerVersion(out.connection.serverVersion) === "minor")
           toast.warning("Server version differs slightly from this app — consider updating the server.");
+        // First connect: the server just created this member (and accepted
+        // any pending invitation) — say so, with the role they landed with.
+        if (out.isNewUser)
+          toast.success(`Welcome to ${out.connection.companyName ?? "the server"} — you're in as ${out.connection.role ?? "a member"}.`);
         router.push("/w");
         return;
       }

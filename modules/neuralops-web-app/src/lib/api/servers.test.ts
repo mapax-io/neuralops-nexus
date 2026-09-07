@@ -44,7 +44,14 @@ describe("connectToServer — outcome taxonomy", () => {
     if (out.kind === "ok") {
       expect(out.connection.companyName).toBe("Acme");
       expect(out.connection.moduleVersions.nucleus).toBe("1");
+      expect(out.isNewUser).toBe(false); // absent → not new
     }
+  });
+
+  it("carries the server's first-connect flag so the launcher can welcome a new member", async () => {
+    verify({ ok: true, user_id: "u2", email: "n@b.c", is_new_user: true, company_exists: true, is_owner: false, role: "member", company_name: "Acme", server_version: "0.1.2" });
+    const out = await connectToServer(URL_, "jwt");
+    expect(out.kind === "ok" && out.isNewUser).toBe(true);
   });
 
   it("maps 403 to not-a-member", async () => {
