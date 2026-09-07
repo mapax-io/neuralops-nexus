@@ -4,6 +4,7 @@ All queries are scoped to company — safe for multi-tenant use.
 """
 import copy
 import hashlib
+import logging
 import secrets
 from datetime import timedelta
 
@@ -24,6 +25,8 @@ from nucleus.models import (
 )
 import os
 from nucleus.models import MCPServer
+logger = logging.getLogger(__name__)
+
 User = get_user_model()
 
 
@@ -314,7 +317,39 @@ def get_member_access(company, user):
     ).first()
 
 
-def invite_to_system(company, inviter, email: str, role: str = "member", access_payload: dict = None) -> dict:
+def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bool, str | None]:
+    """
+    Email the invitee through Supabase's admin invite API when this server
+    holds the service key. Returns (email_sent, note) -- the note says why
+    nothing was sent so the inviter can pass the steps on. The invite seeds
+    the new account with this server (nx_servers), which the web app shows
+    on the invitee's launcher.
+    """
+    from authn.supabase import SupabaseAdminError, invite_user_by_email
+
+    if not settings.SUPABASE_SERVICE_KEY:
+        return False, None
+    if redirect_to and not redirect_to.startswith(("http://", "https://")):
+        redirect_to = None
+    server_url = (getattr(settings, "NEURALOPS_SERVER_URL", "") or "").rstrip("/")
+    metadata = None
+    if server_url:
+        metadata = {"nx_servers": [{
+            "id": secrets.token_urlsafe(8), "name": company.name, "url": server_url,
+            "addedAt": timezone.now().isoformat(),
+        }]}
+    try:
+        invite_user_by_email(email, redirect_to=redirect_to or "", metadata=metadata)
+        return True, None
+    except SupabaseAdminError as exc:
+        logger.warning("[invite] email to %s not sent: %s", email, exc)
+        if exc.code == "exists":
+            return False, "They already have a NeuralOps account, so no email was sent -- they can add this server and connect."
+        return False, "The invitation email could not be sent; pass the steps on instead."
+
+
+def invite_to_system(company, inviter, email: str, role: str = "member", access_payload: dict = None,
+                     redirect_to: str | None = None) -> dict:
     """
     The ONE entry point for adding anyone to this company. Every other
     invite (invite_to_project() below, and by extension its topic-scope
@@ -376,10 +411,13 @@ def invite_to_system(company, inviter, email: str, role: str = "member", access_
         token_hash=token_hash, expires_at=timezone.now() + timedelta(days=7),
         access_payload=access_payload or {},
     )
+    email_sent, email_note = _send_invite_email(company, email, redirect_to)
     return {
-        "ok": True, "is_new_user": True, "message": f"Invitation sent to {email}",
+        "ok": True, "is_new_user": True,
+        "message": f"Invitation email sent to {email}" if email_sent else f"{email} is pre-authorised on this server",
         "email": email, "role": role,
         "expires_at": invitation.expires_at.isoformat(),
+        "email_sent": email_sent, "email_note": email_note,
     }
 
 
@@ -508,6 +546,7 @@ def invite_to_project(
     company, inviter, project,
     email: str = None, persona_name: str = None,
     scope: str = "topic", topic_id: str = None, role: str = "member",
+    redirect_to: str | None = None,
 ) -> dict:
     # CompanyAccess, Invitation, ProjectMember, Persona — imported at top of file.
 
@@ -557,6 +596,7 @@ def invite_to_project(
     system_result = invite_to_system(
         company, inviter, email, role=role,
         access_payload={"project_id": str(project.id), "scope": scope, "topic_id": topic_id},
+        redirect_to=redirect_to,
     )
 
     if system_result["is_new_user"]:

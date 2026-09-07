@@ -110,7 +110,7 @@ Type **`/invite`** followed by either an `@PersonaName` or an email address:
 /invite someone@example.com project   → invites them to the whole project
 ```
 
-New users get an emailed invite link; existing workspace users are added directly.
+Existing workspace users are added directly. A new address is pre-authorised, and emailed too when the server holds the identity project's service key.
 
 ### Create a project, channel, and topic
 
