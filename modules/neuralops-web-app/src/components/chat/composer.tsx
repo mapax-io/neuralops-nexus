@@ -771,6 +771,7 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
           <div className="absolute bottom-full left-3 z-30 mb-1 flex w-80 max-w-[calc(100%-24px)] items-center gap-2 rounded-xl border border-line bg-surface p-2 shadow-2xl">
             <input
               autoFocus
+              autoComplete="off"
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), applyLink())}

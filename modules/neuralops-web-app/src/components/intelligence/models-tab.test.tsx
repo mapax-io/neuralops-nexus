@@ -158,6 +158,30 @@ describe("ModelsTab — register asks only about tool use", () => {
   });
 });
 
+describe("ModelsTab — no browser credential autofill in the model dialogs", () => {
+  it("keeps saved logins out of the register dialog's fields", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    const key = within(dialog).getByLabelText("API key");
+    expect(key).toHaveAttribute("autocomplete", "new-password");
+    expect(key).toHaveAttribute("data-1p-ignore");
+    expect(key).toHaveAttribute("data-lpignore", "true");
+    // The text fields Chrome would pair with the password as a "username".
+    expect(within(dialog).getByLabelText("Name")).toHaveAttribute("autocomplete", "off");
+    expect(within(dialog).getByLabelText("Model id")).toHaveAttribute("autocomplete", "off");
+  });
+
+  it("and out of the edit dialog's key rotation field", async () => {
+    renderTab();
+    await screen.findByText("House model");
+    fireEvent.click(screen.getByRole("button", { name: "Edit model House model" }));
+    const edit = screen.getByRole("dialog");
+    const key = within(edit).getByLabelText(/api key/i);
+    expect(key).toHaveAttribute("autocomplete", "new-password");
+    expect(key).toHaveAttribute("data-1p-ignore");
+  });
+});
+
 describe("ModelsTab — register carries the description", () => {
   it("posts the description when given, and omits it when blank", async () => {
     renderTab();

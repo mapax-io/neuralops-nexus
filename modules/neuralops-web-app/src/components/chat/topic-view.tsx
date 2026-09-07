@@ -135,6 +135,7 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
           <Search size={14} strokeWidth={2} className="flex-none text-ink2" />
           <input
             autoFocus
+            autoComplete="off"
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
