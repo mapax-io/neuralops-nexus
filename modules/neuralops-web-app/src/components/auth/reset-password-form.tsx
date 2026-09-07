@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { supabase } from "@/lib/supabase";
 
-// The reset link from the email carries a recovery session in the URL; the
-// identity SDK picks it up on load. Without one, updateUser can only fail —
-// so the form waits for the session and says what to do when there is none.
+// Both the password-reset link and an invitation email land here with a
+// session in the URL (recovery or invite); the identity SDK picks it up on
+// load. Without one, updateUser can only fail — so the form waits for the
+// session and says what to do when there is none.
 export function ResetPasswordForm() {
   const router = useRouter();
   const [session, setSession] = useState<"checking" | "present" | "missing">("checking");
@@ -38,7 +39,7 @@ export function ResetPasswordForm() {
     const { error: err } = await supabase().auth.updateUser({ password });
     setPending(false);
     if (err) {
-      return setError(/session/i.test(err.message) ? "This reset link has expired or was already used — request a new one from the sign-in page." : err.message);
+      return setError(/session/i.test(err.message) ? "This link has expired or was already used — request a new one from the sign-in page." : err.message);
     }
     router.push("/servers");
   };
@@ -47,7 +48,7 @@ export function ResetPasswordForm() {
   if (session === "missing") {
     return (
       <div role="alert" className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2.5 text-[13px] text-ink">
-        This page needs the link from your reset email — open it from there, or{" "}
+        This page needs the link from your email (a password reset or an invitation) — open it from there, or{" "}
         <Link href="/login" className="font-semibold underline underline-offset-2">request a new link</Link> from the sign-in page.
       </div>
     );

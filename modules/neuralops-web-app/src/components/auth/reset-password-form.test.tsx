@@ -19,7 +19,7 @@ describe("ResetPasswordForm", () => {
   it("without a recovery session it explains and points back to the sign-in page instead of showing a doomed form", async () => {
     getSession.mockResolvedValue({ data: { session: null } });
     render(<ResetPasswordForm />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(/link from your reset email/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/link from your email/i);
     expect(screen.queryByLabelText(/new password/i)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /request a new link/i })).toHaveAttribute("href", "/login");
   });
