@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { FieldError, Input, Label } from "@/components/ui/field";
+import { afterPress } from "@/hooks/use-form-errors";
 
 // Sign-in never length-checks — existing accounts may predate any policy,
 // and the server is the judge. Length rules apply only where a password is
@@ -41,6 +42,30 @@ export function LoginForm() {
     resolver: zodResolver(mode === "forgot" ? emailOnlySchema : mode === "signup" ? signUpSchema : signInSchema),
     defaultValues: { email: "", password: "" },
   });
+  const [email, password] = useWatch({ control: form.control, name: ["email", "password"] });
+  // Same policy as every other form (use-form-errors): a field is judged when
+  // the user leaves it, unless it is pristine and empty; from then on live.
+  // The reveal waits for a press in progress to end.
+  const held = useRef(new Set<keyof FormValues>());
+  const judged = useRef(new Set<keyof FormValues>());
+  const judgeOnBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const name = e.target.name as keyof FormValues;
+    if (!e.target.value && !held.current.has(name)) return;
+    judged.current.add(name);
+    afterPress(() => { void form.trigger(name); });
+  };
+  const judgeOnChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const name = e.target.name as keyof FormValues;
+    if (e.target.value) held.current.add(name);
+    if (judged.current.has(name)) void form.trigger(name);
+  };
+  // Wired as JSX handlers (not register options) so the library's own
+  // handlers still run and the judging stays a plain event handler.
+  const emailField = form.register("email");
+  const passwordField = form.register("password");
+  // isValid lags a mode switch until the next keystroke; the presence checks
+  // cover that gap so an empty field never has an enabled button next to it.
+  const incomplete = !email.trim() || (mode !== "forgot" && !password) || !form.formState.isValid;
 
   const submit = form.handleSubmit(async ({ email, password }) => {
     setServerError(null);
@@ -115,13 +140,13 @@ export function LoginForm() {
     <form onSubmit={submit} method="post" noValidate className="flex flex-col gap-4">
       <div>
         <Label htmlFor="email" required>Email</Label>
-        <Input id="email" type="email" required autoFocus autoComplete="email" placeholder="you@company.com" {...form.register("email")} />
+        <Input id="email" type="email" required autoFocus autoComplete="email" placeholder="you@company.com" {...emailField} onBlur={(e) => { void emailField.onBlur(e); judgeOnBlur(e); }} onChange={(e) => { void emailField.onChange(e); judgeOnChange(e); }} />
         <FieldError>{form.formState.errors.email?.message}</FieldError>
       </div>
       {mode !== "forgot" && (
         <div>
           <Label htmlFor="password" required>Password</Label>
-          <Input id="password" type="password" required autoComplete={mode === "signin" ? "current-password" : "new-password"} {...form.register("password")} />
+          <Input id="password" type="password" required autoComplete={mode === "signin" ? "current-password" : "new-password"} {...passwordField} onBlur={(e) => { void passwordField.onBlur(e); judgeOnBlur(e); }} onChange={(e) => { void passwordField.onChange(e); judgeOnChange(e); }} />
           <FieldError>{form.formState.errors.password?.message}</FieldError>
         </div>
       )}
@@ -139,11 +164,12 @@ export function LoginForm() {
           )}
         </p>
       )}
-      <Button type="submit" variant="primary" size="lg" loading={pending}>
+      <Button type="submit" variant="primary" size="lg" disabled={incomplete} loading={pending}>
         {mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Send reset link"}
       </Button>
       {mode !== "forgot" && (
-        <Button type="button" onClick={github} loading={githubPending}>Continue with GitHub</Button>
+        // mousedown would blur the email field and judge it — GitHub sign-in has no use for it.
+        <Button type="button" onMouseDown={(e) => e.preventDefault()} onClick={github} loading={githubPending}>Continue with GitHub</Button>
       )}
       <div className="flex justify-between text-[13px] text-ink2">
         <button type="button" className="hover:text-ink" onClick={() => { form.clearErrors(); setNotice(null); setServerError(null); setUnconfirmedEmail(null); setMode(mode === "signin" ? "signup" : "signin"); }}>

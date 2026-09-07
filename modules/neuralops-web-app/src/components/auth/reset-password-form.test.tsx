@@ -36,15 +36,20 @@ describe("ResetPasswordForm", () => {
     expect(push).toHaveBeenCalledWith("/servers");
   });
 
-  it("checks length and match before calling the identity provider, and translates a lost session", async () => {
+  it("judges length and match as the fields are left, keeps the button disabled, and translates a lost session", async () => {
     getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
     updateUser.mockResolvedValue({ error: { message: "Auth session missing!" } });
     const user = userEvent.setup();
     render(<ResetPasswordForm />);
     await user.type(await screen.findByLabelText(/^new password/i), "short");
-    await user.type(screen.getByLabelText(/confirm password/i), "short");
-    await user.click(screen.getByRole("button", { name: /update password/i }));
+    const update = screen.getByRole("button", { name: /update password/i });
+    expect(update).toBeDisabled();
+    await user.type(screen.getByLabelText(/confirm password/i), "shorter"); // moving on judged the first field
     expect(screen.getByRole("alert")).toHaveTextContent(/at least 8/i);
+    await user.tab();
+    expect(screen.getAllByRole("alert").map((a) => a.textContent)).toEqual(["Use at least 8 characters.", "Passwords don't match."]);
+    expect(update).toBeDisabled();
+    await user.click(update);
     expect(updateUser).not.toHaveBeenCalled();
     await user.clear(screen.getByLabelText(/^new password/i));
     await user.type(screen.getByLabelText(/^new password/i), "secret12");

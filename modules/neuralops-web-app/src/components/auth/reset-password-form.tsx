@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FieldError, Input, Label } from "@/components/ui/field";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { supabase } from "@/lib/supabase";
 
 // Both the password-reset link and an invitation email land here with a
@@ -18,6 +19,12 @@ export function ResetPasswordForm() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  // Both rules derived live: the button gates on them, each field shows its
+  // own once visited. Length agrees with sign-up and the profile dialog (8).
+  const form = useFormErrors({
+    pw: [password, password.length < 8 ? "Use at least 8 characters." : null],
+    confirm: [confirm, confirm !== password ? "Passwords don't match." : null],
+  });
 
   useEffect(() => {
     let alive = true;
@@ -33,8 +40,7 @@ export function ResetPasswordForm() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (password.length < 8) return setError("Use at least 8 characters.");
-    if (password !== confirm) return setError("Passwords don't match.");
+    if (form.invalid) return form.touchAll();
     setPending(true);
     const { error: err } = await supabase().auth.updateUser({ password });
     setPending(false);
@@ -59,14 +65,16 @@ export function ResetPasswordForm() {
     <form onSubmit={submit} method="post" noValidate className="flex flex-col gap-4">
       <div>
         <Label htmlFor="pw" required>New password</Label>
-        <Input id="pw" type="password" required autoFocus autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Input id="pw" type="password" required autoFocus autoComplete="new-password" value={password} aria-invalid={!!form.error("pw")} onChange={(e) => setPassword(e.target.value)} onBlur={() => form.touch("pw")} />
+        <FieldError>{form.error("pw")}</FieldError>
       </div>
       <div>
         <Label htmlFor="pw2" required>Confirm password</Label>
-        <Input id="pw2" type="password" required autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <Input id="pw2" type="password" required autoComplete="new-password" value={confirm} aria-invalid={!!form.error("confirm")} onChange={(e) => setConfirm(e.target.value)} onBlur={() => form.touch("confirm")} />
+        <FieldError>{form.error("confirm")}</FieldError>
       </div>
       <FieldError>{error}</FieldError>
-      <Button type="submit" variant="primary" size="lg" loading={pending}>Update password</Button>
+      <Button type="submit" variant="primary" size="lg" disabled={form.invalid} loading={pending}>Update password</Button>
     </form>
   );
 }

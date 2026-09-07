@@ -30,14 +30,30 @@ describe("LoginForm", () => {
     expect(screen.getByLabelText(/password/i)).toBeRequired();
   });
 
-  it("validates email and password before calling the identity provider", async () => {
+  it("judges a field when it is left, keeps Sign in disabled, and never calls the identity provider", async () => {
     const user = userEvent.setup();
     render(<LoginForm />);
+    const signIn = screen.getByRole("button", { name: /sign in/i });
+    expect(signIn).toBeDisabled(); // a blank form: disabled, not red
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText(/email/i), "not-an-email");
-    await user.click(screen.getByRole("button", { name: /sign in/i }));
+    await user.tab(); // leaving a field with something in it judges it
     expect(await screen.findByText(/valid email/i)).toBeInTheDocument();
-    expect(screen.getByText(/enter your password/i)).toBeInTheDocument();
+    await user.tab(); // through the pristine empty password: quiet
+    expect(screen.queryByText(/enter your password/i)).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^password/i), "x");
+    await user.tab();
+    await user.clear(screen.getByLabelText(/^password/i)); // judged once: live, empty included
+    expect(await screen.findByText(/enter your password/i)).toBeInTheDocument();
+    expect(signIn).toBeDisabled();
+    await user.click(signIn);
     expect(signInWithPassword).not.toHaveBeenCalled();
+    // Fixing both enables it — the messages follow the values live.
+    await user.clear(screen.getByLabelText(/email/i));
+    await user.type(screen.getByLabelText(/email/i), "a@b.co");
+    await user.type(screen.getByLabelText(/^password/i), "pw");
+    expect(screen.queryByText(/valid email/i)).not.toBeInTheDocument();
+    expect(signIn).toBeEnabled();
   });
 
   // Sign-in must never length-check (existing accounts may predate any
@@ -48,8 +64,9 @@ describe("LoginForm", () => {
     await user.click(screen.getByRole("button", { name: /create an account/i }));
     await user.type(screen.getByLabelText(/email/i), "a@b.co");
     await user.type(screen.getByLabelText(/password/i), "short");
-    await user.click(screen.getByRole("button", { name: /create account/i }));
+    await user.tab();
     expect(await screen.findByText(/at least 8 characters/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create account/i })).toBeDisabled();
   });
 
   it("signs in and moves to server selection", async () => {
