@@ -23,11 +23,6 @@ from typing import AsyncIterator
 
 import httpx
 import litellm
-from fastmcp.client.transports import (
-    StdioTransport,
-    StreamableHttpTransport,
-    SSETransport,
-)
 from pydantic_ai.mcp import FastMCPClient
 
 from apps.interfaces.agent import AgentRunner
@@ -40,6 +35,7 @@ from apps.schemas.trigger import (
     ModelConfig,
 )
 from apps.core.config import settings
+from apps.implementations.agents.mcp_transport import build_transport
 
 # Suppress litellm's verbose logging
 litellm.suppress_debug_info = True
@@ -194,72 +190,9 @@ class LiteLLMRunner(AgentRunner):
                 f"need{'s' if len(reauth) == 1 else ''} to be reconnected before use here."
             )
         for s in persona.mcp_servers:
-            if s.transport == "stdio":
-                # shlex.split (not str.split) so quoted args survive intact --
-                # e.g. a command like
-                #   ssh -i ~/.ssh/key user@host "bash -c 'PATH=... npx ...'"
-                # needs the quoted bash -c argument kept as ONE arg, not blown
-                # apart on every space inside it. A naive .split() would mangle
-                # exactly this shape, which is the standard way to reach a
-                # remote stdio MCP server (e.g. npx @modelcontextprotocol/
-                # server-filesystem) over SSH.
-                import shlex
-
-                cmd_parts = shlex.split(s.command or "")
-                if cmd_parts:
-                    # Built explicitly (not a bare {command, args} dict) so
-                    # s.secrets (e.g. GITHUB_PERSONAL_ACCESS_TOKEN, decrypted
-                    # by nucleus from MCPServer.secrets_encrypted) can be
-                    # passed as subprocess env -- the token never touches the
-                    # plain-text `command` string, and stdio servers don't
-                    # inherit this process's shell environment by default.
-                    client_configs.append(
-                        StdioTransport(
-                            command=cmd_parts[0],
-                            args=cmd_parts[1:],
-                            env=s.secrets or None,
-                        )
-                    )
-            else:  # http | sse | streamable-http | websocket
-                if s.url:
-                    # OAuth2-authenticated servers need the access token sent
-                    # as a bearer header on every request -- StdioTransport
-                    # gets the whole `secrets` dict as subprocess env above,
-                    # but there's no equivalent "env" concept over HTTP/SSE.
-                    # Only the specific token_env_var key is forwarded here,
-                    # never the full secrets dict -- refresh_token/client_secret
-                    # must never leave nucleus and reach the remote MCP server.
-                    headers = None
-                    if s.auth_type == "oauth2":
-                        token = (s.secrets or {}).get(s.token_env_var)
-                        if token:
-                            headers = {"Authorization": f"Bearer {token}"}
-                        else:
-                            # needs_reauth already fails fast above when there's
-                            # no valid token -- reaching here with auth_type
-                            # oauth2 and no token means the token_env_var
-                            # doesn't match what was actually stored. Log and
-                            # continue unauthenticated rather than silently
-                            # dropping the server.
-                            log.warning(
-                                "[runner] MCP server %s is oauth2 but has no "
-                                "token under '%s' -- connecting without auth.",
-                                s.name,
-                                s.token_env_var,
-                            )
-                    if headers is None:
-                        # No auth to attach -- pass the bare URL, same as
-                        # before, so FastMCPClient's own URL-scheme dispatch
-                        # keeps picking the transport (including ws://
-                        # websocket servers, which StreamableHttpTransport/
-                        # SSETransport don't handle).
-                        client_configs.append(s.url)
-                    elif s.transport == "sse":
-                        client_configs.append(SSETransport(s.url, headers=headers))
-                    else:
-                        client_configs.append(
-                            StreamableHttpTransport(s.url, headers=headers)
-                        )
+            cfg = build_transport(s)
+            if cfg is not None:
+                client_configs.append(cfg)
 
         try:
             async with contextlib.AsyncExitStack() as stack:
