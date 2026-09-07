@@ -59,6 +59,11 @@ class InviteResponse(Schema):
     message: str
     email: str
     role: str
+    # True when nobody with this email existed and a pending Invitation was
+    # created (the person still has to sign up and connect); False when an
+    # existing platform user was added on the spot. invite_to_system() has
+    # returned this all along -- the schema just dropped it.
+    is_new_user: bool = False
     # Optional now that invite_to_system() has two non-pending outcomes
     # (already a member / granted immediately) with no Invitation row,
     # hence no expiry -- only the "brand new person, pending invite"
