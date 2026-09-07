@@ -1,4 +1,5 @@
 import { useConnectionStore } from "@/stores/connection.store";
+import { GATEWAY_STATUSES, useConnectivity } from "@/lib/connectivity";
 
 export class ApiError extends Error {
   constructor(
@@ -44,8 +45,16 @@ export async function apiJson<T>(path: string, options: RequestInit = {}): Promi
   try {
     res = await fetch(`${serverUrl}${path}`, { ...options, headers });
   } catch {
+    // Every call reports here so the connectivity banner learns about a
+    // server that went away without any screen having to watch for it.
+    useConnectivity.getState().reportServerFailure();
     throw new ApiError(0, "Could not reach the server.");
   }
+  if (GATEWAY_STATUSES.has(res.status)) {
+    useConnectivity.getState().reportServerFailure();
+    throw new ApiError(res.status, extractMessage(res.status, await res.text()));
+  }
+  useConnectivity.getState().reportServerOk();
   if (res.status === 204) return undefined as T;
   if (!res.ok) throw new ApiError(res.status, extractMessage(res.status, await res.text()));
   return (await res.json()) as T;
