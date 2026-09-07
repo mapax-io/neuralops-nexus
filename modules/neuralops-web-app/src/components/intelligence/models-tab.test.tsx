@@ -277,3 +277,40 @@ describe("ModelsTab — edit", () => {
     expect(patched).toEqual({ description: "Primary reasoning model" });
   });
 });
+
+describe("ModelsTab — the Register button follows every rule", () => {
+  it("stays disabled until name, model id, key and terms are given; a visited field explains itself live", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    const register = within(dialog).getByRole("button", { name: /register model/i });
+    expect(register).toBeDisabled();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument(); // a blank form is not covered in red
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "House" } });
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "sonnet-latest" } });
+    expect(register).toBeDisabled(); // the provider needs a key, and the terms
+    fireEvent.blur(within(dialog).getByLabelText("API key"));
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument(); // pristine and empty: quiet
+    fireEvent.change(within(dialog).getByLabelText("API key"), { target: { value: "sk-1" } });
+    fireEvent.blur(within(dialog).getByLabelText("API key"));
+    fireEvent.change(within(dialog).getByLabelText("API key"), { target: { value: "" } });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("This provider needs an API key."); // judged once: live
+    fireEvent.change(within(dialog).getByLabelText("API key"), { target: { value: "sk-1" } });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(register).toBeDisabled();
+    fireEvent.click(within(dialog).getByLabelText(/accept the model provider/i));
+    expect(register).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("Context window"), { target: { value: "0" } });
+    expect(register).toBeDisabled();
+    fireEvent.blur(within(dialog).getByLabelText("Context window"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Must be at least 1.");
+  });
+
+  it("a submit that slips past the button reveals every unmet rule instead of posting", async () => {
+    renderTab();
+    const dialog = await openRegister();
+    fireEvent.submit(document.getElementById("m-form")!);
+    const alerts = within(dialog).getAllByRole("alert").map((a) => a.textContent);
+    expect(alerts).toEqual(expect.arrayContaining(["Enter a model name.", "Enter the model id.", "This provider needs an API key.", "You must accept the provider's terms to register the model."]));
+    expect(posted).toBeNull();
+  });
+});

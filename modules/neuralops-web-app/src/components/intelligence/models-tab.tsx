@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
 import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useSetModelConfigProject } from "@/hooks/use-intelligence";
 import { isCompanyAdmin } from "@/lib/permissions";
@@ -225,11 +226,6 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   // on a persona whose model lacks it, and defaults a new model to "no tools".
   const [supportsTools, setSupportsTools] = useState(true);
   const [licence, setLicence] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [idErr, setIdErr] = useState<string | null>(null);
-  const [baseErr, setBaseErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
   const prov = providerOf(provider) ?? PROVIDERS[0];
   const showsBase = prov.base !== "none";
   const ctxKnown = defaultContextWindow(provider, modelId) !== DEFAULT_CONTEXT_WINDOW;
@@ -239,6 +235,16 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
 
   const validateName = (v: string) => vName(v, { label: "model name", existing: models?.map((m) => m.name) });
   const validateBase = (v: string) => vUrl(v, { label: "the API base URL", required: prov.base === "required" });
+  // Every rule the submit needs, derived live: the button gates on all of
+  // them, each field shows its own once visited.
+  const form = useFormErrors({
+    name: [name, validateName(name)],
+    id: [modelId, validateModelId(modelId)],
+    base: [apiBase, showsBase ? validateBase(apiBase) : null],
+    key: [apiKey, prov.needsKey && !apiKey.trim() ? "This provider needs an API key." : null],
+    ctx: [contextWindow, validateContext(contextWindow)],
+    licence: [licence, licence ? null : "You must accept the provider's terms to register the model."],
+  });
 
   const reset = () => {
     setName("");
@@ -251,11 +257,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
     setCtxTouched(false);
     setSupportsTools(true);
     setLicence(false);
-    setErr(null);
-    setNameErr(null);
-    setIdErr(null);
-    setBaseErr(null);
-    setTouched(false);
+    form.reset();
   };
   const close = () => {
     reset();
@@ -274,19 +276,9 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    setTouched(true);
-    const ne = validateName(name);
-    const ie = validateModelId(modelId);
-    const be = showsBase ? validateBase(apiBase) : null;
-    setNameErr(ne);
-    setIdErr(ie);
-    setBaseErr(be);
-    if (ne || ie || be) return;
-    const ce = validateContext(contextWindow);
-    if (ce) return setErr(ce);
-    if (prov.needsKey && !apiKey.trim()) return setErr("This provider needs an API key.");
-    if (!licence) return setErr("You must accept the provider's terms to register the model.");
+    // The button is gated on form.invalid; a submit that slips through
+    // reveals every message instead of posting.
+    if (form.invalid) return form.touchAll();
     create.mutate({
       name: name.trim(),
       provider,
@@ -316,7 +308,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
-          <Button type="submit" form="m-form" size="sm" variant="primary" loading={create.isPending || setProject.isPending}><KeyRound size={14} strokeWidth={2} /> Register model</Button>
+          <Button type="submit" form="m-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending || setProject.isPending}><KeyRound size={14} strokeWidth={2} /> Register model</Button>
         </div>
       }
     >
@@ -330,20 +322,12 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             autoFocus
             placeholder="e.g. Claude for Aurora"
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              if (name) {
-                setTouched(true);
-                setNameErr(validateName(name));
-              }
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
             maxLength={100}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name")}</FieldError>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -369,36 +353,32 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
               required
               placeholder={prov.placeholder}
               value={modelId}
-              aria-invalid={!!idErr}
+              aria-invalid={!!form.error("id")}
               onChange={(e) => {
                 setModelId(e.target.value);
                 syncContext(provider, e.target.value);
-                if (touched) setIdErr(validateModelId(e.target.value));
               }}
-              onBlur={() => {
-                if (modelId) {
-                  setTouched(true);
-                  setIdErr(validateModelId(modelId));
-                }
-              }}
+              onBlur={() => form.touch("id")}
               className="font-mono"
             />
-            {idErr ? <FieldError>{idErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Bare model name — no provider prefix. Becomes {provider}:{modelId.trim() || prov.placeholder}.</p>}
+            {form.error("id") ? <FieldError>{form.error("id")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Bare model name — no provider prefix. Becomes {provider}:{modelId.trim() || prov.placeholder}.</p>}
           </div>
         </div>
         </DialogSection>
         <DialogSection title="Access" hint="Your own key — encrypted at rest, used only to run personas.">
         <div>
           <Label htmlFor="m-key" required={prov.needsKey}>API key{!prov.needsKey && <span className="text-ink2"> (optional)</span>}</Label>
-          <Input id="m-key" type="password" required={prov.needsKey} autoComplete="off" placeholder="sk-…" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          <Input id="m-key" type="password" required={prov.needsKey} autoComplete="off" placeholder="sk-…" value={apiKey} aria-invalid={!!form.error("key")} onChange={(e) => setApiKey(e.target.value)} onBlur={() => form.touch("key")} />
+          <FieldError>{form.error("key")}</FieldError>
         </div>
         {showsBase && (
           <div>
             <Label htmlFor="m-base" required={prov.base === "required"}>API base{prov.base === "optional" && <span className="text-ink2"> (optional)</span>}</Label>
-            <Input id="m-base" required={prov.base === "required"} inputMode="url" placeholder={provider === "ollama" ? "http://localhost:11434" : "https://api.example.com/v1"} value={apiBase} aria-invalid={!!baseErr}
-              onChange={(e) => { setApiBase(e.target.value); if (touched) setBaseErr(validateBase(e.target.value)); }}
+            <Input id="m-base" required={prov.base === "required"} inputMode="url" placeholder={provider === "ollama" ? "http://localhost:11434" : "https://api.example.com/v1"} value={apiBase} aria-invalid={!!form.error("base")}
+              onChange={(e) => setApiBase(e.target.value)}
+              onBlur={() => form.touch("base")}
               className="font-mono" />
-            <FieldError>{baseErr}</FieldError>
+            <FieldError>{form.error("base")}</FieldError>
           </div>
         )}
         </DialogSection>
@@ -409,23 +389,27 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
         </div>
         <div>
           <Label htmlFor="m-ctx" required>Context window</Label>
-          <Input id="m-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => { setContextWindow(e.target.value); setCtxTouched(true); }} className="sm:max-w-[12rem]" />
-          <p className="mt-1.5 text-[12px] text-ink2">
-            {!ctxTouched && ctxKnown
-              ? "Defaulted from the model id — adjust it if your provider says otherwise."
-              : "Tokens the model can take in one call — check the provider\u2019s model page."}
-          </p>
+          <Input id="m-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} aria-invalid={!!form.error("ctx")} onChange={(e) => { setContextWindow(e.target.value); setCtxTouched(true); }} onBlur={() => form.touch("ctx")} className="sm:max-w-[12rem]" />
+          {form.error("ctx") ? <FieldError>{form.error("ctx")}</FieldError> : (
+            <p className="mt-1.5 text-[12px] text-ink2">
+              {!ctxTouched && ctxKnown
+                ? "Defaulted from the model id — adjust it if your provider says otherwise."
+                : "Tokens the model can take in one call — check the provider\u2019s model page."}
+            </p>
+          )}
         </div>
         <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
           <input type="checkbox" checked={supportsTools} onChange={(e) => setSupportsTools(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
           Supports tool use — personas can only mount MCP tool servers on a tool-capable model; untick for a model without function calling.
         </label>
-        <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
-          <input type="checkbox" checked={licence} onChange={(e) => setLicence(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
-          I accept the model provider&apos;s terms of service for this key and usage.
-        </label>
+        <div>
+          <label className="flex items-start gap-2.5 text-[12.5px] text-ink2">
+            <input type="checkbox" required checked={licence} aria-invalid={!!form.error("licence")} onChange={(e) => setLicence(e.target.checked)} onBlur={() => form.touch("licence")} className="mt-0.5 accent-[var(--accent)]" />
+            <span className="after:ml-0.5 after:text-crit after:content-['*']">I accept the model provider&apos;s terms of service for this key and usage.</span>
+          </label>
+          <FieldError>{form.error("licence")}</FieldError>
+        </div>
         </DialogSection>
-        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );
@@ -439,7 +423,6 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
   const [name, setName] = useState(model.name);
   const [provider, setProvider] = useState<string>(model.provider);
   const [modelId, setModelId] = useState(model.model_id);
-  const [idErr, setIdErr] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState(model.api_base ?? "");
   const [description, setDescription] = useState(model.description ?? "");
@@ -448,10 +431,6 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
     supports_tools: model.supports_tools, supports_streaming: model.supports_streaming,
     supports_vision: model.supports_vision, supports_audio: model.supports_audio,
   });
-  const [err, setErr] = useState<string | null>(null);
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [baseErr, setBaseErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
   const patch = usePatchModelConfig(onClose);
   const prov = providerOf(provider);
   // A native provider can still be proxied through api_base — keep it editable
@@ -461,20 +440,16 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
 
   const validateName = (v: string) => vName(v, { label: "model name", existing: siblings.map((m) => m.name), current: model.name });
   const validateBase = (v: string) => vUrl(v, { label: "the API base URL", required: prov?.base === "required" });
+  const form = useFormErrors({
+    name: [name, validateName(name)],
+    id: [modelId, validateModelId(modelId)],
+    base: [apiBase, showsBase ? validateBase(apiBase) : null],
+    ctx: [contextWindow, validateContext(contextWindow)],
+  });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    setTouched(true);
-    const ne = validateName(name);
-    const ie = validateModelId(modelId);
-    const be = showsBase ? validateBase(apiBase) : null;
-    setNameErr(ne);
-    setIdErr(ie);
-    setBaseErr(be);
-    if (ne || ie || be) return;
-    const ce = validateContext(contextWindow);
-    if (ce) return setErr(ce);
+    if (form.invalid) return form.touchAll();
     // Only what changed; a blank key field means "keep the current key".
     const payload: ModelConfigPatch = {
       ...(name.trim() !== model.name ? { name: name.trim() } : {}),
@@ -502,7 +477,7 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
-          <Button type="submit" form="me-form" size="sm" variant="primary" loading={patch.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
+          <Button type="submit" form="me-form" size="sm" variant="primary" disabled={form.invalid} loading={patch.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
@@ -515,20 +490,12 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
             required
             autoFocus
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              if (name) {
-                setTouched(true);
-                setNameErr(validateName(name));
-              }
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
             maxLength={100}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name")}</FieldError>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -552,18 +519,12 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
               id="me-id"
               required
               value={modelId}
-              aria-invalid={!!idErr}
-              onChange={(e) => {
-                setModelId(e.target.value);
-                if (touched) setIdErr(validateModelId(e.target.value));
-              }}
-              onBlur={() => {
-                setTouched(true);
-                setIdErr(validateModelId(modelId));
-              }}
+              aria-invalid={!!form.error("id")}
+              onChange={(e) => setModelId(e.target.value)}
+              onBlur={() => form.touch("id")}
               className="font-mono"
             />
-            <FieldError>{idErr}</FieldError>
+            <FieldError>{form.error("id")}</FieldError>
           </div>
         </div>
         {/* Repointing is the point of editing these — but it is silent for the
@@ -582,10 +543,11 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
         {showsBase && (
           <div>
             <Label htmlFor="me-base" required={prov?.base === "required"}>API base{prov?.base !== "required" && <span className="text-ink2"> (optional)</span>}</Label>
-            <Input id="me-base" required={prov?.base === "required"} inputMode="url" value={apiBase} aria-invalid={!!baseErr}
-              onChange={(e) => { setApiBase(e.target.value); if (touched) setBaseErr(validateBase(e.target.value)); }}
+            <Input id="me-base" required={prov?.base === "required"} inputMode="url" value={apiBase} aria-invalid={!!form.error("base")}
+              onChange={(e) => setApiBase(e.target.value)}
+              onBlur={() => form.touch("base")}
               className="font-mono" />
-            <FieldError>{baseErr}</FieldError>
+            <FieldError>{form.error("base")}</FieldError>
           </div>
         )}
         </DialogSection>
@@ -596,11 +558,11 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
         </div>
         <div>
           <Label htmlFor="me-ctx" required>Context window</Label>
-          <Input id="me-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} className="sm:max-w-[12rem]" />
+          <Input id="me-ctx" type="number" required min={1} step={1} inputMode="numeric" value={contextWindow} aria-invalid={!!form.error("ctx")} onChange={(e) => setContextWindow(e.target.value)} onBlur={() => form.touch("ctx")} className="sm:max-w-[12rem]" />
+          <FieldError>{form.error("ctx")}</FieldError>
         </div>
         <CapabilityChecks value={caps} onChange={setCaps} />
         </DialogSection>
-        {err && <div className="mt-2"><FieldError>{err}</FieldError></div>}
       </form>
     </Dialog>
   );

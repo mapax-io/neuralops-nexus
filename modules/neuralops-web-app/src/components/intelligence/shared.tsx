@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/field";
+import { FieldError, Label } from "@/components/ui/field";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { SectionHeader } from "@/components/ui/section-header";
 import { useProjects } from "@/hooks/use-workspace";
@@ -146,7 +146,7 @@ export function Chip({ children, tone = "neutral" }: { children: React.ReactNode
 // dead end: models not yet attached to the project are offered under an
 // "attach & use" group (the caller attaches them on submit), and a new model
 // can be registered inline without leaving the flow.
-export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew, registerLabel = "Register a new model", label = "Model", optional, noneLabel = "None", exclude, hint }: {
+export function ModelPicker({ id, projectId, models, value, onChange, onRegisterNew, registerLabel = "Register a new model", label = "Model", optional, noneLabel = "None", exclude, hint, error, onBlur }: {
   id: string;
   projectId: string;
   models: ModelConfig[] | undefined;
@@ -162,6 +162,9 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
   // Ids hidden from this slot — the advisor must never be the primary model.
   exclude?: string[];
   hint?: React.ReactNode;
+  // Runtime validation from the host form (a required slot left empty).
+  error?: string | null;
+  onBlur?: () => void;
 }) {
   const visible = models?.filter((m) => !exclude?.includes(m.id));
   // A model without project_ids predates the visibility gate — usable anywhere.
@@ -179,7 +182,9 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
         id={id}
         required={!optional}
         value={value}
+        aria-invalid={!!error}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
       >
         {optional ? <option value="">{noneLabel}</option> : <option value="" disabled>Choose a model…</option>}
@@ -196,6 +201,7 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
           </>
         )}
       </select>
+      <FieldError>{error}</FieldError>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         {models?.length === 0 && !optional ? (
           <p className="text-[12px] text-warn">No models registered on this server yet.</p>
@@ -216,10 +222,13 @@ export function ModelPicker({ id, projectId, models, value, onChange, onRegister
   );
 }
 
-export function ProjectSelect({ id, value, onChange, only }: {
+export function ProjectSelect({ id, value, onChange, only, error, onBlur }: {
   id: string;
   value: string;
   onChange: (v: string) => void;
+  // Runtime validation from the host form: shown in place of the hint.
+  error?: string | null;
+  onBlur?: () => void;
   // Restrict the choices (e.g. to projects the user administers) — the
   // server enforces the right either way; this avoids offering a 403.
   only?: { id: string; name: string }[];
@@ -233,7 +242,9 @@ export function ProjectSelect({ id, value, onChange, only }: {
         id={id}
         required
         value={value}
+        aria-invalid={!!error}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
       >
         <option value="" disabled>Choose a project…</option>
@@ -241,7 +252,7 @@ export function ProjectSelect({ id, value, onChange, only }: {
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </select>
-      <p className="mt-1.5 text-[12px] text-ink2">Owned by one project — its team decides who can use it.</p>
+      {error ? <FieldError>{error}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Owned by one project — its team decides who can use it.</p>}
     </div>
   );
 }

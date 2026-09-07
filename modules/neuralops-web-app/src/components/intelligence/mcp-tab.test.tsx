@@ -410,3 +410,47 @@ describe("McpTab — where an external server runs (server_type)", () => {
     expect(patched).toEqual({ docker_command: "mcp --verbose" });
   });
 });
+
+describe("McpTab — the Add button follows every rule", () => {
+  it("stays disabled until project, name and URL hold; a visited field explains itself live", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const add = within(screen.getByRole("dialog")).getByRole("button", { name: /add server/i });
+    expect(add).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // a blank form is not covered in red
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New tools" } });
+    expect(add).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "not a url" } });
+    fireEvent.blur(screen.getByLabelText("URL"));
+    expect(screen.getByLabelText("URL")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent(/valid URL/);
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "http://new.internal/mcp" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(add).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "0" } });
+    expect(add).toBeDisabled();
+    fireEvent.blur(screen.getByLabelText("Timeout (seconds)"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Must be at least 1.");
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText(/extra configuration/i), { target: { value: "{oops" } });
+    expect(add).toBeDisabled();
+    fireEvent.blur(screen.getByLabelText(/extra configuration/i));
+    expect(screen.getByRole("alert")).toHaveTextContent(/JSON object/);
+  });
+
+  it("built-in rows: unticking the last capability disables Add and says so", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fireEvent.click(screen.getByLabelText(/built-in capabilities/i));
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research" } });
+    const add = screen.getByRole("button", { name: /add capabilities/i });
+    expect(add).toBeEnabled();
+    for (const rx of [/^Filesystem/, /^Shell/, /^Web search/, /^Web fetch/]) fireEvent.click(screen.getByLabelText(rx));
+    expect(add).toBeDisabled();
+    expect(screen.getByText("Turn on at least one capability.")).toBeInTheDocument();
+  });
+});
