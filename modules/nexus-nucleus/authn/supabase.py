@@ -2,26 +2,60 @@ import json
 import urllib.request
 
 import jwt
-from jwt import PyJWKClient
+from jwt import PyJWKClient, PyJWKClientConnectionError, PyJWKClientError
 
 from django.conf import settings
 
 
 class SupabaseTokenError(Exception):
-    pass
+    """
+    A token nucleus will not accept. `code` lets callers act on the reason
+    without parsing the message:
+        expired          -- the client should refresh and retry
+        wrong_project    -- issued by another Supabase project (or wrong audience)
+        no_email         -- valid, but carries no email claim (GitHub with a
+                            private email); nucleus identifies people by email
+        keys_unavailable -- the project's JWKS could not be fetched
+        invalid          -- anything else
+    """
+
+    def __init__(self, message: str, code: str = "invalid"):
+        super().__init__(message)
+        self.code = code
 
 
 class SupabaseAdminError(Exception):
-    pass
+    """An admin-API call failed. `code` is "exists" when the address already
+    has an account (Supabase 422), else "failed"."""
+
+    def __init__(self, message: str, code: str = "failed"):
+        super().__init__(message)
+        self.code = code
 
 
 jwks_client = PyJWKClient(settings.SUPABASE_JWKS_URL)
+
+_WRONG_PROJECT = (
+    "This sign-in token was not issued by this server's identity project -- "
+    "the app and the server must use the same Supabase project."
+)
 
 
 def verify_supabase_token(access_token: str) -> dict:
     try:
         signing_key = jwks_client.get_signing_key_from_jwt(access_token)
+    except jwt.exceptions.DecodeError as exc:
+        raise SupabaseTokenError("Invalid Supabase token.") from exc
+    except PyJWKClientConnectionError as exc:
+        raise SupabaseTokenError(
+            "Could not verify the sign-in: the identity provider's signing keys are unreachable.",
+            code="keys_unavailable",
+        ) from exc
+    except PyJWKClientError as exc:
+        # No key with this token's kid: the token comes from another project.
+        raise SupabaseTokenError(_WRONG_PROJECT, code="wrong_project") from exc
 
+    try:
         claims = jwt.decode(
             access_token,
             signing_key.key,
@@ -29,17 +63,25 @@ def verify_supabase_token(access_token: str) -> dict:
             audience=settings.SUPABASE_JWT_AUDIENCE,
             issuer=settings.SUPABASE_JWT_ISSUER,
         )
-
-        if not claims.get("sub"):
-            raise SupabaseTokenError("Missing Supabase user id.")
-
-        if not claims.get("email"):
-            raise SupabaseTokenError("Missing email.")
-
-        return claims
-
-    except Exception as exc:
+    except jwt.ExpiredSignatureError as exc:
+        raise SupabaseTokenError("Your session has expired -- sign in again.", code="expired") from exc
+    except (jwt.InvalidAudienceError, jwt.InvalidIssuerError) as exc:
+        raise SupabaseTokenError(_WRONG_PROJECT, code="wrong_project") from exc
+    except jwt.InvalidTokenError as exc:
         raise SupabaseTokenError("Invalid Supabase token.") from exc
+
+    if not claims.get("sub"):
+        raise SupabaseTokenError("Invalid Supabase token: no user id.")
+
+    if not claims.get("email"):
+        raise SupabaseTokenError(
+            "This sign-in has no email address. NeuralOps servers identify you by "
+            "email -- add a verified email to your account (GitHub: make it "
+            "public or verified) and sign in again.",
+            code="no_email",
+        )
+
+    return claims
 
 
 def invite_user_by_email(email: str, redirect_to: str = "", metadata: dict = None) -> dict:
@@ -92,6 +134,8 @@ def invite_user_by_email(email: str, redirect_to: str = "", metadata: dict = Non
             detail = json.loads(raw).get("msg") or json.loads(raw).get("message") or raw
         except Exception:
             detail = raw
-        raise SupabaseAdminError(f"Supabase invite failed: {detail}") from exc
+        # 422 "already been registered": the address has an account already.
+        code = "exists" if exc.code == 422 and "regist" in str(detail).lower() else "failed"
+        raise SupabaseAdminError(f"Supabase invite failed: {detail}", code=code) from exc
     except Exception as exc:
         raise SupabaseAdminError(f"Supabase invite error: {exc}") from exc
