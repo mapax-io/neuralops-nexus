@@ -187,6 +187,42 @@ class MCPServerOut(Schema):
     oauth_config: Optional[dict] = None
 
 
+class MCPVerifyIn(Schema):
+    """
+    Check a connection before a row exists, or a stored row plus changes.
+
+    A draft carries its own connection fields (project_id names the project
+    whose create right gates it). With server_id, the stored row supplies
+    whatever the draft leaves out -- above all its secrets (a static secret,
+    OAuth tokens), so an edit can be checked without re-typing credentials.
+    """
+    server_id: Optional[str] = None
+    project_id: Optional[str] = None
+    transport: Optional[str] = None
+    url: Optional[str] = None
+    command: Optional[str] = None
+    config: Optional[dict] = None
+    timeout_seconds: Optional[int] = None
+    auth_type: Optional[str] = None
+    client_secret: Optional[str] = None   # write-only, used for this check only
+    oauth_config: Optional[dict] = None   # token_env_var is the one key read
+
+
+class MCPVerifyToolOut(Schema):
+    name: str
+    description: str = ""
+
+
+class MCPVerifyOut(Schema):
+    ok: bool
+    # ok | nothing_to_connect | unreachable | timeout | auth_required |
+    # auth_rejected | not_mcp | command_not_found | error | worker_unavailable
+    code: str
+    error: Optional[str] = None
+    tools: list[MCPVerifyToolOut] = []
+    latency_ms: Optional[int] = None
+
+
 class MCPServerRef(Schema):
     """Compact form, embedded in PersonaOut."""
     id: str

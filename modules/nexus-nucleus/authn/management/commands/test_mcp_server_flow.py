@@ -67,7 +67,7 @@ class Command(BaseCommand):
         # collide on the next create.
         MCPServer.objects.filter(
             project=project,
-            name__in=["Search MCP Test Flow", "Search MCP Test Flow v2", "Company Anchored MCP Test Flow"],
+            name__in=["Search MCP Test Flow", "Search MCP Test Flow v2", "Company Anchored MCP Test Flow", "Verify MCP Test Flow"],
         ).delete()
 
         self.stdout.write(f"Company: {company.name} | Owner: {owner.email} | "
@@ -196,6 +196,33 @@ class Command(BaseCommand):
         self.stdout.write(f"  -> delete_mcp_server_standalone returned: {second_result}")
         second_server.refresh_from_db()
         self.stdout.write(f"  -> second_server.is_active after delete: {second_server.is_active}")
+
+        # ── Part 3: connection check ─────────────────────────────────────────
+        self._section("Part 3: connection check (verify_mcp_connection)")
+        draft = {"project_id": str(project.id), "transport": "http", "url": "http://127.0.0.1:9/mcp",
+                 "timeout_seconds": 3, "auth_type": "none"}
+        result = isvc.verify_mcp_connection(company, dict(draft))
+        self.stdout.write(f"  -> draft probe: {result}")
+        self._check("a failed probe is a result, not an exception", isinstance(result.get("ok"), bool), True)
+        self._check("nothing listens on that port, so it does not pass", result.get("ok"), False)
+        self._check("the code names the failure", result.get("code") in {"unreachable", "timeout", "error", "worker_unavailable"}, True)
+        self._check("the message is written for the form", bool(result.get("error")), True)
+        empty = isvc.verify_mcp_connection(company, {"project_id": str(project.id), "transport": "http", "url": "", "auth_type": "none"})
+        self._check("no URL at all is reported as nothing to connect to", empty.get("code") in {"nothing_to_connect", "worker_unavailable"}, True)
+
+        stored = isvc.create_mcp_server_standalone(company, {
+            "name": "Verify MCP Test Flow", "project_id": str(project.id), "transport": "http",
+            "url": "http://127.0.0.1:9/mcp", "timeout_seconds": 3, "auth_type": "static_secrets", "client_secret": "s3cret",
+        })
+        result = isvc.verify_mcp_connection(company, {"timeout_seconds": 3}, server=stored)
+        self.stdout.write(f"  -> stored-row probe: {result}")
+        self._check("a stored row is probed at its own URL", result.get("ok"), False)
+        self._check("the stored row's code names the failure", result.get("code") in {"unreachable", "timeout", "error", "worker_unavailable"}, True)
+        oauth_row = isvc.update_mcp_server_standalone(company, str(stored.id), {"auth_type": "oauth2", "oauth_config": {
+            "client_id": "x", "authorize_endpoint": "https://example.com/a", "token_endpoint": "https://example.com/t"}})
+        result = isvc.verify_mcp_connection(company, {}, server=oauth_row)
+        self._check("an oauth2 row without a token asks for the sign-in first", result.get("code"), "auth_required")
+        MCPServer.objects.filter(id=stored.id).delete()
 
         self._line()
         self.stdout.write(self.style.SUCCESS("Done."))

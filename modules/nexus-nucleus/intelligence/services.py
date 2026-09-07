@@ -23,9 +23,14 @@ express them:
 _validate_persona_wiring() is the single place all three are applied.
 """
 import copy
+import logging
+
+import httpx
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -300,6 +305,94 @@ def create_mcp_server_standalone(company, data: dict):
         server.set_secrets({**server.get_secrets(), "client_secret": client_secret})
         server.save()
     return server
+
+
+# What the check reports when the worker itself cannot be asked -- distinct
+# from a failed probe so the UI can offer to save the row unchecked.
+_WORKER_UNAVAILABLE = {
+    "ok": False,
+    "code": "worker_unavailable",
+    "error": "The AI worker isn't reachable right now, so the connection can't be checked.",
+    "tools": [],
+    "latency_ms": None,
+}
+
+
+def verify_mcp_connection(company, data: dict, server=None) -> dict:
+    """
+    Ask nexus-ai to open the server and list its tools -- through the same
+    transport build a persona run uses, so a green check means a run will
+    connect.
+
+    Draft fields win over the stored row; the row supplies what the draft
+    leaves out, secrets above all: a static secret typed for this check or
+    the stored one, or the OAuth token (refreshed first when it is about to
+    expire, exactly as a run would). A failed probe is a result with a code,
+    never an exception; only a missing or unreachable worker is reported as
+    worker_unavailable.
+    """
+    def field(key, default=None):
+        if data.get(key) is not None:
+            return data[key]
+        return getattr(server, key, default) if server is not None else default
+
+    auth_type = field("auth_type", "none") or "none"
+    oauth_cfg = data.get("oauth_config") or (server.oauth_config if server is not None else None) or {}
+    token_env_var = oauth_cfg.get("token_env_var") or "OAUTH_ACCESS_TOKEN"
+
+    secrets = {}
+    if auth_type == "oauth2" and server is not None:
+        # Imported here like the OAuth endpoints do: the module pulls in
+        # authlib, which only the OAuth paths need.
+        from . import oauth_client
+
+        # A stale token would only produce a 401 the worker cannot act on;
+        # refresh_if_needed() returns True immediately while the token is fine.
+        if not oauth_client.refresh_if_needed(server):
+            return {
+                "ok": False,
+                "code": "auth_required",
+                "error": "Sign in to the provider first -- there is no valid token for this server yet.",
+                "tools": [],
+                "latency_ms": None,
+            }
+        secrets = server.get_secrets()
+    elif auth_type == "static_secrets":
+        stored = server.get_secrets() if server is not None else {}
+        secret = data.get("client_secret") or stored.get("client_secret")
+        if secret:
+            secrets = {"client_secret": secret}
+
+    timeout = int(field("timeout_seconds", 60) or 60)
+    payload = {
+        "id": str(server.id) if server is not None else "draft",
+        "name": server.name if server is not None else "draft",
+        "transport": field("transport", "http") or "http",
+        "url": field("url"),
+        "command": field("command"),
+        "config": field("config", {}) or {},
+        "secrets": secrets,
+        "timeout_seconds": timeout,
+        "auth_type": auth_type,
+        "token_env_var": token_env_var,
+    }
+
+    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
+    if not nexus_ai_url:
+        return dict(_WORKER_UNAVAILABLE)
+    try:
+        resp = httpx.post(
+            f"{nexus_ai_url}/api/v1/mcp/verify/",
+            json=payload,
+            headers={"X-Internal-Key": getattr(settings, "INTERNAL_API_KEY", "")},
+            # The worker caps its own probe at 30s; leave room for its answer.
+            timeout=min(timeout, 30) + 10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning("[mcp] connection check could not reach nexus-ai: %s", exc)
+        return dict(_WORKER_UNAVAILABLE)
 
 
 def get_mcp_server_standalone(company, server_id: str):

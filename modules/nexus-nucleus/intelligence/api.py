@@ -30,7 +30,7 @@ from authn.permissions.checker import PermissionChecker
 from .schema import (
     ModelConfigIn, ModelConfigPatchIn, ModelConfigOut, ModelConfigRef,
     MCPServerIn, MCPServerPatchIn, MCPServerOut, MCPServerRef,
-    MCPOAuthAuthorizeOut,
+    MCPOAuthAuthorizeOut, MCPVerifyIn, MCPVerifyOut,
     PersonaIn, PersonaPatchIn, PersonaOut,
     PromptTemplateOut,
     CompanyAIConfigIn, CompanyAIConfigOut,
@@ -286,6 +286,33 @@ def create_mcp_server_standalone(request, payload: MCPServerIn):
     except ValueError as e:
         raise HttpError(400, str(e))
     return _mcp_out(server)
+
+
+@router.post("/mcp-servers/verify/", response=MCPVerifyOut)
+def verify_mcp_connection(request, payload: MCPVerifyIn):
+    """
+    Open a draft (or a stored row plus changes) the way a persona run would
+    and report what happened. Gated like saving it: the row's update right
+    when server_id is given, else the project's create right.
+    """
+    company = _company(request)
+    data = payload.dict(exclude_none=True)
+    server = None
+    if payload.server_id:
+        server = svc.get_mcp_server_standalone(company, payload.server_id)
+        if not server:
+            raise HttpError(404, "MCP server not found.")
+        if server.is_internal:
+            raise HttpError(400, "Built-in capabilities have no connection to check.")
+        if not PermissionChecker.can(request.auth, "mcp_server.update", obj=server):
+            raise HttpError(403, "You don't have permission to edit this MCP server.")
+    else:
+        project = Project.objects.filter(company=company, id=payload.project_id, is_active=True).first() if payload.project_id else None
+        if not project:
+            raise HttpError(404, "Project not found.")
+        if not PermissionChecker.can(request.auth, "mcp_server.create", obj=project):
+            raise HttpError(403, "You don't have permission to create MCP servers in this project.")
+    return svc.verify_mcp_connection(company, data, server=server)
 
 
 @router.patch("/mcp-servers/{server_id}/", response=MCPServerOut)

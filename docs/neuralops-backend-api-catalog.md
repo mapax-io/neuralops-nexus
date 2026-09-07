@@ -125,6 +125,7 @@ A newly-created `AIModel` is invisible to every project until explicitly attache
 |---|---|---|---|
 | `GET /api/v1/mcp-servers/` | `mcp_server.list` (company, via row-visibility) | — | `[MCPServerOut]` |
 | `POST /api/v1/mcp-servers/` | `mcp_server.create` (project) | `MCPServerIn` | `MCPServerOut` |
+| `POST /api/v1/mcp-servers/verify/` | `mcp_server.create` (project, draft) or `mcp_server.update` (with `server_id`) | `MCPVerifyIn` | `MCPVerifyOut` — always 200; `ok` + `code` (`unreachable`, `timeout`, `auth_required`, `auth_rejected`, `not_mcp`, `command_not_found`, `nothing_to_connect`, `worker_unavailable`, `error`) + the tool list on success |
 | `PATCH /api/v1/mcp-servers/{server_id}/` | `mcp_server.update` | `MCPServerPatchIn` | `MCPServerOut` |
 | `DELETE /api/v1/mcp-servers/{server_id}/` | `mcp_server.delete` | — | 204 |
 | `GET /api/v1/ai-models/{model_id}/mcp-servers/` (legacy, nested) | `mcp_server.list` | — | `[MCPServerOut]` |
@@ -212,6 +213,7 @@ FastAPI app (`apps/main.py`), base path `/api/v1/`, auth is `X-Internal-Key` hea
 | Method & URL | Request | Response | What it does |
 |---|---|---|---|
 | `GET /api/v1/directives/` | — | `[dict]` | All registered `@directive`s (proxied by nucleus's `context/api.py`). |
+| `POST /api/v1/mcp/verify/` | `MCPServerConfig` (the trigger-job server shape: transport, url/command, secrets, auth_type, token_env_var, timeout_seconds) | `MCPVerifyOut {ok, code, error, tools[], latency_ms}` | Open the server through the runner's own transport builder and list its tools; probe capped at 30s; a failed probe is a 200 with a code |
 | `POST /api/v1/embed/` | `EmbedRequest {source_id, type: "file"\|"code", label, content, language?, topic_id?, channel_id?, project_id?, company_id?}` | `EmbedResponse {source_id, collection_id, chunks_count}` | Chunk + embed + store a document/code context source (result written back to `ContextSource.collection_id` by nucleus). |
 | `DELETE /api/v1/embed/context-source/{collection_id}/` | — | `{ok}` | Delete all vectors for a context-source collection. |
 | `DELETE /api/v1/embed/message/{message_id}/?company_id=` | — | `{ok}` | Delete a single chat-message vector (called when a `ChatMessage` is excluded from context). |
