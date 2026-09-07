@@ -16,8 +16,9 @@ import { useQuery } from "@tanstack/react-query";
 import { listTeam } from "@/lib/api/team";
 import { listPersonas } from "@/lib/api/intelligence";
 import { useConnectionStore } from "@/stores/connection.store";
+import { validateEmail } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Slack-style member list for the chat header's avatar stack: everyone on
 // this server, plus invites for those allowed to send them.
@@ -29,7 +30,10 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  // The server's answer lives in err; the rule below gates the button and
+  // shows under the field once visited.
   const [err, setErr] = useState<string | null>(null);
+  const form = useFormErrors({ email: [email, validateEmail(email)] });
 
   const router = useRouter();
   const invite = useMutation({
@@ -39,6 +43,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
       notifyInvite(r, { serverUrl, appOrigin: window.location.origin, companyName: connection?.companyName });
       setEmail("");
       setInviting(false);
+      form.reset();
       refetch();
     },
     onError: (e) => setErr(e.message),
@@ -47,7 +52,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
-    if (!EMAIL_RE.test(email.trim())) return setErr("Enter a valid email address.");
+    if (form.invalid) return form.touchAll();
     invite.mutate();
   };
 
@@ -56,6 +61,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
     setInviting(false);
     setEmail("");
     setErr(null);
+    form.reset();
     onClose();
   };
 
@@ -122,7 +128,8 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
         <form onSubmit={submit} noValidate className="mt-4 flex flex-col gap-3 rounded-xl border border-line bg-surface2/50 p-3.5">
           <div>
             <Label htmlFor="inv-email" required>Email</Label>
-            <Input id="inv-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!err} onChange={(e) => setEmail(e.target.value)} />
+            <Input id="inv-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!form.error("email") || !!err} onChange={(e) => setEmail(e.target.value)} onBlur={() => form.touch("email")} />
+          <FieldError>{form.error("email")}</FieldError>
           </div>
           <div>
             <Label htmlFor="inv-role">Role</Label>
@@ -140,7 +147,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
           <FieldError>{err}</FieldError>
           <div className="flex justify-end gap-2">
             <Button type="button" size="sm" onClick={() => setInviting(false)}>Cancel</Button>
-            <Button type="submit" size="sm" variant="primary" loading={invite.isPending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
+            <Button type="submit" size="sm" variant="primary" disabled={form.invalid} loading={invite.isPending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
           </div>
         </form>
       )}

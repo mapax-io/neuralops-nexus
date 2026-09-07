@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { LogOut, Plus, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 import { validateName as vName } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { Constellation } from "@/components/brand/constellation";
 import { Nebula } from "@/components/brand/nebula";
 import { Wordmark } from "@/components/brand/wordmark";
@@ -279,31 +280,23 @@ export function normalizeServerAddress(raw: string): { url: string } | { error: 
 function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (name: string, url: string) => void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [urlErr, setUrlErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
-
   const validateName = (v: string) => vName(v, { label: "server name", max: 40 });
   const validateUrl = (v: string) => {
     const out = normalizeServerAddress(v);
     return "error" in out ? out.error : null;
   };
+  // Both rules derived live: the button gates on them, each field shows its
+  // own once visited.
+  const form = useFormErrors({ name: [name, validateName(name)], url: [url, validateUrl(url)] });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setTouched(true);
-    const ne = validateName(name);
-    const ue = validateUrl(url);
-    setNameErr(ne);
-    setUrlErr(ue);
-    if (ne || ue) return;
+    if (form.invalid) return form.touchAll();
     const normalized = normalizeServerAddress(url) as { url: string };
     onAdd(name.trim(), normalized.url);
     setName("");
     setUrl("");
-    setTouched(false);
-    setNameErr(null);
-    setUrlErr(null);
+    form.reset();
   };
 
   return (
@@ -314,7 +307,7 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
       description="Point the app at a self-hosted NeuralOps deployment — yours, your team's, or a client's."
       icon={<ServerCog size={17} strokeWidth={2} />}
       tone="accent"
-      footer={<Button type="submit" form="sv-form" variant="primary" className="w-full"><Plus size={14} strokeWidth={2} /> Add server</Button>}
+      footer={<Button type="submit" form="sv-form" variant="primary" disabled={form.invalid} className="w-full"><Plus size={14} strokeWidth={2} /> Add server</Button>}
     >
       <form id="sv-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
@@ -325,17 +318,11 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
             autoFocus
             placeholder="e.g. Office, Home lab"
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              setTouched(true);
-              setNameErr(validateName(name));
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name")}</FieldError>
         </div>
         <div>
           <Label htmlFor="surl" required>Address</Label>
@@ -345,18 +332,12 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
             inputMode="url"
             placeholder="http://192.168.1.90:8096"
             value={url}
-            aria-invalid={!!urlErr}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              if (touched) setUrlErr(validateUrl(e.target.value));
-            }}
-            onBlur={() => {
-              setTouched(true);
-              setUrlErr(validateUrl(url));
-            }}
+            aria-invalid={!!form.error("url")}
+            onChange={(e) => setUrl(e.target.value)}
+            onBlur={() => form.touch("url")}
           />
-          {urlErr ? (
-            <FieldError>{urlErr}</FieldError>
+          {form.error("url") ? (
+            <FieldError>{form.error("url")}</FieldError>
           ) : (
             <p className="mt-1.5 text-[12px] text-ink2">A LAN IP, Tailscale address, or domain — http:// is assumed if you skip it.</p>
           )}

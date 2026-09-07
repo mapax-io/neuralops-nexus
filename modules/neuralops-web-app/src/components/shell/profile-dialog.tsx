@@ -12,6 +12,7 @@ import { absolutizeMedia } from "@/lib/api/client";
 import { supabase } from "@/lib/supabase";
 import { useMembers } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useFormErrors } from "@/hooks/use-form-errors";
 
 // Profile & account settings. Identity is split across two systems on
 // purpose: password lives with Supabase (who you are), display name lives on
@@ -39,6 +40,13 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
     if (!USERNAME_RE.test(v.trim())) return "2–30 characters — letters, numbers and underscores only.";
     return null;
   };
+  // Each form's rules derived live: its button gates on them, each field
+  // shows its own once visited. nameErr / pwErr keep the server's answer.
+  const nameForm = useFormErrors({ name: [name, validateName(name)] });
+  const pwForm = useFormErrors({
+    pw: [pw, pw.length < 8 ? "Use at least 8 characters." : null],
+    pw2: [pw2, pw2 !== pw ? "The two passwords don't match." : null],
+  });
 
   const rename = useMutation({
     mutationFn: () => changeUsername(name.trim(), ""),
@@ -47,6 +55,7 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       setSavedName(out.display_name);
       setName("");
       setNameErr(null);
+      nameForm.reset();
       qc.invalidateQueries({ queryKey: ["members"] });
     },
     onError: (e) => setNameErr(e.message),
@@ -62,21 +71,21 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       setPw("");
       setPw2("");
       setPwErr(null);
+      pwForm.reset();
     },
     onError: (e) => setPwErr(e.message),
   });
 
   const submitName = (e: React.FormEvent) => {
     e.preventDefault();
-    const err = validateName(name);
-    setNameErr(err);
-    if (!err) rename.mutate();
+    if (nameForm.invalid) return nameForm.touchAll();
+    setNameErr(null);
+    rename.mutate();
   };
 
   const submitPw = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pw.length < 8) return setPwErr("Use at least 8 characters.");
-    if (pw !== pw2) return setPwErr("The two passwords don't match.");
+    if (pwForm.invalid) return pwForm.touchAll();
     setPwErr(null);
     changePw.mutate();
   };
@@ -89,6 +98,8 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
     setPw("");
     setPw2("");
     setPwErr(null);
+    nameForm.reset();
+    pwForm.reset();
     onClose();
   };
 
@@ -142,16 +153,14 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
             autoFocus
             placeholder={currentName || "your_name"}
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (nameErr) setNameErr(validateName(e.target.value));
-            }}
+            aria-invalid={!!(nameForm.error("name") ?? nameErr)}
+            onChange={(e) => { setName(e.target.value); setNameErr(null); }}
+            onBlur={() => nameForm.touch("name")}
           />
-          <Button type="submit" size="sm" variant="primary" loading={rename.isPending} disabled={!name.trim()} className="flex-none self-start"><Check size={14} strokeWidth={2} /> Save
+          <Button type="submit" size="sm" variant="primary" loading={rename.isPending} disabled={nameForm.invalid} className="flex-none self-start"><Check size={14} strokeWidth={2} /> Save
           </Button>
         </div>
-        {nameErr ? <FieldError>{nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Teammates and personas will see this name. 2–30 characters, no spaces.</p>}
+        {(nameForm.error("name") ?? nameErr) ? <FieldError>{nameForm.error("name") ?? nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Teammates and personas will see this name. 2–30 characters, no spaces.</p>}
       </form>
       </DialogSection>
 
@@ -161,15 +170,17 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
         <div className="flex flex-col gap-3">
           <div>
             <Label htmlFor="prof-pw" required>New password</Label>
-            <Input id="prof-pw" type="password" required autoComplete="new-password" value={pw} aria-invalid={!!pwErr} onChange={(e) => setPw(e.target.value)} />
+            <Input id="prof-pw" type="password" required autoComplete="new-password" value={pw} aria-invalid={!!pwForm.error("pw") || !!pwErr} onChange={(e) => { setPw(e.target.value); setPwErr(null); }} onBlur={() => pwForm.touch("pw")} />
+            <FieldError>{pwForm.error("pw")}</FieldError>
           </div>
           <div>
             <Label htmlFor="prof-pw2" required>Confirm new password</Label>
-            <Input id="prof-pw2" type="password" required autoComplete="new-password" value={pw2} aria-invalid={!!pwErr} onChange={(e) => setPw2(e.target.value)} />
+            <Input id="prof-pw2" type="password" required autoComplete="new-password" value={pw2} aria-invalid={!!pwForm.error("pw2") || !!pwErr} onChange={(e) => { setPw2(e.target.value); setPwErr(null); }} onBlur={() => pwForm.touch("pw2")} />
+            <FieldError>{pwForm.error("pw2")}</FieldError>
           </div>
           <FieldError>{pwErr}</FieldError>
           <div className="flex">
-            <Button type="submit" size="sm" variant="primary" loading={changePw.isPending} disabled={!pw || !pw2}><KeyRound size={14} strokeWidth={2} /> Update password
+            <Button type="submit" size="sm" variant="primary" loading={changePw.isPending} disabled={pwForm.invalid}><KeyRound size={14} strokeWidth={2} /> Update password
             </Button>
           </div>
         </div>
