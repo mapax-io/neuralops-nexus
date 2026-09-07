@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { ConfirmDialog, Dialog } from "./dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "./dialog";
 
 // Regression: a consumer that recreates onClose on every keystroke (the
 // common inline-arrow pattern) must not make the dialog steal focus from the
@@ -80,18 +80,70 @@ describe("Dialog", () => {
     expect(closeHost).not.toHaveBeenCalled();
   });
 
-  it("renders title, description and icon area", () => {
+  it("keeps the pinned header to icon, title and close; the description opens the scrolling body", () => {
     render(
-      <Dialog open onClose={() => {}} title="New channel" description="Channels split a project by subject.">
+      <Dialog open onClose={() => {}} title="New channel" description="Channels split a project by subject." icon={<span data-testid="ic" />}>
         <p>body</p>
       </Dialog>,
     );
-    expect(screen.getByRole("dialog", { name: "New channel" })).toBeInTheDocument();
-    expect(screen.getByText(/split a project/)).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "New channel" });
+    const desc = screen.getByText(/split a project/);
+    // Still the dialog's description for assistive tech…
+    expect(dialog).toHaveAttribute("aria-describedby", desc.id);
+    // …but it lives in the scroll container, not next to the title.
+    expect(desc.closest(".overflow-y-auto")).not.toBeNull();
+    const header = screen.getByRole("heading", { name: "New channel" }).parentElement!;
+    expect(header).not.toContainElement(desc);
+    expect(header).toContainElement(screen.getByTestId("ic"));
+    expect(header).toContainElement(screen.getByRole("button", { name: "Close" }));
+    // The body reads description first, then the content.
+    expect(desc.compareDocumentPosition(screen.getByText("body")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("tints the icon chip by tone — neutral by default", () => {
+    const { rerender } = render(<Dialog open onClose={() => {}} title="T" icon={<span data-testid="ic" />}><p>b</p></Dialog>);
+    expect(screen.getByTestId("ic").parentElement!.className).toMatch(/text-ink2/);
+    rerender(<Dialog open onClose={() => {}} title="T" icon={<span data-testid="ic" />} tone="accent"><p>b</p></Dialog>);
+    expect(screen.getByTestId("ic").parentElement!.className).toMatch(/text-accent/);
+    rerender(<Dialog open onClose={() => {}} title="T" icon={<span data-testid="ic" />} tone="info"><p>b</p></Dialog>);
+    expect(screen.getByTestId("ic").parentElement!.className).toMatch(/text-info/);
+  });
+});
+
+describe("DialogSection", () => {
+  it("heads each group, shows the hint, divides sections after the first, and never shadows a field label", () => {
+    render(
+      <Dialog open onClose={() => {}} title="T">
+        <DialogSection title="Identity" hint="Who it is."><input aria-label="Name" /></DialogSection>
+        <DialogSection title="Name"><input aria-label="Key" /></DialogSection>
+      </Dialog>,
+    );
+    const first = screen.getByRole("heading", { level: 3, name: "Identity" }).closest("section")!;
+    const second = screen.getByRole("heading", { level: 3, name: "Name" }).closest("section")!;
+    expect(first).toContainElement(screen.getByLabelText("Name")); // the input — a section titled "Name" is not a label
+    expect(within(first).getByText("Who it is.")).toBeInTheDocument();
+    expect(second).toContainElement(screen.getByLabelText("Key"));
+    expect(first.className).toMatch(/first:border-t-0/);
+    expect(second.className).toMatch(/border-t/);
+  });
+
+  it("form dialogs are 4xl wide; confirmations stay narrow", () => {
+    const { rerender } = render(<Dialog open onClose={() => {}} title="Form"><p>b</p></Dialog>);
+    expect(screen.getByRole("dialog").className).toMatch(/max-w-4xl/);
+    rerender(<Dialog open onClose={() => {}} title="Form" size="sm"><p>b</p></Dialog>);
+    expect(screen.getByRole("dialog").className).toMatch(/max-w-md/);
   });
 });
 
 describe("ConfirmDialog", () => {
+  it("colours its icon by tone: red for destructive, amber for a cautious confirm", () => {
+    const { rerender } = render(<ConfirmDialog open onClose={() => {}} onConfirm={() => {}} title="Remove?" body="x" confirmLabel="Remove" />);
+    const chip = () => screen.getByRole("dialog").querySelector("h2")!.parentElement!.querySelector("span")!;
+    expect(chip().className).toMatch(/text-crit/);
+    rerender(<ConfirmDialog open onClose={() => {}} onConfirm={() => {}} title="Sign out?" body="x" confirmLabel="Sign out" tone="neutral" />);
+    expect(chip().className).toMatch(/text-warn/);
+  });
+
   it("confirms and cancels", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();

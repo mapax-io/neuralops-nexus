@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { TriangleAlert, X } from "lucide-react";
+import { Check, CircleAlert, Trash2, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -16,15 +16,32 @@ import { cn } from "@/lib/utils";
 // the topmost layer, never the whole stack in one press.
 const openDialogStack: symbol[] = [];
 
+// One width for every form dialog (4xl) so sectioned forms get room for
+// two-column rows; only confirmations stay narrow — a one-line question
+// stretched to 4xl reads wrong.
 const DIALOG_SIZES = {
-  sm: "max-w-md",   // confirmations
-  md: "max-w-xl",   // simple one-or-two-field forms (default)
-  lg: "max-w-3xl",  // multi-field forms
-  xl: "max-w-3xl",  // dense forms / lists
-  "2xl": "max-w-4xl", // wide forms (MCP + OAuth setup)
+  sm: "max-w-md",    // confirmations
+  md: "max-w-4xl",
+  lg: "max-w-4xl",
+  xl: "max-w-4xl",
+  "2xl": "max-w-4xl",
 } as const;
 
 export type DialogSize = keyof typeof DIALOG_SIZES;
+
+// The icon chip's colour says what kind of dialog this is before the title
+// is read: accent = create/add, info = edit/view/people, warn = a cautious
+// confirm (sign out, end session), crit = destructive, ok = success/connect.
+const DIALOG_TONES = {
+  neutral: "border-line bg-surface2 text-ink2",
+  accent: "border-accent/30 bg-accent/12 text-accent",
+  info: "border-info/30 bg-info/12 text-info",
+  ok: "border-ok/30 bg-ok/12 text-ok",
+  warn: "border-warn/35 bg-warn/12 text-warn",
+  crit: "border-crit/30 bg-crit/12 text-crit",
+} as const;
+
+export type DialogTone = keyof typeof DIALOG_TONES;
 
 // Scrollable middle. Hairlines only appear when the content actually
 // overflows — short dialogs keep the clean undivided look.
@@ -55,12 +72,16 @@ function DialogBody({ children, hasFooter }: { children: React.ReactNode; hasFoo
   );
 }
 
-export function Dialog({ open, onClose, title, description, icon, children, footer, className, size = "md" }: {
+export function Dialog({ open, onClose, title, description, icon, tone = "neutral", children, footer, className, size = "md" }: {
   open: boolean;
   onClose: () => void;
   title: string;
+  // Rendered as the first paragraph of the scrolling body (and announced as
+  // the dialog's description) — the pinned header holds only icon, title and
+  // close, so a long explanation never eats the space the form needs.
   description?: string;
   icon?: React.ReactNode;
+  tone?: DialogTone;
   children: React.ReactNode;
   // Pinned action row. Submit buttons living here reference their form via
   // the `form` attribute (the form itself stays in the scrollable body).
@@ -70,6 +91,7 @@ export function Dialog({ open, onClose, title, description, icon, children, foot
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const descId = useId();
 
   // onClose is often an inline arrow that changes identity every parent
   // render — keep it in a ref so the effect below runs ONLY on open/close.
@@ -144,6 +166,7 @@ export function Dialog({ open, onClose, title, description, icon, children, foot
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-describedby={description ? descId : undefined}
         tabIndex={-1}
         className={cn(
           "relative flex max-h-[85vh] w-full flex-col rounded-2xl border border-line bg-surface shadow-[0_32px_90px_-28px_rgba(12,10,8,.55)] outline-none motion-safe:animate-[nx-dialog-in_.18s_ease-out]",
@@ -151,32 +174,57 @@ export function Dialog({ open, onClose, title, description, icon, children, foot
           className,
         )}
       >
-        <div className="flex flex-none items-start gap-3 px-6 pb-4 pt-6">
-          {icon && <span className="mt-0.5 flex size-9 flex-none items-center justify-center rounded-xl border border-line bg-surface2">{icon}</span>}
-          <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="font-display text-[17px] font-extrabold leading-snug">{title}</h2>
-            {description && <p className="mt-1 text-[13px] leading-relaxed text-ink2">{description}</p>}
-          </div>
-          <button aria-label="Close" onClick={onClose} className="-mr-1 -mt-1 flex size-7 flex-none items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink">
+        <div className="flex flex-none items-center gap-3 px-6 pb-4 pt-5">
+          {icon && <span className={cn("flex size-9 flex-none items-center justify-center rounded-xl border", DIALOG_TONES[tone])}>{icon}</span>}
+          <h2 id={titleId} className="min-w-0 flex-1 truncate font-display text-[17px] font-extrabold leading-snug">{title}</h2>
+          <button aria-label="Close" onClick={onClose} className="-mr-1 flex size-7 flex-none items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink">
             <X size={16} strokeWidth={2} />
           </button>
         </div>
-        <DialogBody hasFooter={!!footer}>{children}</DialogBody>
+        <DialogBody hasFooter={!!footer}>
+          {description && <p id={descId} className="mb-4 text-[13px] leading-relaxed text-ink2">{description}</p>}
+          {children}
+        </DialogBody>
         {footer && <div className="flex-none px-6 pb-6 pt-4">{footer}</div>}
       </div>
     </div>
   );
 }
 
+// A titled group of fields inside a dialog body. Sections are separated by a
+// hairline and even vertical rhythm, so a long form reads as a few named
+// steps rather than one column of inputs.
+export function DialogSection({ title, hint, children, className }: {
+  title: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    // No aria-label on purpose: the heading gives assistive tech the structure,
+    // and a named region would answer label queries meant for the fields inside.
+    <section className={cn("border-t border-line py-5 first:border-t-0 first:pt-0 last:pb-0", className)}>
+      <div className="mb-3.5">
+        <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
+        {hint && <p className="mt-0.5 text-[12px] leading-relaxed text-ink2">{hint}</p>}
+      </div>
+      <div className="flex flex-col gap-4">{children}</div>
+    </section>
+  );
+}
+
 // One confirmation pattern for the whole app: state the action, show what it
 // affects, make the destructive path visually distinct.
-export function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel, cancelLabel = "Cancel", tone = "danger", loading }: {
+export function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel, confirmIcon, cancelLabel = "Cancel", tone = "danger", loading }: {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
   title: string;
   body: React.ReactNode;
   confirmLabel: string;
+  // Icon for the confirm button: a bin for destructive confirms, a tick for
+  // neutral ones, or whatever names the action better (archive, sign out…).
+  confirmIcon?: React.ReactNode;
   cancelLabel?: string;
   tone?: "danger" | "neutral";
   loading?: boolean;
@@ -187,12 +235,13 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLa
       onClose={onClose}
       title={title}
       size="sm"
-      icon={tone === "danger" ? <TriangleAlert size={17} strokeWidth={2} className="text-crit" /> : undefined}
+      icon={tone === "danger" ? <TriangleAlert size={17} strokeWidth={2} /> : <CircleAlert size={17} strokeWidth={2} />}
+      tone={tone === "danger" ? "crit" : "warn"}
       footer={
         <div className="flex justify-end gap-2">
-          <Button size="sm" onClick={onClose} disabled={loading}>{cancelLabel}</Button>
+          <Button size="sm" onClick={onClose} disabled={loading}><X size={14} strokeWidth={2} /> {cancelLabel}</Button>
           <Button size="sm" variant={tone === "danger" ? "danger" : "primary"} loading={loading} onClick={onConfirm}>
-            {confirmLabel}
+            {confirmIcon ?? (tone === "danger" ? <Trash2 size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)} {confirmLabel}
           </Button>
         </div>
       }
