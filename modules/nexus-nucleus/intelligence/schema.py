@@ -158,11 +158,20 @@ class MCPServerOut(Schema):
     project_id: str                    # non-null now -- it is a real FK
     is_internal: bool
     capability_config: dict            # {} on external rows
+    # The row project provisioning creates ("<Project> Capabilities"): shown as
+    # the project's default, and not removable -- the UI hides the action and
+    # delete_mcp_server_standalone refuses it.
+    is_protected: bool = False
+    is_default: bool = False
     server_type: str
     transport: str
     url: Optional[str] = None
     command: Optional[str] = None
     docker_image: Optional[str] = None
+    # Accepted on create/patch since the model gained them; returned too so an
+    # edit form can round-trip them instead of blanking them.
+    docker_command: Optional[str] = None
+    kubernetes_service: Optional[str] = None
     config: dict
     timeout_seconds: int
     max_retries: int

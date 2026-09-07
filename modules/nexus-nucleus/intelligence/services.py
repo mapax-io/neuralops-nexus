@@ -354,6 +354,15 @@ def delete_mcp_server_standalone(company, server_id: str) -> bool:
     if not server:
         return False
 
+    # The provisioned "<Project> Capabilities" row is the project's default
+    # tool source; is_protected has meant "not user-deletable" since the row
+    # was created, but nothing enforced it until now.
+    if server.is_protected:
+        raise ValueError(
+            "'%s' is this project's default capabilities and cannot be removed."
+            % server.name
+        )
+
     in_use = list(server.personas.filter(is_active=True).values_list("name", flat=True))
     if in_use:
         raise ValueError(
