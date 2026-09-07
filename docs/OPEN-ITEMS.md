@@ -437,23 +437,12 @@ capability template from nucleus instead of copying it; restore the compose comm
 decide whether to backfill existing projects.
 
 
-## MCP connection check (`POST /mcp-servers/verify/`): what it showed about static secrets
+## Static secrets are never sent over URL transports
 
-Added with the connection check: nexus-ai `POST /api/v1/mcp/verify/` opens a server through
-the runner's own transport builder (`apps/implementations/agents/mcp_transport.py`, now
-shared with `litellm_runner.py`) and lists its tools; nucleus `POST /api/v1/mcp-servers/verify/`
-fills in stored secrets and forwards. Building it surfaced two things:
-
-- **A static secret is never sent over URL transports.** `build_transport` forwards the
-  whole `secrets` dict as subprocess env for stdio servers, and a bearer header only for
-  `auth_type == "oauth2"`. A `static_secrets` server reached by URL gets no header at all,
-  so its stored `client_secret` is dead weight there. The check mirrors the runner on
-  purpose (a green check must mean a run connects), so such a server shows
-  `auth_required` from the probe exactly as it would fail in a run. Decision needed: send
-  the static secret as `Authorization: Bearer` (or a configurable header) for URL
-  transports, or say in the UI that static secrets apply to command servers only.
-- **`authlib` is missing from dev images built before it entered
-  `docker/dev/requirements.txt`.** Every OAuth path imports `oauth_client` lazily, which
-  hides that until the first OAuth call (or the connection check's OAuth branch) raises
-  `ModuleNotFoundError`. Rebuild the local image (`docker build -f neuralops/Dockerfile …`)
-  after pulling; nothing to fix in code.
+`build_transport` (nexus-ai) forwards a server's stored secrets as subprocess env for stdio
+servers and sends a bearer header only for `auth_type == "oauth2"`. A `static_secrets` server
+reached by URL gets no header, so its `client_secret` is stored but never used. The connection
+check mirrors the runner on purpose, so such a server reports `auth_required` from the probe
+exactly as it would fail in a run. Decision needed: send the static secret as a bearer (or a
+configurable header) for URL transports, or say in the UI that static secrets apply to command
+servers only.
