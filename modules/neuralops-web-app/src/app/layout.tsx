@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
 import { AppToaster } from "@/components/app-toaster";
+import { InteractionRipple } from "@/components/interaction-ripple";
 import { ThemeProvider } from "@/theme/theme-provider";
 import { AppProviders } from "@/lib/providers";
 import { APP_NAME } from "@/lib/version";
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ThemeProvider>
           <AppProviders>{children}</AppProviders>
           <AppToaster />
+          <InteractionRipple />
         </ThemeProvider>
       </body>
     </html>

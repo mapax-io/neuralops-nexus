@@ -30,3 +30,45 @@ describe("Label — required marker", () => {
     expect(screen.getByLabelText("Description")).not.toBeRequired();
   });
 });
+
+// Browser credential autofill belongs to the login page only. Chrome ignores
+// autocomplete="off" on password fields and offers saved logins to any of
+// them, so the primitive has to speak the values browsers honour.
+describe("Input — autofill is opt-in", () => {
+  const optOuts = ["data-1p-ignore", "data-lpignore", "data-bwignore", "data-form-type"];
+
+  it("defaults a plain field to autocomplete off with the password-manager opt-outs", () => {
+    render(<Input aria-label="Model id" />);
+    const el = screen.getByLabelText("Model id");
+    expect(el).toHaveAttribute("autocomplete", "off");
+    for (const a of optOuts) expect(el).toHaveAttribute(a);
+  });
+
+  it("defaults a password field to new-password (the value browsers honour) with the opt-outs", () => {
+    render(<Input aria-label="API key" type="password" />);
+    const el = screen.getByLabelText("API key");
+    expect(el).toHaveAttribute("autocomplete", "new-password");
+    for (const a of optOuts) expect(el).toHaveAttribute(a);
+  });
+
+  it("upgrades an explicit off on a password field to new-password — off is ignored by browsers", () => {
+    render(<Input aria-label="Secret" type="password" autoComplete="off" />);
+    expect(screen.getByLabelText("Secret")).toHaveAttribute("autocomplete", "new-password");
+  });
+
+  it("passes credential hints through untouched and without opt-outs — the login page keeps autofill", () => {
+    render(
+      <>
+        <Input aria-label="Email" type="email" autoComplete="email" />
+        <Input aria-label="Password" type="password" autoComplete="current-password" />
+        <Input aria-label="New password" type="password" autoComplete="new-password" />
+      </>,
+    );
+    expect(screen.getByLabelText("Email")).toHaveAttribute("autocomplete", "email");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "current-password");
+    expect(screen.getByLabelText("New password")).toHaveAttribute("autocomplete", "new-password");
+    for (const name of ["Email", "Password", "New password"]) {
+      for (const a of optOuts) expect(screen.getByLabelText(name)).not.toHaveAttribute(a);
+    }
+  });
+});

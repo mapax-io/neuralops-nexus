@@ -287,7 +287,7 @@ The frontend renders them as a centered separator line (not a chat bubble).
 
 **A persona is a composition** (since PR #99 removed `AIAgent`): exactly one `ModelConfig` (`model`),
 an optional second `ModelConfig` (`advisor_model` — a second opinion the primary can ask for), and
-0..5 `MCPServer`s (`mcp_servers`), plus per-persona generation settings (`temperature`, `max_tokens`,
+0..N `MCPServer`s (`mcp_servers` — external servers and, since #104, internal capability rows), plus per-persona generation settings (`temperature`, `max_tokens`,
 `max_steps`). "Agent-ness" is emergent: a persona with tool servers acts, one without just answers.
 
 **What can be patched:** everything above plus `name`, `description`, `prompt.system_prompt`,
@@ -298,8 +298,8 @@ delete and recreate") died with `AIAgent`. Two PATCH conventions, because handle
 
 **Server-side wiring rules** (`_validate_persona_wiring()` in `intelligence/services.py`, 400 on
 violation): the model and advisor must be attached to the persona's project; the advisor must differ
-from the model; tool servers must belong to the same project, number at most
-`MAX_MCP_SERVERS_PER_PERSONA` (5), and require a model with `supports_tools`. A PATCH re-validates the
+from the model; tool servers must belong to the same project and require a model with
+`supports_tools` (the former cap of five, `MAX_MCP_SERVERS_PER_PERSONA`, was removed in #104). A PATCH re-validates the
 existing servers against a newly chosen model.
 
 **Backend:** `PATCH /api/v1/personas/{id}/` → `PersonaPatchIn` schema → `patch_persona()` in `intelligence/services.py`.
@@ -308,7 +308,7 @@ existing servers against a newly chosen model.
 The edit dialog carries the same composition controls as create — model and advisor pickers (with
 attach & use for models not yet attached to the project), the tool-server checklist, generation
 settings — and mirrors the wiring rules client-side (advisor excluded from the primary's id and cleared
-if the primary takes it; unchecked servers disabled at five; a non-tool model unticks and disables the
+if the primary takes it; no cap since #104; a non-tool model unticks and disables the
 servers). Only changed fields are sent. Changes take effect on the next @mention.
 
 **Files:**

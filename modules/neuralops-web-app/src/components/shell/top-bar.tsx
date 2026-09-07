@@ -48,7 +48,7 @@ export function TopBar({ onAbout }: { onAbout: () => void }) {
           // the open chat (that footgun dumped users on the empty home).
           if (!onWorkspace) router.push("/w");
         }}
-        className="mr-1 flex h-8 min-w-0 shrink items-center gap-2 rounded-lg px-1 transition-colors hover:bg-surface"
+        className="mr-1 flex h-8 min-w-0 shrink cursor-pointer items-center gap-2 rounded-lg px-1 transition-[background-color,transform] hover:bg-surface2 active:scale-[0.98]"
       >
         <NexusMark className="size-7 flex-none" />
         <span className="hidden max-w-[50ch] min-w-0 truncate font-display text-[14px] font-bold lg:block">{companyName ?? "Workspace"}</span>

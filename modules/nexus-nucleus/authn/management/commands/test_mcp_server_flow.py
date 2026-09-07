@@ -140,6 +140,26 @@ class Command(BaseCommand):
         server.refresh_from_db()
         self.stdout.write(f"  -> server.is_active after delete: {server.is_active}")
 
+        self._section("PART 1b — Standalone: DELETE refuses a protected (provisioned default) row")
+        # The shape provision_project_folder_and_mcp() creates: internal,
+        # auth "none", protected. Reused across runs.
+        protected, _ = MCPServer.objects.get_or_create(
+            company=company, project=project, name="Protected MCP Test Flow", is_active=True,
+            defaults=dict(
+                is_internal=True, capability_config={"Planning": {}},
+                auth_type=MCPServer.AuthType.NONE, is_protected=True, is_default=True,
+            ),
+        )
+        try:
+            isvc.delete_mcp_server_standalone(company, str(protected.id))
+            refused = False
+        except ValueError as exc:
+            refused = "cannot be removed" in str(exc)
+            self.stdout.write(f"  -> refused with: {exc}")
+        self._check("delete of a protected row is refused", refused, True)
+        protected.refresh_from_db()
+        self._check("protected row still active after the refused delete", protected.is_active, True)
+
         # ══════════════════════════════════════════════════════════════════════
         # PART 2 — The same right codes, anchored at company=company
         # ══════════════════════════════════════════════════════════════════════

@@ -113,3 +113,17 @@ describe("LoginForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/invalid login/i);
   });
 });
+
+describe("LoginForm — the one place browser autofill stays on", () => {
+  it("keeps the credential hints and no password-manager opt-outs", () => {
+    render(<LoginForm />);
+    const email = screen.getByLabelText(/email/i);
+    const password = screen.getByLabelText(/^password/i);
+    expect(email).toHaveAttribute("autocomplete", "email");
+    expect(password).toHaveAttribute("autocomplete", "current-password");
+    for (const el of [email, password]) {
+      expect(el).not.toHaveAttribute("data-1p-ignore");
+      expect(el).not.toHaveAttribute("data-lpignore");
+    }
+  });
+});

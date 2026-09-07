@@ -18,9 +18,22 @@ export function Label({ className, required, ...props }: React.LabelHTMLAttribut
   );
 }
 
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+// Browser and password-manager autofill is for the login page only; every
+// other field is app data (model ids, API keys, names). Chrome ignores
+// autocomplete="off" on password fields and offers saved logins to them, so a
+// secret gets "new-password" (honoured) plus the manager opt-outs. A field
+// that passes a credential hint (email, current-password, new-password…)
+// keeps autofill — that is how login, reset and change-password opt in.
+const MANAGER_OPT_OUT = { "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" } as const;
+
+export function Input({ className, autoComplete, type, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+  const credential = autoComplete !== undefined && autoComplete !== "off";
+  const resolved = credential ? autoComplete : type === "password" ? "new-password" : "off";
   return (
     <input
+      type={type}
+      autoComplete={resolved}
+      {...(credential ? {} : MANAGER_OPT_OUT)}
       className={cn(
         "w-full h-10 rounded-[10px] border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink2/60",
         "outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]",

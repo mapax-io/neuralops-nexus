@@ -92,6 +92,7 @@ export default function MembersPage() {
             <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-2">
               <Search size={15} strokeWidth={2} className="flex-none text-ink2" />
               <input
+                autoComplete="off"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={`Filter ${members?.length} members…`}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { CircleCheck, CircleX, Link2, Pencil, Plug2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CircleCheck, CircleX, Link2, Lock, Pencil, Plug2, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
@@ -15,6 +15,8 @@ import type { MCPServer } from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { CardGrid, Chip, EntityCard, ListState, ProjectSelect, TabShell, Toolbar } from "./shared";
 import { McpAuthSection, draftFromConfig, draftToPayload, emptyOAuthDraft, validateOAuth, type OAuthDraft } from "./mcp-auth-section";
+import { CapabilityEditor } from "./capability-editor";
+import { capabilityLabels, defaultCapabilityConfig, formatCapabilityConfig, type CapabilityConfig } from "@/lib/mcp-capabilities";
 
 // A server's connection identity: same URL + same auth config = the same
 // connection. The client secret is write-only (never returned), so a duplicate
@@ -45,6 +47,18 @@ const TRANSPORTS = [
   { value: "stdio", label: "STDIO — a local command" },
 ] as const;
 const isStdio = (transport: string) => transport === "stdio";
+// server_type: where the server runs. remote/local follow the transport by
+// default; docker, kubernetes and hosted are explicit choices with their own
+// fields. Fixed after creation (the server's PATCH has no server_type).
+const RUNTIMES = [
+  { value: "remote", label: "Remote — reached by URL" },
+  { value: "local", label: "Local — a command on this server" },
+  { value: "docker", label: "Docker container" },
+  { value: "kubernetes", label: "Kubernetes service" },
+  { value: "hosted", label: "Hosted / online provider" },
+] as const;
+const runtimeFor = (transport: string) => (isStdio(transport) ? "local" : "remote");
+const runtimeLabel = (v: string) => RUNTIMES.find((r) => r.value === v)?.label ?? v;
 const selectClass = "h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]";
 // What identifies a server's connection: its URL, or for STDIO its command.
 const endpointOf = (s: { transport: string; url: string | null; command: string | null }) => (isStdio(s.transport) ? s.command : s.url);
@@ -105,6 +119,76 @@ function RuntimeFields({ idPrefix, config, onConfig, firstParty, onFirstParty, e
   );
 }
 
+// Two kinds of tool source share one table server-side (#104). EXTERNAL is a
+// real MCP server reached over a transport; INTERNAL is a set of built-in
+// capabilities the AI worker provides in-process, configured by JSON — no
+// transport, endpoint, credentials or call settings apply. Fixed after
+// creation (a flip would wipe the endpoint and credentials server-side).
+type Kind = "external" | "internal";
+const KINDS: { value: Kind; label: string; blurb: string }[] = [
+  { value: "external", label: "External MCP server", blurb: "Reached over HTTP, SSE or WebSocket, or run as a local STDIO command." },
+  { value: "internal", label: "Built-in capabilities", blurb: "Filesystem, shell, web search and more — provided in-process, no server to run." },
+];
+
+function KindSwitch({ value, onChange }: { value: Kind; onChange: (k: Kind) => void }) {
+  return (
+    <fieldset>
+      <legend className="mb-1.5 block text-[13px] font-medium text-ink2">Kind</legend>
+      <div role="radiogroup" aria-label="Kind" className="grid gap-2 sm:grid-cols-2">
+        {KINDS.map((k) => {
+          const on = k.value === value;
+          return (
+            <label key={k.value} className={`flex cursor-pointer items-start gap-2.5 rounded-[10px] border px-3 py-2.5 text-[13px] transition-colors ${on ? "border-accent bg-accent/10" : "border-line bg-surface hover:border-accent/50"}`}>
+              <input type="radio" name="mcp-kind" value={k.value} checked={on} onChange={() => onChange(k.value)} className="mt-0.5 accent-[var(--accent)]" />
+              <span className="min-w-0">
+                <span className="font-medium">{k.label}</span>
+                <span className="block text-[12px] text-ink2">{k.blurb}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function CapabilityMeta({ config }: { config: CapabilityConfig }) {
+  const labels = capabilityLabels(config);
+  return labels.length ? <span className="truncate" title={labels.join(", ")}>{labels.join(" · ")}</span> : <span>no capabilities on</span>;
+}
+
+function RuntimeDetails({ idPrefix, runtime, image, dockerCommand, service, onImage, onDockerCommand, onService }: {
+  idPrefix: string; runtime: string;
+  image: string; dockerCommand: string; service: string;
+  onImage: (v: string) => void; onDockerCommand: (v: string) => void; onService: (v: string) => void;
+}) {
+  if (runtime === "docker") {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <Label htmlFor={`${idPrefix}-image`}>Docker image</Label>
+          <Input id={`${idPrefix}-image`} placeholder="ghcr.io/org/mcp-server:1.2" value={image} onChange={(e) => onImage(e.target.value)} className="font-mono" />
+        </div>
+        <div>
+          <Label htmlFor={`${idPrefix}-dcmd`}>Container command <span className="text-ink2">(optional)</span></Label>
+          <Input id={`${idPrefix}-dcmd`} placeholder="mcp-server --port 8080" value={dockerCommand} onChange={(e) => onDockerCommand(e.target.value)} className="font-mono" />
+        </div>
+        <p className="col-span-full -mt-1 text-[12px] text-ink2">Stored with the server for the runtime that starts the container; the AI worker reaches it over the transport above.</p>
+      </div>
+    );
+  }
+  if (runtime === "kubernetes") {
+    return (
+      <div>
+        <Label htmlFor={`${idPrefix}-svc`}>Kubernetes service</Label>
+        <Input id={`${idPrefix}-svc`} placeholder="mcp-tools.default.svc.cluster.local" value={service} onChange={(e) => onService(e.target.value)} className="font-mono" />
+        <p className="mt-1.5 text-[12px] text-ink2">Stored with the server for the cluster runtime; the AI worker reaches it over the transport above.</p>
+      </div>
+    );
+  }
+  return null;
+}
+
 function CallSettings({ idPrefix, timeout, retries, onTimeout, onRetries }: {
   idPrefix: string; timeout: string; retries: string; onTimeout: (v: string) => void; onRetries: (v: string) => void;
 }) {
@@ -154,7 +238,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
     <TabShell
       embedded={embedded}
       title="MCP tool servers"
-      blurb="Tools personas can call over the Model Context Protocol — register any MCP server by URL."
+      blurb="External MCP servers by URL or command, plus built-in capabilities the AI worker provides — personas mount both the same way."
       action={!!servers?.length && canManage && (
         <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
           <Plus size={14} strokeWidth={2} /> Add server
@@ -164,7 +248,8 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
       {!!servers?.length && (
         <Toolbar
           facts={[
-            `${servers.length} ${servers.length === 1 ? "server" : "servers"}`,
+            `${servers.filter((sv) => !sv.is_internal).length} external`,
+            `${servers.filter((sv) => sv.is_internal).length} built-in`,
             `${new Set(servers.map((sv) => sv.project_id)).size} ${new Set(servers.map((sv) => sv.project_id)).size === 1 ? "project" : "projects"}`,
           ]}
         />
@@ -184,13 +269,16 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
           {servers.map((s) => (
             <EntityCard
               key={s.id}
-              icon={<Plug2 size={17} strokeWidth={2} className={s.auth_type === "oauth2" ? (s.oauth_connected ? "text-ok" : "text-crit") : undefined} />}
+              icon={s.is_internal
+                ? <Sparkles size={17} strokeWidth={2} className="text-accent" />
+                : <Plug2 size={17} strokeWidth={2} className={s.auth_type === "oauth2" ? (s.oauth_connected ? "text-ok" : "text-crit") : undefined} />}
               title={s.name}
               chips={
                 <>
-                  <Chip>{s.transport}</Chip>
+                  {s.is_internal ? <Chip tone="accent">built-in</Chip> : <Chip>{s.transport}</Chip>}
+                  {s.is_default && <Chip tone="ok">default</Chip>}
                   {projectName(s.project_id) && <Chip tone="accent">{projectName(s.project_id)}</Chip>}
-                  {s.auth_type === "oauth2" && (
+                  {!s.is_internal && s.auth_type === "oauth2" && (
                     <>
                       <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${s.oauth_connected ? "border-ok/40 bg-ok/10 text-ok" : "border-crit/40 bg-crit/10 text-crit"}`}>
                         {s.oauth_connected ? <CircleCheck size={11} strokeWidth={2.6} /> : <CircleX size={11} strokeWidth={2.6} />}
@@ -213,7 +301,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
                 </>
               }
               body={s.description ?? undefined}
-              meta={
+              meta={s.is_internal ? <CapabilityMeta config={s.capability_config} /> : (
                 <>
                   {endpointOf(s) && <span title={endpointOf(s) ?? undefined} className="truncate font-mono">{endpointOf(s)}</span>}
                   <span>timeout {s.timeout_seconds}s</span>
@@ -227,7 +315,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
                     </span>
                   )}
                 </>
-              }
+              )}
               actions={canTouch && (
                 <>
                   <button
@@ -238,14 +326,27 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
                   >
                     <Pencil size={14} strokeWidth={2} />
                   </button>
-                  <button
-                    aria-label={`Remove MCP server ${s.name}`}
-                    title="Remove server"
-                    onClick={() => setRemoving(s)}
-                    className="flex size-7 cursor-pointer items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
-                  >
-                    <Trash2 size={14} strokeWidth={2} />
-                  </button>
+                  {s.is_protected ? (
+                    // The project's provisioned default: the server refuses to
+                    // delete it, so the action is not offered — the lock says why.
+                    <span
+                      role="img"
+                      aria-label={`${s.name} is this project's default and cannot be removed`}
+                      title="This project's default capabilities — not removable"
+                      className="flex size-7 items-center justify-center rounded-md text-ink2/60"
+                    >
+                      <Lock size={13} strokeWidth={2} />
+                    </span>
+                  ) : (
+                    <button
+                      aria-label={`Remove MCP server ${s.name}`}
+                      title={s.is_internal ? "Remove capabilities" : "Remove server"}
+                      onClick={() => setRemoving(s)}
+                      className="flex size-7 cursor-pointer items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
+                    >
+                      <Trash2 size={14} strokeWidth={2} />
+                    </button>
+                  )}
                 </>
               )}
             />
@@ -268,14 +369,14 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
           if (removing) del.mutate(removing.id);
           setRemoving(null);
         }}
-        title="Remove this MCP tool server?"
+        title={removing?.is_internal ? "Remove these built-in capabilities?" : "Remove this MCP tool server?"}
         body={
           <p>
             <b className="text-ink">{removing?.name}</b> will be removed. If a persona still mounts it, the
-            server refuses and names the persona — untick the server there first.
+            server refuses and names the persona — untick it there first.
           </p>
         }
-        confirmLabel="Remove server"
+        confirmLabel={removing?.is_internal ? "Remove capabilities" : "Remove server"}
         loading={del.isPending}
       />
     </TabShell>
@@ -293,8 +394,16 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   const { data: allProjects } = useProjects();
   const { data: servers } = useMcpServers();
   const [projectId, setProjectId] = useState(defaultProjectId ?? "");
+  const [kind, setKind] = useState<Kind>("external");
+  const [caps, setCaps] = useState<CapabilityConfig>(() => defaultCapabilityConfig());
+  const [capErr, setCapErr] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [transport, setTransport] = useState<string>("http");
+  // null = follows the transport (remote/local); set once the user picks.
+  const [runtime, setRuntime] = useState<string | null>(null);
+  const [dockerImage, setDockerImage] = useState("");
+  const [dockerCommand, setDockerCommand] = useState("");
+  const [k8sService, setK8sService] = useState("");
   const [url, setUrl] = useState("");
   const [command, setCommand] = useState("");
   const [description, setDescription] = useState("");
@@ -324,10 +433,20 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   // either/or the server enforces with its check constraints.
   const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
 
+  const internal = kind === "internal";
+  const serverType = runtime ?? runtimeFor(transport);
+
   const reset = () => {
     setProjectId(defaultProjectId ?? "");
+    setKind("external");
+    setCaps(defaultCapabilityConfig());
+    setCapErr(null);
     setName("");
     setTransport("http");
+    setRuntime(null);
+    setDockerImage("");
+    setDockerCommand("");
+    setK8sService("");
     setUrl("");
     setCommand("");
     setDescription("");
@@ -358,10 +477,19 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     setErr(null);
     setTouched(true);
     const ne = validateName(name);
-    const ue = validateUrl(url);
     setNameErr(ne);
+    if (!projectId) return setErr(internal ? "Pick the project these capabilities belong to." : "Pick the project this server belongs to.");
+    if (internal) {
+      if (ne) return;
+      if (capErr) return setErr(capErr);
+      if (Object.keys(caps).length === 0) return setErr("Turn on at least one capability.");
+      // Only the fields an internal row has — the server clears the rest and
+      // forces auth_type to "none" anyway.
+      create.mutate({ project_id: projectId, name: name.trim(), description: description.trim() || undefined, is_internal: true, capability_config: caps });
+      return;
+    }
+    const ue = validateUrl(url);
     setUrlErr(ue);
-    if (!projectId) return setErr("Pick the project this server belongs to.");
     if (ne || ue) return;
     const ce = validateTimeout(timeout) ?? validateRetries(retries);
     if (ce) return setErr(ce);
@@ -379,8 +507,10 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     if (dupConn) return setErr(`This project already has a server with these exact connection details ("${dupConn.name}").`);
     create.mutate({
       project_id: projectId, name: name.trim(),
-      transport, server_type: stdio ? "local" : "remote",
+      transport, server_type: serverType,
       ...(stdio ? { command: command.trim() } : { url: url.trim() }),
+      ...(serverType === "docker" ? { docker_image: dockerImage.trim() || undefined, docker_command: dockerCommand.trim() || undefined } : {}),
+      ...(serverType === "kubernetes" ? { kubernetes_service: k8sService.trim() || undefined } : {}),
       description: description.trim() || undefined,
       timeout_seconds: Number(timeout), max_retries: Number(retries),
       config: cfg.value, is_first_party: firstParty, embed_output: firstParty && embed,
@@ -396,17 +526,20 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       open={open}
       onClose={close}
       size="2xl"
-      title={`Add an MCP tool server${projName ? ` — ${projName}` : ""}`}
-      description="Any server that speaks the Model Context Protocol — reached by URL over HTTP, SSE or WebSocket, or run as a local command over STDIO. Personas in the owning project can mount its tools."
-      icon={<Plug2 size={17} strokeWidth={2} />}
+      title={`${internal ? "Add built-in capabilities" : "Add an MCP tool server"}${projName ? ` — ${projName}` : ""}`}
+      description={internal
+        ? "Capabilities the AI worker provides in-process — filesystem, shell, web search and more. Personas in the owning project mount them like any tool source."
+        : "Any server that speaks the Model Context Protocol — reached by URL over HTTP, SSE or WebSocket, or run as a local command over STDIO. Personas in the owning project can mount its tools."}
+      icon={internal ? <Sparkles size={17} strokeWidth={2} /> : <Plug2 size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="mcp-form" size="sm" variant="primary" loading={create.isPending}>Add server</Button>
+          <Button type="submit" form="mcp-form" size="sm" variant="primary" loading={create.isPending}>{internal ? "Add capabilities" : "Add server"}</Button>
         </div>
       }
     >
       <form id="mcp-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+        <KindSwitch value={kind} onChange={(k) => { setKind(k); setErr(null); setUrlErr(null); }} />
         <ProjectSelect id="mcp-project" value={projectId} onChange={setProjectId} only={allProjects ?? []} />
         <div>
           <Label htmlFor="mcp-name" required>Name</Label>
@@ -414,7 +547,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
             id="mcp-name"
             required
             autoFocus
-            placeholder="e.g. Warehouse tools"
+            placeholder={internal ? "e.g. Research capabilities" : "e.g. Warehouse tools"}
             value={name}
             aria-invalid={!!nameErr}
             onChange={(e) => {
@@ -431,6 +564,16 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
           />
           <FieldError>{nameErr}</FieldError>
         </div>
+        {internal && (
+          <>
+            <div>
+              <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
+              <Input id="mcp-desc" placeholder="What are these for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+            </div>
+            <CapabilityEditor idPrefix="mcp" value={caps} onChange={setCaps} onError={setCapErr} />
+          </>
+        )}
+        {!internal && (
         <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
           <div>
             <Label htmlFor="mcp-transport">Transport</Label>
@@ -491,14 +634,28 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
             </div>
           )}
         </div>
-        <div>
-          <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
-          <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-        </div>
-        <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
-        <RuntimeFields idPrefix="mcp" config={config} onConfig={setConfig} firstParty={firstParty} onFirstParty={setFirstParty} embed={embed} onEmbed={setEmbed} />
-        <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
-        {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
+        )}
+        {!internal && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+              <div>
+                <Label htmlFor="mcp-runtime">Runs as</Label>
+                <select id="mcp-runtime" value={serverType} onChange={(e) => setRuntime(e.target.value)} className={selectClass}>
+                  {RUNTIMES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+              </div>
+              <RuntimeDetails idPrefix="mcp" runtime={serverType} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
+            </div>
+            <div>
+              <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
+              <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+            </div>
+            <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
+            <RuntimeFields idPrefix="mcp" config={config} onConfig={setConfig} firstParty={firstParty} onFirstParty={setFirstParty} embed={embed} onEmbed={setEmbed} />
+            <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+            {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
+          </>
+        )}
         <FieldError>{err}</FieldError>
       </form>
     </Dialog>
@@ -507,8 +664,13 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
 
 function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClose: () => void; siblings: MCPServer[] }) {
   const [name, setName] = useState(server.name);
+  const [caps, setCaps] = useState<CapabilityConfig>(() => structuredClone(server.capability_config ?? {}));
+  const [capErr, setCapErr] = useState<string | null>(null);
   const [url, setUrl] = useState(server.url ?? "");
   const [command, setCommand] = useState(server.command ?? "");
+  const [dockerImage, setDockerImage] = useState(server.docker_image ?? "");
+  const [dockerCommand, setDockerCommand] = useState(server.docker_command ?? "");
+  const [k8sService, setK8sService] = useState(server.kubernetes_service ?? "");
   const [description, setDescription] = useState(server.description ?? "");
   const [timeout, setTimeout_] = useState(String(server.timeout_seconds));
   const [retries, setRetries] = useState(String(server.max_retries));
@@ -539,6 +701,20 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
     const ne = validateName(name);
     const ue = validateUrl(url);
     setNameErr(ne);
+    if (server.is_internal) {
+      if (ne) return;
+      if (capErr) { setAuthErr(capErr); return; }
+      if (Object.keys(caps).length === 0) { setAuthErr("Turn on at least one capability."); return; }
+      setAuthErr(null);
+      const payload = {
+        ...(name.trim() !== server.name ? { name: name.trim() } : {}),
+        ...(description.trim() !== (server.description ?? "") ? { description: description.trim() } : {}),
+        ...(formatCapabilityConfig(caps) !== formatCapabilityConfig(server.capability_config) ? { capability_config: caps } : {}),
+      };
+      if (Object.keys(payload).length === 0) return onClose();
+      patch.mutate({ id: server.id, payload });
+      return;
+    }
     setUrlErr(ue);
     if (ne || ue) return;
     const ce = validateTimeout(timeout) ?? validateRetries(retries);
@@ -573,6 +749,9 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       ...(name.trim() !== server.name ? { name: name.trim() } : {}),
       ...(!stdio && url.trim() !== (server.url ?? "") ? { url: url.trim() } : {}),
       ...(stdio && command.trim() !== (server.command ?? "") ? { command: command.trim() } : {}),
+      ...(server.server_type === "docker" && dockerImage.trim() !== (server.docker_image ?? "") ? { docker_image: dockerImage.trim() } : {}),
+      ...(server.server_type === "docker" && dockerCommand.trim() !== (server.docker_command ?? "") ? { docker_command: dockerCommand.trim() } : {}),
+      ...(server.server_type === "kubernetes" && k8sService.trim() !== (server.kubernetes_service ?? "") ? { kubernetes_service: k8sService.trim() } : {}),
       ...(description.trim() !== (server.description ?? "") ? { description: description.trim() } : {}),
       ...(Number(timeout) !== server.timeout_seconds ? { timeout_seconds: Number(timeout) } : {}),
       ...(Number(retries) !== server.max_retries ? { max_retries: Number(retries) } : {}),
@@ -590,7 +769,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       onClose={onClose}
       size="2xl"
       title={`Edit ${server.name}`}
-      description="Changes apply to the next tool call — personas pick up the new address automatically."
+      description={server.is_internal ? "Changes apply to the persona's next run." : "Changes apply to the next tool call — personas pick up the new address automatically."}
       icon={<Pencil size={17} strokeWidth={2} />}
       footer={
         <div className="flex justify-end gap-2">
@@ -622,6 +801,20 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
           />
           <FieldError>{nameErr}</FieldError>
         </div>
+        {server.is_internal && (
+          <>
+            <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
+              <p className="text-[12px] text-ink2">Kind <span className="text-ink2/70">(fixed)</span></p>
+              <p className="mt-0.5">Built-in capabilities{server.is_default ? " — this project's default" : ""}</p>
+            </div>
+            <div>
+              <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
+              <Input id="mce-desc" placeholder="What are these for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+            </div>
+            <CapabilityEditor idPrefix="mce" value={caps} onChange={setCaps} onError={setCapErr} />
+          </>
+        )}
+        {!server.is_internal && (
         <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
           <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
             <p className="text-[12px] text-ink2">Transport <span className="text-ink2/70">(fixed)</span></p>
@@ -668,13 +861,25 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
             </div>
           )}
         </div>
-        <div>
-          <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
-          <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-        </div>
-        <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
-        <RuntimeFields idPrefix="mce" config={config} onConfig={setConfig} firstParty={server.is_first_party} firstPartyFixed embed={embed} onEmbed={setEmbed} />
-        <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+        )}
+        {!server.is_internal && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+              <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
+                <p className="text-[12px] text-ink2">Runs as <span className="text-ink2/70">(fixed)</span></p>
+                <p className="mt-0.5">{runtimeLabel(server.server_type)}</p>
+              </div>
+              <RuntimeDetails idPrefix="mce" runtime={server.server_type} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
+            </div>
+            <div>
+              <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
+              <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+            </div>
+            <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
+            <RuntimeFields idPrefix="mce" config={config} onConfig={setConfig} firstParty={server.is_first_party} firstPartyFixed embed={embed} onEmbed={setEmbed} />
+            <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+          </>
+        )}
         <FieldError>{authErr}</FieldError>
       </form>
     </Dialog>

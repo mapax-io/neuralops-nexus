@@ -356,3 +356,83 @@ under construction) and which the web app should reflect now — in particular w
 to hide the three unsupported providers and the MCP/advisor/generation controls until
 the runner reads them, or keep the nucleus contract as the source of truth (current
 choice).
+
+---
+
+## Chat realtime events: what nucleus publishes vs what a client can show
+
+**Where:** `modules/nexus-nucleus/chat/services.py` (`trigger_ai_response_async`,
+`trigger_ai_swarm_response_async`), `chat/api.py` (`typing`, `send_message`), `chat/tasks.py`.
+
+Audit of every `publish`/`publish_async` call site (2026-09-07) against the web app's
+`lib/realtime/events.ts` + `message-store.ts`. Published on `topic-{id}`: `message`
+(human, persona, system — `_serialise()` carries the type), `user_typing`,
+`message_start`, `message_delta`, `message_done`, `message_error`, `swarm_transition`.
+The web app binds all seven (swarm ids are remapped to the DB message by nucleus, so
+dones and transitions land on the right bubble). Nothing published is dropped. What the
+web app cannot show because nothing is published:
+
+- **Tool activity.** The AI worker emits `tool_call_start` (built-in web search, shell,
+  filesystem after #101) and the swarm path receives it, but neither relay forwards it
+  (single path: `chat/services.py` L583-607 handles delta/done/error only; swarm path
+  L815-897 handles start/delta/done/transition/error). A "using web search…" cue is
+  one relayed event away; the web app's `parseEvent` ignores unknown types, so adding
+  the relay is additive.
+- **Persona typing / thinking.** No persona-side counterpart to `user_typing` exists;
+  the only signal is the gap between `message_start` and the first `message_delta`,
+  which the web app renders as an in-bubble "Thinking…" cue.
+- **Swarm failure.** The swarm relay marks the message FAILED but publishes no
+  `message_error` (the single path does), so clients fall back to stall detection.
+- **Workspace-level channel.** Nothing is published outside topic channels (no unread
+  counts, invitations, new topics/channels), so those refresh by polling only.
+- **Dead path.** `chat/tasks.py generate_ai_response` (Celery) publishes `token` /
+  `done` / `error` on `topic:{id}` (colon, a different channel) — no caller anywhere
+  (`grep -rn ".delay(\|apply_async(" modules/nexus-nucleus` → none). Safe to delete.
+
+**Decision needed:** relay `tool_call_start` (and a `tool_call_done`) on both paths,
+and publish `message_error` on swarm failure — the web app will bind each the day it
+appears.
+
+---
+
+## After upstream #104: internal capabilities rows, and what still does not reach the worker
+
+**Where:** `modules/nexus-nucleus/intelligence/{schema,api,services}.py`, `internal/api.py`,
+`workspace/services.py`, `core/settings.py`; `modules/nexus-ai/apps/managers/nucleus_client.py`.
+
+#104 split `MCPServer` into external servers and internal (built-in) capabilities
+(`is_internal`, `capability_config`), provisions every new project with one
+protected default row ("<Project> Capabilities": Filesystem, Shell, Web Search, Web
+Fetch), and sends internal rows to the worker as `PersonaInternal.capabilities`. The web
+app follows the contract (kind switch, capability editor, badges, default row
+pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-07:
+
+- **The worker ignores `capabilities`.** `nucleus_client.resolve_persona` maps
+  `mcp_servers` only; `PersonaConfig.capabilities` stays at its default and
+  `PydanticAIRunner._resolve_capabilities` returns the fixed default registry (see the
+  #101/#102 entry). Everything the capability editor saves is stored and forwarded,
+  and then not read. Nothing the web app can do until `resolve_persona` maps
+  `capabilities` → `capability_config` and the runner builds capabilities from it.
+- **Template drift, already.** `settings.MCP_CAPABILITY_TEMPLATE`'s Shell comment lists
+  `sed` and `wget` as valid commands; `trigger.py`'s `ShellCommands` enum has neither.
+  The web app's catalogue (`src/lib/mcp-capabilities.ts`) mirrors the enum, and is a
+  third copy of the same shape. An endpoint serving the template would end the copies.
+- **`is_protected` / `is_default` were not exposed or enforced.** Both existed on the
+  model (the provisioned row sets them) but `MCPServerOut` did not carry them and
+  `delete_mcp_server_standalone` did not check `is_protected`, so the default row was
+  deletable through the API. Added in this PR: both fields in `MCPServerOut`, and a
+  409 on deleting a protected row (the web app hides the action and shows a lock).
+- **Flipping kind on PATCH** (`is_internal` on `MCPServerPatchIn`) wipes the endpoint
+  and credentials server-side. The web app keeps the kind fixed after creation
+  (delete and recreate instead) rather than offer a destructive flip.
+- **Dev compose regressions.** `nucleus-dev`'s command is now `tail -f /dev/null` (the
+  uvicorn line is commented out), so `docker compose up` no longer starts nucleus in
+  the dev profile; and the `web-app-dev` service added in #101 is commented out again.
+  Both look like local debugging state that was committed.
+- **Existing projects** keep their old external "<Project> Files" stdio row; only new
+  projects get the internal capabilities row. No backfill was shipped.
+
+**Decision needed:** map `capabilities` in the worker (the point of the split); serve the
+capability template from nucleus instead of copying it; restore the compose commands;
+decide whether to backfill existing projects.
+

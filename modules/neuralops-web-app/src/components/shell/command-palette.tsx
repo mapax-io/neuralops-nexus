@@ -87,6 +87,7 @@ export function CommandPalette({ onAbout }: { onAbout: () => void }) {
           <Search size={17} strokeWidth={2} className="flex-none text-ink2" />
           <input
             ref={inputRef}
+            autoComplete="off"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);

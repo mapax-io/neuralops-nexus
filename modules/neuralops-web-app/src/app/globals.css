@@ -121,6 +121,63 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+
+  /* Tailwind v4 dropped the pointer on buttons. Anything that acts on a press
+     reads as clickable; disabled controls keep the arrow. Layered, so a
+     utility (cursor-default, cursor-grab) still wins. */
+  button:enabled,
+  [role="button"],
+  [role="menuitem"],
+  [role="tab"],
+  [role="option"],
+  [role="switch"],
+  summary,
+  input[type="checkbox"]:enabled,
+  input[type="radio"]:enabled {
+    cursor: pointer;
+  }
+  /* Kept apart: a browser without :has() drops the whole rule it appears in,
+     and the buttons above must not lose their pointer with it. */
+  label:has(> input[type="checkbox"]:enabled),
+  label:has(> input[type="radio"]:enabled) {
+    cursor: pointer;
+  }
+}
+
+/* ── press feedback: the delegated ripple layer (components/interaction-ripple) ──
+   Fixed, pointer-events-free overlay; each ripple is clipped to its control's
+   rect + corner radius so no control needs overflow:hidden. Reduced motion
+   collapses the animation via the global guard below. */
+.nx-ripple-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  overflow: hidden;
+  pointer-events: none;
+}
+.nx-ripple-clip {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+.nx-ripple-clip--halo {
+  border-radius: 9999px;
+}
+.nx-ripple {
+  position: absolute;
+  border-radius: 9999px;
+  transform: scale(0);
+  opacity: 0.24;
+  animation: nx-ripple 600ms linear forwards;
+  will-change: transform, opacity;
+}
+/* Two phases on one clock: the wash expands at full strength (decelerating,
+   the Material curve), then fades once it has covered the control — one curve
+   for both made it invisible before it reached the far edge. */
+@keyframes nx-ripple {
+  0% { transform: scale(0); opacity: 0.24; animation-timing-function: cubic-bezier(0.2, 0.6, 0.3, 1); }
+  55% { transform: scale(1); opacity: 0.2; animation-timing-function: ease-out; }
+  100% { transform: scale(1); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

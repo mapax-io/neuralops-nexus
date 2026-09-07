@@ -83,6 +83,7 @@ export function ServerChooser({ entries, onConnect, onRemove, onAdd, loading }: 
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-2.5">
           <Search size={15} strokeWidth={2} className="flex-none text-ink2" />
           <input
+            autoComplete="off"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Filter ${entries.length} servers…`}
