@@ -8,6 +8,7 @@ import { Input, Label } from "@/components/ui/field";
 import type { McpAuthType, McpOAuthConfig } from "@/lib/api/intelligence";
 import { validateUrl } from "@/lib/validation";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useServerConfig } from "@/hooks/use-server-config";
 
 // ── OAuth draft (form state) ──────────────────────────────────────────────────
 export interface OAuthDraft {
@@ -157,8 +158,15 @@ export function McpAuthSection({
   onSuggestUrl?: (url: string) => void; // parent fills the server URL if empty
 }) {
   const serverUrl = useConnectionStore((s) => s.serverUrl);
-  // The redirect URI the provider must be registered with (backend-fixed).
-  const callbackUrl = serverUrl ? `${serverUrl.replace(/\/$/, "")}/api/v1/mcp-servers/oauth/callback/` : "";
+  // The redirect URI the provider must be registered with. The server builds
+  // it from ITS public address (NEURALOPS_SERVER_URL), which need not be the
+  // address the app dialled — so ask the server, and only fall back to the
+  // dialled address while that answer is on its way.
+  const { data: serverConfig } = useServerConfig();
+  const publicUrl = (serverConfig?.server_url || serverUrl || "").replace(/\/$/, "");
+  const callbackUrl = publicUrl ? `${publicUrl}/api/v1/mcp-servers/oauth/callback/` : "";
+  const dialled = (serverUrl ?? "").replace(/\/$/, "");
+  const publicDiffers = !!serverConfig?.server_url && publicUrl !== dialled;
   const set = (patch: Partial<OAuthDraft>) => onOauth({ ...oauth, ...patch });
   // Track which preset is active (inferred from the endpoints on edit) so the
   // guide can show provider-specific hints. null = a custom/other provider.
@@ -214,7 +222,7 @@ export function McpAuthSection({
 
       {authType === "oauth2" && (
         <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface2/40 p-3.5">
-          <p className="text-[12px] text-ink2">Adding the server checks the connection, then opens the provider&apos;s sign-in window. Any provider that does the OAuth 2.0 authorization-code flow works — fill the fields from its OAuth docs, or start from a preset for a common one.</p>
+          <p className="text-[12px] text-ink2">Add the server, then press <b className="text-ink">Connect</b> on its card to sign in. Any provider that does the OAuth 2.0 authorization-code flow works — fill the fields from its OAuth docs, or start from a preset for a common one.</p>
 
           {/* Provider preset picker — one click fills the endpoints, scopes and
               any extra sign-in params a provider needs. */}
@@ -262,7 +270,7 @@ export function McpAuthSection({
                   Set the server&apos;s <b className="text-ink">URL</b> (in Connection above) to the MCP server&apos;s endpoint
                   {provider?.suggestUrl ? <> — e.g. <code className="rounded bg-surface2 px-1">{provider.suggestUrl}</code></> : <> — the MCP server that uses this sign-in</>}.
                 </GuideStep>
-                <GuideStep n={6}>Add the server — the sign-in window opens as soon as the connection checks out. You can sign in again any time from the server&apos;s card.</GuideStep>
+                <GuideStep n={6}>Add the server, then press <b className="text-ink">Connect</b> on its card and sign in. Reconnect from the same place whenever the provider asks again.</GuideStep>
               </ol>
             )}
           </div>
@@ -270,6 +278,9 @@ export function McpAuthSection({
           {callbackUrl && (
             <div className="rounded-lg border border-line bg-surface px-3 py-2 text-[11.5px]">
               <p className="text-ink2">Register this <b className="text-ink">redirect URI / callback URL</b> in your OAuth app:</p>
+              {publicDiffers && (
+                <p className="mt-1 text-warn">This server calls itself <code className="rounded bg-surface2 px-1 py-px font-mono">{publicUrl}</code>, not the address you connected with — the sign-in redirects there, so register exactly this one.</p>
+              )}
               <div className="mt-1 flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate font-mono text-ink">{callbackUrl}</code>
                 <button type="button" aria-label="Copy callback URL"

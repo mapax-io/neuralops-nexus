@@ -82,6 +82,8 @@ beforeEach(() => {
       posted = (await request.json()) as Record<string, unknown>;
       return HttpResponse.json({ ...S1, id: "s2", ...posted });
     }),
+    // The server's own view of itself (its public address for OAuth redirects).
+    http.get(`${BASE}/api/v1/auth/config/`, () => HttpResponse.json({ server_url: BASE, server_version: "dev" })),
   );
 });
 
@@ -488,5 +490,29 @@ describe("McpTab — the address field explains the chosen transport", () => {
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Transport"), { target: { value: "stdio" } });
     expect(within(dialog).getByText(/as you would type them in a shell/i)).toBeInTheDocument();
+  });
+});
+
+describe("McpTab — the OAuth redirect URI comes from the server's public address", () => {
+  it("shows the address the server will send, and says so when it is not the one the app dialled", async () => {
+    server.use(http.get(`${BASE}/api/v1/auth/config/`, () => HttpResponse.json({ server_url: "https://tools.example.org", server_version: "dev" })));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Authentication"), { target: { value: "oauth2" } });
+    expect(await within(dialog).findAllByText("https://tools.example.org/api/v1/mcp-servers/oauth/callback/")).not.toHaveLength(0);
+    expect(within(dialog).queryByText(`${BASE}/api/v1/mcp-servers/oauth/callback/`)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/this server calls itself/i)).toBeInTheDocument();
+  });
+
+  it("stays quiet when the public address is the dialled one", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Authentication"), { target: { value: "oauth2" } });
+    expect(await within(dialog).findAllByText(`${BASE}/api/v1/mcp-servers/oauth/callback/`)).not.toHaveLength(0);
+    expect(within(dialog).queryByText(/this server calls itself/i)).not.toBeInTheDocument();
   });
 });
