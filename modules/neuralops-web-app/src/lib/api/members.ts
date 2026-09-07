@@ -16,6 +16,9 @@ export interface InviteResult {
   message: string;
   email: string;
   role: string;
+  // True when the server created a pending Invitation (nobody with this
+  // email yet) — only that outcome also carries expires_at. No email is sent.
+  is_new_user?: boolean;
   expires_at?: string | null;
 }
 

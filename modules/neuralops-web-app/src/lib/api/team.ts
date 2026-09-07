@@ -6,7 +6,7 @@ import { apiJson } from "./client";
 export const inviteToProject = (
   pid: string,
   body: { email?: string; persona_name?: string; scope: "project" | "topic"; topic_id?: string; role?: string },
-) => apiJson<{ ok: boolean; message: string; invite_url?: string | null }>(
+) => apiJson<{ ok: boolean; message: string; is_new_user?: boolean; server_url?: string | null; invite_url?: string | null }>(
   `/api/v1/projects/${pid}/team/invite/`,
   { method: "POST", body: JSON.stringify(body) },
 );

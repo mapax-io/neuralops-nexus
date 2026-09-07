@@ -4,12 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { BadgeCheck, UserPlus, Users } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/surfaces";
 import { absolutizeMedia } from "@/lib/api/client";
+import { notifyInvite } from "@/lib/invite-toast";
 import { inviteMember } from "@/lib/api/members";
 import { useMembers } from "@/hooks/use-workspace";
 import { useQuery } from "@tanstack/react-query";
@@ -35,7 +35,8 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
   const invite = useMutation({
     mutationFn: () => inviteMember(email.trim(), inviteRole),
     onSuccess: (r) => {
-      toast.success(r.message || `Invitation sent to ${r.email}.`);
+      const { serverUrl, connection } = useConnectionStore.getState();
+      notifyInvite(r, { serverUrl, appOrigin: window.location.origin, companyName: connection?.companyName });
       setEmail("");
       setInviting(false);
       refetch();

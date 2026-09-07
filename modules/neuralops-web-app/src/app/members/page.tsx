@@ -15,6 +15,7 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { FullPageLoader } from "@/components/ui/full-page-loader";
 import { absolutizeMedia } from "@/lib/api/client";
+import { notifyInvite } from "@/lib/invite-toast";
 import { inviteMember, removeMember, type Member } from "@/lib/api/members";
 import { useMembers } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
@@ -223,7 +224,8 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
   const invite = useMutation({
     mutationFn: () => inviteMember(email.trim(), role),
     onSuccess: (r) => {
-      toast.success(r.message || `Invitation sent to ${r.email}.`);
+      const { serverUrl, connection } = useConnectionStore.getState();
+      notifyInvite(r, { serverUrl, appOrigin: window.location.origin, companyName: connection?.companyName });
       close();
       onDone();
     },
@@ -247,7 +249,7 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
       footer={
         <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="mi-form" size="sm" variant="primary" loading={invite.isPending}>Send invite</Button>
+          <Button type="submit" form="mi-form" size="sm" variant="primary" loading={invite.isPending}>Invite</Button>
         </div>
       }
     >
