@@ -110,7 +110,7 @@ Type **`/invite`** followed by either an `@PersonaName` or an email address:
 /invite someone@example.com project   → invites them to the whole project
 ```
 
-New users get an emailed invite link; existing workspace users are added directly.
+Existing workspace users are added directly. A new email is pre-authorised (no email is sent): tell them to create a NeuralOps account with that exact address, add this server in the app and connect — the invite is accepted automatically.
 
 ### Create a project, channel, and topic
 

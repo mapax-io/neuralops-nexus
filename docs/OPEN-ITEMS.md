@@ -436,3 +436,50 @@ pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-0
 capability template from nucleus instead of copying it; restore the compose commands;
 decide whether to backfill existing projects.
 
+---
+
+## Supabase identity: what nucleus uses, what is dead, and what the web app covers
+
+**Where:** `modules/nexus-nucleus/authn/{supabase,auth,api,services}.py`, `core/settings.py`,
+`workspace/services.py` (`invite_to_system`), `nucleus/models/extended.py`.
+
+Audit of the identity surface against the web app (2026-09-07). What nucleus actually
+relies on from Supabase is small and the web app covers all of it: JWT verification via
+the project's JWKS (ES256/RS256, audience `authenticated`, `sub` + `email` claims
+required), `/auth/verify/` on connect (creates the local user, auto-accepts a pending
+invitation *by email*, assigns display name and avatar), `/auth/config/`,
+`/auth/change-username/`, and the user-metadata mirror of saved servers. Sign-up with
+email confirmation, sign-in, password reset, password change, GitHub OAuth, session
+refresh and sign-out cleanup are all handled client-side with the Supabase SDK.
+
+Gaps and dead code found on the backend:
+
+- **No invitation email is ever sent.** `authn/supabase.py:invite_user_by_email` (the
+  Supabase admin invite) has no caller, so `SUPABASE_SERVICE_KEY` is unused. An invite is
+  an email pre-authorisation accepted at first connect. The `Invitation.token_hash` and
+  the public `/auth/invite-preview/?token=` endpoint therefore serve nothing (the token is
+  never handed to anyone) and `readme.md` said "New users get an emailed invite link"
+  (fixed in this PR). The web app now tells the inviter exactly that and hands them the
+  steps to pass on. `InviteResponse` gains `is_new_user` (the service returned it already).
+- **Identity is keyed by email, not by the Supabase user id.** `auth_verify` and
+  `SupabaseBearer` look the user up by the token's `email`; the `sub` claim is not stored
+  (`LocalSession.provider_session_id` exists but nothing writes `LocalSession`). Changing
+  the account email in Supabase would create a second nucleus user, so the web app
+  deliberately offers no email change. Storing `sub` and matching on it would remove that
+  limitation.
+- **OAuth accounts without an email claim are rejected** ("Missing email") — GitHub users
+  with a private, unverified email. The web app now explains this on the launcher
+  instead of showing a 401 per server.
+- **`create_owner` uses the password grant only**, so an owner whose account is
+  GitHub-only cannot run it.
+- **Dead settings:** `SUPABASE_DEVICE_REQUEST_URL` / `SUPABASE_DEVICE_POLL_URL` (the
+  removed device flow), `POST /auth/signin` (the web app uses `/auth/verify/`).
+- **One identity project.** `SUPABASE_URL` is hard-coded in settings and baked into the
+  image; a self-hosted frontend must point at the same project (the web app's
+  `.env.example` now says so).
+
+**Decision needed:** delete the dead invite-email path and token endpoint or wire them
+up for real (a real email would need `SUPABASE_SERVICE_KEY` per deployment); store `sub`
+and key identity on it; make `SUPABASE_URL` configurable if self-hosted identity is ever
+a goal.
+
