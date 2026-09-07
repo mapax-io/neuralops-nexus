@@ -44,12 +44,16 @@ function connSignature(
 // The four transports the server accepts. URL transports are "remote"
 // servers; STDIO is a "local" one NeuralOps launches from a command. The
 // transport is fixed after creation (the server's PATCH has no such field).
+// The secure forms are not separate transports: TLS is the URL's scheme
+// (https://, wss://), so each transport names the schemes it takes and the
+// address field shows an example of the right shape.
 const TRANSPORTS = [
-  { value: "http", label: "HTTP" },
-  { value: "sse", label: "SSE" },
-  { value: "websocket", label: "WebSocket" },
-  { value: "stdio", label: "STDIO — a local command" },
+  { value: "http", label: "HTTP — a streamable HTTP endpoint", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/mcp", hint: "The server's streamable-HTTP endpoint, http:// or https:// — many servers serve it at /mcp." },
+  { value: "sse", label: "SSE — a server-sent events endpoint", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/sse", hint: "The server's SSE endpoint, http:// or https:// — many servers serve it at /sse." },
+  { value: "websocket", label: "WebSocket", schemes: ["ws:", "wss:"], placeholder: "wss://tools.example.com/mcp", hint: "The server's WebSocket endpoint, ws:// or wss://." },
+  { value: "stdio", label: "STDIO — a local command", schemes: [], placeholder: "npx -y @modelcontextprotocol/server-filesystem /data", hint: "The program and its arguments, as you would type them in a shell. It runs on the NeuralOps server; its tools are read over stdin/stdout." },
 ] as const;
+const transportOf = (value: string) => TRANSPORTS.find((t) => t.value === value) ?? TRANSPORTS[0];
 const isStdio = (transport: string) => transport === "stdio";
 // server_type: where the server runs. remote/local follow the transport by
 // default; docker, kubernetes and hosted are explicit choices with their own
@@ -440,7 +444,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   };
   // URL transports need a URL; STDIO needs the command instead — the same
   // either/or the server enforces with its check constraints.
-  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
+  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL", schemes: transportOf(transport).schemes }));
 
   const internal = kind === "internal";
   const serverType = runtime ?? runtimeFor(transport);
@@ -651,6 +655,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
+            <p className="mt-1.5 text-[12px] text-ink2">HTTPS and WSS aren&apos;t separate choices — the scheme goes in the address.</p>
           </div>
           {stdio ? (
             <div>
@@ -658,14 +663,14 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
               <Input
                 id="mcp-command"
                 required
-                placeholder="npx -y @modelcontextprotocol/server-filesystem /data"
+                placeholder={transportOf("stdio").placeholder}
                 value={command}
                 aria-invalid={!!form.error("url")}
                 onChange={(e) => setCommand(e.target.value)}
                 onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Runs on the NeuralOps server; its tools are read over stdin/stdout.</p>}
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf("stdio").hint}</p>}
             </div>
           ) : (
             <div>
@@ -674,14 +679,14 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
                 id="mcp-url"
                 required
                 inputMode="url"
-                placeholder="http://tools.internal:8080/mcp"
+                placeholder={transportOf(transport).placeholder}
                 value={url}
                 aria-invalid={!!form.error("url")}
                 onChange={(e) => setUrl(e.target.value)}
                 onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              <FieldError>{form.error("url")}</FieldError>
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf(transport).hint}</p>}
             </div>
           )}
         </div>
@@ -746,7 +751,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       return "This project already has an MCP server with this name.";
     return null;
   };
-  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
+  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL", schemes: transportOf(server.transport).schemes }));
   const form = useFormErrors({
     name: [name, validateName(name)],
     caps: server.is_internal && Object.keys(caps).length === 0 ? "Turn on at least one capability." : null,
@@ -910,13 +915,14 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
               <Input
                 id="mce-command"
                 required
+                placeholder={transportOf("stdio").placeholder}
                 value={command}
                 aria-invalid={!!form.error("url")}
                 onChange={(e) => setCommand(e.target.value)}
                 onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              <FieldError>{form.error("url")}</FieldError>
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf("stdio").hint}</p>}
             </div>
           ) : (
             <div>
@@ -925,13 +931,14 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
                 id="mce-url"
                 required
                 inputMode="url"
+                placeholder={transportOf(server.transport).placeholder}
                 value={url}
                 aria-invalid={!!form.error("url")}
                 onChange={(e) => setUrl(e.target.value)}
                 onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              <FieldError>{form.error("url")}</FieldError>
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf(server.transport).hint}</p>}
             </div>
           )}
         </div>

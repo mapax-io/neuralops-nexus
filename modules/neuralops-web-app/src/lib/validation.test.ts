@@ -33,6 +33,13 @@ describe("validateMentionName", () => {
 });
 
 describe("validateUrl", () => {
+  it("accepts the schemes the caller names, and says which ones it wanted", () => {
+    expect(validateUrl("wss://tools.example.com/mcp", { schemes: ["ws:", "wss:"] })).toBeNull();
+    expect(validateUrl("https://tools.example.com/mcp", { schemes: ["ws:", "wss:"] })).toBe("The URL must start with ws:// or wss://.");
+    expect(validateUrl("wss://tools.example.com/mcp")).toBe("The URL must start with http:// or https://.");
+    expect(validateUrl("tools.example.com", { schemes: ["ws:", "wss:"] })).toBe("Enter a valid URL (including ws:// or wss://).");
+  });
+
   it("accepts http(s) URLs", () => {
     expect(validateUrl("https://example.com")).toBeNull();
     expect(validateUrl("http://localhost:8080/mcp")).toBeNull();

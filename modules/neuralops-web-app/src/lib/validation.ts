@@ -49,14 +49,17 @@ export function validateRequired(value: string, label: string): string | null {
   return value.trim() ? null : `Enter ${label}.`;
 }
 
-// http(s) URLs (MCP endpoints, context web sources, model api_base, links).
-export function validateUrl(value: string, opts: { label?: string; required?: boolean } = {}): string | null {
-  const { label = "a URL", required = true } = opts;
+// URLs (MCP endpoints, context web sources, model api_base, links). http(s)
+// by default; a caller that speaks another protocol names its schemes
+// (a WebSocket MCP server takes ws:// or wss://).
+export function validateUrl(value: string, opts: { label?: string; required?: boolean; schemes?: readonly string[] } = {}): string | null {
+  const { label = "a URL", required = true, schemes = ["http:", "https:"] } = opts;
   const t = value.trim();
   if (!t) return required ? `Enter ${label}.` : null;
+  const list = schemes.map((s) => `${s}//`).join(" or ");
   let u: URL;
-  try { u = new URL(t); } catch { return "Enter a valid URL (including http:// or https://)."; }
-  if (u.protocol !== "http:" && u.protocol !== "https:") return "The URL must start with http:// or https://.";
+  try { u = new URL(t); } catch { return `Enter a valid URL (including ${list}).`; }
+  if (!schemes.includes(u.protocol)) return `The URL must start with ${list}.`;
   return null;
 }
 

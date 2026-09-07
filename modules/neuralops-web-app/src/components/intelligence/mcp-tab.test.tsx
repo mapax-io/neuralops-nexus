@@ -573,3 +573,39 @@ describe("McpTab — Add server checks the connection before anything is saved",
     expect(patched).toBeNull();
   });
 });
+
+describe("McpTab — the address field explains the chosen transport", () => {
+  it("placeholder and hint follow the transport; WebSocket takes wss://, HTTP does not", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    const transport = within(dialog).getByLabelText("Transport");
+    expect(within(dialog).getByLabelText("URL")).toHaveAttribute("placeholder", "https://tools.example.com/mcp");
+    expect(within(dialog).getByText(/https and wss aren't separate choices/i)).toBeInTheDocument();
+    fireEvent.change(transport, { target: { value: "websocket" } });
+    expect(within(dialog).getByLabelText("URL")).toHaveAttribute("placeholder", "wss://tools.example.com/mcp");
+    expect(within(dialog).getByText(/ws:\/\/ or wss:\/\//)).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("URL"), { target: { value: "https://tools.example.com/mcp" } });
+    fireEvent.blur(within(dialog).getByLabelText("URL"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The URL must start with ws:// or wss://.");
+    fireEvent.change(within(dialog).getByLabelText("URL"), { target: { value: "wss://tools.example.com/mcp" } });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.change(transport, { target: { value: "sse" } });
+    expect(within(dialog).getByLabelText("URL")).toHaveAttribute("placeholder", "https://tools.example.com/sse");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The URL must start with http:// or https://."); // the value no longer fits
+    fireEvent.change(transport, { target: { value: "stdio" } });
+    expect(within(dialog).getByLabelText("Command")).toHaveAttribute("placeholder", "npx -y @modelcontextprotocol/server-filesystem /data");
+    // The address was judged already, so the empty command speaks up instead of showing its hint.
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter the command.");
+  });
+
+  it("a fresh STDIO pick shows how to write the command", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Transport"), { target: { value: "stdio" } });
+    expect(within(dialog).getByText(/as you would type them in a shell/i)).toBeInTheDocument();
+  });
+});
