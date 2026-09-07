@@ -15,9 +15,16 @@ export function notifyInvite(
     toast.success(r.message || `${r.email} added to this server.`);
     return;
   }
+  if (r.email_sent) {
+    toast.success(`Invitation email sent to ${r.email}.`, {
+      description: "They set a password from the email, find this server on their launcher, and connect.",
+      duration: 8_000,
+    });
+    return;
+  }
   const steps = inviteInstructions({ email: r.email, appOrigin: ctx.appOrigin, serverUrl: ctx.serverUrl, companyName: ctx.companyName, expiresAt: r.expires_at });
-  toast.success(`${r.email} is pre-authorised — no email goes out, so pass the steps on.`, {
-    description: "They create an account with that exact address, add this server, and connect.",
+  toast.success(`${r.email} is pre-authorised — no email went out, so pass the steps on.`, {
+    description: r.email_note ?? "They create an account with that exact address, add this server, and connect.",
     duration: 30_000,
     action: {
       label: "Copy steps",

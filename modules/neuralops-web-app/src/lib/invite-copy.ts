@@ -7,6 +7,8 @@
 export interface InviteOutcome {
   is_new_user?: boolean;
   expires_at?: string | null;
+  email_sent?: boolean;      // the server emailed the invitee (it holds a service key)
+  email_note?: string | null; // why it did not, when it did not
 }
 
 // A brand-new person: the server created a pending Invitation (and only that
