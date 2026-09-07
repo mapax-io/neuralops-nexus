@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleStop, Cpu, Plug2, Search, UserRound, X } from "lucide-react";
 import { TeamDialog } from "@/components/shell/team-dialog";
 import type { ChatTab } from "@/components/chat/chat-tabs";
 import { ChatHeaderBar } from "@/components/chat/chat-header-bar";
@@ -221,6 +221,8 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
           slashDialog === "models" ? "AI models" :
           slashDialog === "mcp" ? "MCP servers" : "Personas"
         }
+        icon={slashDialog === "models" ? <Cpu size={17} strokeWidth={2} /> : slashDialog === "mcp" ? <Plug2 size={17} strokeWidth={2} /> : <UserRound size={17} strokeWidth={2} />}
+        tone="info"
       >
         {/* Slash-created entities default to THIS chat's project — the narrowest
             scope the project-ownership model allows (personas/mcp are
@@ -242,6 +244,7 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
         title="End this session?"
         body={<p>Plain messages will stop routing to the persona automatically. You can open a new session anytime by mentioning them again.</p>}
         confirmLabel="End session"
+        confirmIcon={<CircleStop size={14} strokeWidth={2} />}
         tone="neutral"
       />
       <TeamDialog pid={pid} projectName={project?.name ?? "This project"} canManage={isCompanyAdmin(role)} open={membersOpen} onClose={() => setMembersOpen(false)} />

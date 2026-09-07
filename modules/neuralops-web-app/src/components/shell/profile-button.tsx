@@ -127,6 +127,7 @@ export function ProfileButton({ size = 9 }: { size?: 8 | 9 }) {
         title="Sign out?"
         body={<p>You&apos;ll be signed out of <b className="text-ink">{email}</b> on this device. Your saved servers stay with your account — they&apos;ll be back when you sign in again.</p>}
         confirmLabel="Sign out"
+        confirmIcon={<LogOut size={14} strokeWidth={2} />}
         tone="neutral"
       />
     </div>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { BadgeCheck, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { BadgeCheck, Search, Trash2, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
@@ -246,10 +246,11 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
       title="Invite a teammate"
       description="They sign in with this email and land on the server as a member the moment they connect."
       icon={<UserPlus size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="mi-form" size="sm" variant="primary" loading={invite.isPending}>Invite</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mi-form" size="sm" variant="primary" loading={invite.isPending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
         </div>
       }
     >

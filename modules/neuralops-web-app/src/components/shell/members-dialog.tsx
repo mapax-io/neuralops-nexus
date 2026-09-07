@@ -66,6 +66,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
       title="Members"
       description="Everyone on this server. Invited people join with the email they sign in with."
       icon={<Users size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex items-center justify-between gap-2">
           {canInvite && !inviting ? (
@@ -139,7 +140,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
           <FieldError>{err}</FieldError>
           <div className="flex justify-end gap-2">
             <Button type="button" size="sm" onClick={() => setInviting(false)}>Cancel</Button>
-            <Button type="submit" size="sm" variant="primary" loading={invite.isPending}>Send invite</Button>
+            <Button type="submit" size="sm" variant="primary" loading={invite.isPending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
           </div>
         </form>
       )}

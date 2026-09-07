@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, ChevronDown, FileText, Globe, Layers, Link2, Minus, MessagesSquare, Paperclip, Trash2 } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, FileText, Globe, Layers, Link2, Minus, MessagesSquare, Paperclip, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
@@ -452,7 +452,7 @@ function AddLinkForm({ projectId, topicId, onDone }: { projectId: string; topicI
       <FieldError>{err}</FieldError>
       <div className="flex gap-2">
         <Button type="button" size="sm" onClick={onDone}>Cancel</Button>
-        <Button type="submit" size="sm" variant="primary" loading={add.isPending}>Add to context</Button>
+        <Button type="submit" size="sm" variant="primary" loading={add.isPending}><Plus size={14} strokeWidth={2} /> Add to context</Button>
       </div>
     </form>
   );

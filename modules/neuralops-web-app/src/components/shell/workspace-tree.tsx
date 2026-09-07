@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Users,
+  Archive,
   Boxes,
   Brain,
   ChevronRight,
@@ -13,6 +14,7 @@ import { Users,
   Plus,
   Rocket,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { absolutizeMedia } from "@/lib/api/client";
@@ -200,6 +202,7 @@ function ProjectNode({ project, activeChannelId, role }: { project: Project; act
           </p>
         }
         confirmLabel="Archive project"
+        confirmIcon={<Archive size={14} strokeWidth={2} />}
         loading={archive.isPending}
       />
       <TeamDialog pid={project.id} projectName={project.name} open={managingTeam} onClose={() => setManagingTeam(false)} />
@@ -276,6 +279,7 @@ function ChannelNode({ projectId, channel, isActive, canManage }: { projectId: s
           </p>
         }
         confirmLabel="Archive channel"
+        confirmIcon={<Archive size={14} strokeWidth={2} />}
         loading={archiveChannel.isPending}
       />
     </li>
@@ -332,10 +336,11 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
       title="New project"
       description="A project groups channels, chats, and the AI personas that work in them."
       icon={<FolderPlus size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="wp-form" size="sm" variant="primary" loading={create.isPending}>Create project</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="wp-form" size="sm" variant="primary" loading={create.isPending}><FolderPlus size={14} strokeWidth={2} /> Create project</Button>
         </div>
       }
     >
@@ -423,10 +428,11 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
       title={`New channel in ${projectName}`}
       description="Channels split a project by subject — like #engineering or #marketing. Chats live inside them."
       icon={<Hash size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="wc-form" size="sm" variant="primary" loading={create.isPending}>Create channel</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="wc-form" size="sm" variant="primary" loading={create.isPending}><Hash size={14} strokeWidth={2} /> Create channel</Button>
         </div>
       }
     >

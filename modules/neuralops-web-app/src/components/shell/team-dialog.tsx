@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Plus, Trash2, UserPlus, Users } from "lucide-react";
+import { Bot, Plus, Trash2, Unlink, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
@@ -89,7 +89,7 @@ export function TeamDialog({ pid, projectName, open, onClose, canManage = true }
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} size="lg" icon={<Users size={18} strokeWidth={2} />}
+      <Dialog open={open} onClose={onClose} size="lg" icon={<Users size={18} strokeWidth={2} />} tone="info"
         title={`${projectName} · Team`}
         description="Who works in this project — teammates and the personas they can @mention here.">
         <div className="flex flex-col gap-4">
@@ -207,6 +207,7 @@ export function TeamDialog({ pid, projectName, open, onClose, canManage = true }
           ? <p><b className="text-ink">@{removing?.name}</b> will be detached from <b className="text-ink">{projectName}</b> — it won&apos;t be mentionable here. The persona itself stays, and you can add it back anytime.</p>
           : <p><b className="text-ink">{removing?.name}</b> loses access to <b className="text-ink">{projectName}</b>. They stay on the server and can be added back anytime.</p>}
         confirmLabel={removing?.member_type === "persona" ? "Detach" : "Remove"}
+        confirmIcon={removing?.member_type === "persona" ? <Unlink size={14} strokeWidth={2} /> : undefined}
         loading={remove.isPending}
       />
     </>

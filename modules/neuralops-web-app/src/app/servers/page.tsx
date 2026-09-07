@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LogOut, ServerCog } from "lucide-react";
+import { LogOut, Plus, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 import { validateName as vName } from "@/lib/validation";
 import { Constellation } from "@/components/brand/constellation";
@@ -246,6 +246,7 @@ export default function ServersPage() {
         title="Sign out?"
         body={<p>You&apos;ll be signed out on this device. Your saved servers stay with your account — they&apos;ll be back when you sign in again.</p>}
         confirmLabel="Sign out"
+        confirmIcon={<LogOut size={14} strokeWidth={2} />}
         tone="neutral"
       />
     </div>
@@ -312,7 +313,8 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
       title="Add a server"
       description="Point the app at a self-hosted NeuralOps deployment — yours, your team's, or a client's."
       icon={<ServerCog size={17} strokeWidth={2} />}
-      footer={<Button type="submit" form="sv-form" variant="primary" className="w-full">Add server</Button>}
+      tone="accent"
+      footer={<Button type="submit" form="sv-form" variant="primary" className="w-full"><Plus size={14} strokeWidth={2} /> Add server</Button>}
     >
       <form id="sv-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
