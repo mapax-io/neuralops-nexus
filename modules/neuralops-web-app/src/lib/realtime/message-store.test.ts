@@ -137,3 +137,29 @@ describe("message store", () => {
     expect(s.messages.e1).toMatchObject({ isError: true, isStreaming: false });
   });
 });
+
+// The AI worker's single-persona path (upstream #101) stopped sending
+// output_type on message_done; nucleus fills "text" while render_as still
+// carries the marker-derived hint. Rendering keys on render_as, so a chart
+// must still render as html with output_type "text" beside it.
+describe("message_done after upstream #101 (render_as without a matching output_type)", () => {
+  it("keeps the html render hint when output_type says text", () => {
+    let s = initialChatState();
+    s = ev(s, { type: "message_start", id: "c1", sequence: 3 });
+    s = ev(s, { type: "message_delta", id: "c1", delta: "<<<HTML>>>" });
+    s = ev(s, { type: "message_done", id: "c1", content: "<html><body>chart</body></html>", output_type: "text", render_as: "html" });
+    expect(s.messages.c1).toMatchObject({ renderAs: "html", outputType: "text", isStreaming: false, content: "<html><body>chart</body></html>" });
+  });
+
+  it("replays history saved with that shape the same way", () => {
+    const s = applyHistory(initialChatState(), [
+      { ...wireMsg("h1", 1), sender_type: "persona", content: "<html><body>x</body></html>", render_as: "html", output_type: "text" } as never,
+    ]);
+    expect(s.messages.h1).toMatchObject({ renderAs: "html", outputType: "text" });
+  });
+
+  it("ignores the worker's runner-internal event types if nucleus ever relays them", () => {
+    expect(parseEvent({ type: "tool_call_start", id: "c1", tool_call: { name: "web_search", args: { q: "x" } } })).toBeNull();
+    expect(parseEvent({ type: "persist_internal_state", id: "c1", metadata: { internal_model_state: [] } })).toBeNull();
+  });
+});
