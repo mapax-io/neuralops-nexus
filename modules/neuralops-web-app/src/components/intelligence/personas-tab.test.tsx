@@ -569,3 +569,15 @@ describe("EditPersonaDialog — mutable backing", () => {
     expect(patchBody).toBeNull();
   });
 });
+
+describe("PersonaCard — the preview reads as prose", () => {
+  it("a persona without a description shows its role's first sentences, not the template's front matter", async () => {
+    personas = [{ ...LAYLA, description: null, prompt: { system_prompt: "---\npersona_name: Layla\nrole_type: execution\nversion: 1.1.0\n---\n\n# ROLE & IDENTITY\nYou are the Lead Developer. You write the code.", output_type: "text" } }];
+    renderTab();
+    const card = (await screen.findByRole("button", { name: "Edit persona Layla" })).closest("article, li, div")!;
+    expect(screen.getByText(/you are the lead developer\. you write the code\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/persona_name/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ROLE & IDENTITY/)).not.toBeInTheDocument();
+    expect(card).toBeTruthy();
+  });
+});

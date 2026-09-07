@@ -10,7 +10,7 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { absolutizeMedia } from "@/lib/api/client";
 import { isMentionableName } from "@/lib/composer/directives";
 import { validateNumber } from "@/lib/validation";
-import { fillPersonaName, hasPersonaNameToken } from "@/lib/persona-template";
+import { fillPersonaName, hasPersonaNameToken, rolePreview } from "@/lib/persona-template";
 import {
   useCreatePersona,
   useDeletePersona,
@@ -152,7 +152,7 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
                     {needsReconnect && <Chip tone="warn">reconnect needed</Chip>}
                   </>
                 }
-                body={p.description ?? (p.prompt ? fillPersonaName(p.prompt.system_prompt, p.name) : undefined)}
+                body={p.description?.trim() || (p.prompt ? rolePreview(fillPersonaName(p.prompt.system_prompt, p.name)) : undefined)}
                 meta={
                   <>
                     <span>answers as {p.prompt?.output_type ?? "text"}</span>
