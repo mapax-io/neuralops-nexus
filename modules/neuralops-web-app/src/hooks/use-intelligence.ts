@@ -103,7 +103,32 @@ export function useDeleteModelConfig() {
   });
 }
 
+export function useCreateMcpServer(onDone?: (s: intel.MCPServer) => void) {
+  const inv = useInvalidate("mcp-servers");
+  return useMutation({
+    mutationFn: intel.createMcpServer,
+    onSuccess: (s) => {
+      toast.success(`MCP server "${s.name}" added.`);
+      inv();
+      onDone?.(s);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+}
 
+export function usePatchMcpServer(onDone?: () => void) {
+  // Persona cards embed the server's name and auth state.
+  const inv = useInvalidate("mcp-servers", "personas");
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: intel.MCPServerPatch }) => intel.patchMcpServer(id, payload),
+    onSuccess: (s) => {
+      toast.success(`MCP server "${s.name}" updated.`);
+      inv();
+      onDone?.();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+}
 
 export function useDeleteMcpServer() {
   const inv = useInvalidate("mcp-servers", "personas");

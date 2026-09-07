@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { useUiStore } from "@/stores/ui.store";
 import { Check, CircleCheck, CircleX, Link2, Lock, Pencil, Plug2, Plus, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,16 +8,15 @@ import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateRequired, validateUrl as vUrl } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
-import { useDeleteMcpServer, useMcpOAuthConnect, useMcpServers } from "@/hooks/use-intelligence";
+import { useCreateMcpServer, useDeleteMcpServer, useMcpOAuthConnect, useMcpServers, usePatchMcpServer } from "@/hooks/use-intelligence";
 import { isCompanyAdmin } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useProjects } from "@/hooks/use-workspace";
-import type { MCPServer, MCPServerCreate, MCPServerPatch } from "@/lib/api/intelligence";
+import type { MCPServer } from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { CardGrid, Chip, EntityCard, ListState, ProjectSelect, TabShell, Toolbar } from "./shared";
 import { McpAuthSection, draftFromConfig, draftToPayload, emptyOAuthDraft, validateOAuth, type OAuthDraft } from "./mcp-auth-section";
 import { CapabilityEditor } from "./capability-editor";
-import { ConnectionCheckPanel, useMcpConnectionFlow, type SaveOutcome } from "./mcp-connection-check";
 import { capabilityLabels, defaultCapabilityConfig, formatCapabilityConfig, type CapabilityConfig } from "@/lib/mcp-capabilities";
 
 // A server's connection identity: same URL + same auth config = the same
@@ -467,21 +464,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     oauth: [oauth.client_id || oauth.authorize_endpoint || oauth.token_endpoint || oauth.client_secret, !internal && authType === "oauth2" ? validateOAuth(oauth, { isEdit: false, hasStoredSecret: false }) : null],
   });
 
-  const qc = useQueryClient();
-  const serverUrl = useConnectionStore((s) => s.serverUrl);
-  const flow = useMcpConnectionFlow(serverUrl);
-  // Set once the row exists with an OAuth sign-in still pending: later
-  // submits patch it instead of creating a second one, and closing leaves
-  // it saved.
-  const [createdId, setCreatedId] = useState<string | null>(null);
-  const invalidate = () => Promise.all([
-    qc.invalidateQueries({ queryKey: ["mcp-servers", serverUrl] }),
-    qc.invalidateQueries({ queryKey: ["personas", serverUrl] }),
-  ]);
-
   const reset = () => {
-    setCreatedId(null);
-    flow.reset();
     setProjectId(defaultProjectId ?? "");
     setKind("external");
     setCaps(defaultCapabilityConfig());
@@ -508,6 +491,10 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     reset();
     onClose();
   };
+  const create = useCreateMcpServer((s) => {
+    onCreated?.(s);
+    close();
+  });
   const projName = allProjects?.find((p) => p.id === projectId)?.name;
 
   const submit = (e: React.FormEvent) => {
@@ -515,19 +502,14 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     // The button is gated on form.invalid; a submit that slips through
     // reveals every message instead of posting.
     if (form.invalid) return form.touchAll();
-    if (flow.busy) return;
-    void save(false);
-  };
-
-  // Everything the row needs, as the create API takes it.
-  const buildPayload = (): MCPServerCreate => {
     if (internal) {
       // Only the fields an internal row has — the server clears the rest and
       // forces auth_type to "none" anyway.
-      return { project_id: projectId, name: name.trim(), description: description.trim() || undefined, is_internal: true, capability_config: caps };
+      create.mutate({ project_id: projectId, name: name.trim(), description: description.trim() || undefined, is_internal: true, capability_config: caps });
+      return;
     }
     const cfg = parseConfig(config);
-    return {
+    create.mutate({
       project_id: projectId, name: name.trim(),
       transport, server_type: serverType,
       ...(stdio ? { command: command.trim() } : { url: url.trim() }),
@@ -540,53 +522,8 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       ...(authType === "oauth2" ? draftToPayload(oauth)
         : authType === "static_secrets" && oauth.client_secret.trim() ? { client_secret: oauth.client_secret.trim() }
         : {}),
-    };
-  };
-  // A row created earlier in this dialog is patched with the same fields
-  // minus the ones fixed at creation.
-  const toPatch = (p: MCPServerCreate): MCPServerPatch => ({
-    name: p.name, description: p.description, url: p.url, command: p.command,
-    docker_image: p.docker_image, docker_command: p.docker_command, kubernetes_service: p.kubernetes_service,
-    timeout_seconds: p.timeout_seconds, max_retries: p.max_retries, config: p.config, embed_output: p.embed_output,
-    auth_type: p.auth_type, oauth_config: p.oauth_config, client_secret: p.client_secret, capability_config: p.capability_config,
-  });
-  const secretForCheck = authType === "static_secrets" && oauth.client_secret.trim() ? { client_secret: oauth.client_secret.trim() } : {};
-  const done = (server: MCPServer, outcome: SaveOutcome) => {
-    const tools = outcome.tools === 1 ? "1 tool" : `${outcome.tools} tools`;
-    toast.success(
-      internal ? `"${server.name}" added.`
-        : outcome.connected ? `"${server.name}" added and connected — ${tools} available.`
-        : outcome.checked ? `"${server.name}" added — ${tools} available.`
-        : `"${server.name}" added without a connection check.`,
-    );
-    void invalidate();
-    onCreated?.(server);
-    close();
-  };
-  // Check the connection the way a run would, then save; an OAuth server
-  // then opens its sign-in. The dialog stays open until every step passed.
-  const save = (skipCheck: boolean) => {
-    const payload = buildPayload();
-    return flow.run({
-      serverId: createdId ?? undefined,
-      probe: {
-        project_id: projectId, transport,
-        url: stdio ? undefined : url.trim(), command: stdio ? command.trim() : undefined,
-        config: parseConfig(config).value, timeout_seconds: Number(timeout), auth_type: authType,
-        ...secretForCheck,
-        ...(authType === "oauth2" ? { oauth_config: draftToPayload(oauth).oauth_config } : {}),
-      },
-      payload: createdId ? toPatch(payload) : payload,
-      oauth: !internal && authType === "oauth2",
-      skipCheck: internal || skipCheck,
-      onCreated: (s) => { setCreatedId(s.id); void invalidate(); },
-      onSaved: done,
     });
   };
-  const signsIn = !internal && authType === "oauth2";
-  const submitLabel = internal ? "Add capabilities"
-    : createdId ? (signsIn ? "Save & sign in" : "Save & check again")
-    : signsIn ? "Add & sign in" : "Add server";
 
   return (
     <Dialog
@@ -600,12 +537,9 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
       icon={internal ? <Sparkles size={17} strokeWidth={2} /> : <Plug2 size={17} strokeWidth={2} />}
       tone="accent"
       footer={
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="min-w-0 flex-1 basis-full sm:basis-0">
-            <ConnectionCheckPanel status={flow.status} target={stdio ? command.trim() : url.trim()} onSaveAnyway={() => void save(true)} onSignIn={flow.retrySignIn} />
-          </div>
-          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> {createdId ? "Done for now" : "Cancel"}</Button>
-          <Button type="submit" form="mcp-form" size="sm" variant="primary" disabled={form.invalid} loading={flow.busy}><Plus size={14} strokeWidth={2} /> {submitLabel}</Button>
+        <div className="flex justify-end gap-2">
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mcp-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending}><Plus size={14} strokeWidth={2} /> {internal ? "Add capabilities" : "Add server"}</Button>
         </div>
       }
     >
@@ -712,6 +646,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
               <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
               <FieldError>{form.error("oauth")}</FieldError>
             </div>
+            {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
         </DialogSection>
           </>
         )}
@@ -737,11 +672,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>(server.auth_type);
   const stdio = isStdio(server.transport);
   const [oauth, setOauth] = useState<OAuthDraft>(() => draftFromConfig(server.oauth_config));
-  const qc = useQueryClient();
-  const serverUrl = useConnectionStore((s) => s.serverUrl);
-  const flow = useMcpConnectionFlow(serverUrl);
-  // The change set of the submit in progress, kept for "Save without checking".
-  const [pending, setPending] = useState<MCPServerPatch | null>(null);
+  const patch = usePatchMcpServer(onClose);
 
   const validateName = (v: string) => {
     const shared = vName(v, { label: "server name" });
@@ -777,7 +708,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
         ...(formatCapabilityConfig(caps) !== formatCapabilityConfig(server.capability_config) ? { capability_config: caps } : {}),
       };
       if (Object.keys(payload).length === 0) return onClose();
-      void save(payload, true);
+      patch.mutate({ id: server.id, payload });
       return;
     }
     const cfg = parseConfig(config);
@@ -810,44 +741,8 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       ...authPayload,
     };
     if (Object.keys(payload).length === 0) return onClose(); // nothing changed
-    setPending(payload);
-    void save(payload, false);
+    patch.mutate({ id: server.id, payload });
   };
-
-  // Check the connection as changed (stored secrets fill in what is not
-  // re-typed), then patch; an OAuth server not yet signed in opens its
-  // sign-in after the save.
-  const save = (payload: MCPServerPatch, skipCheck: boolean) => {
-    if (flow.busy) return;
-    return flow.run({
-      serverId: server.id,
-      probe: {
-        server_id: server.id, transport: server.transport,
-        url: stdio ? undefined : url.trim(), command: stdio ? command.trim() : undefined,
-        config: parseConfig(config).value, timeout_seconds: Number(timeout), auth_type: authType,
-        ...(authType === "static_secrets" && oauth.client_secret.trim() ? { client_secret: oauth.client_secret.trim() } : {}),
-        ...(authType === "oauth2" ? { oauth_config: draftToPayload(oauth).oauth_config } : {}),
-      },
-      payload,
-      oauth: !server.is_internal && authType === "oauth2",
-      skipCheck: server.is_internal || skipCheck,
-      onSaved: (s, outcome) => {
-        const tools = outcome.tools === 1 ? "1 tool" : `${outcome.tools} tools`;
-        toast.success(
-          server.is_internal ? `"${s.name}" updated.`
-            : outcome.connected ? `"${s.name}" updated and connected — ${tools} available.`
-            : outcome.checked ? `"${s.name}" updated — ${tools} available.`
-            : `"${s.name}" updated without a connection check.`,
-        );
-        void Promise.all([
-          qc.invalidateQueries({ queryKey: ["mcp-servers", serverUrl] }),
-          qc.invalidateQueries({ queryKey: ["personas", serverUrl] }),
-        ]);
-        onClose();
-      },
-    });
-  };
-  const submitLabel = !server.is_internal && authType === "oauth2" && !server.oauth_connected ? "Save & sign in" : "Save changes";
 
   return (
     <Dialog
@@ -859,12 +754,9 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       icon={<Pencil size={17} strokeWidth={2} />}
       tone="info"
       footer={
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <div className="min-w-0 flex-1 basis-full sm:basis-0">
-            <ConnectionCheckPanel status={flow.status} target={stdio ? command.trim() : url.trim()} onSaveAnyway={() => { if (pending) void save(pending, true); }} onSignIn={flow.retrySignIn} />
-          </div>
+        <div className="flex justify-end gap-2">
           <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
-          <Button type="submit" form="mce-form" size="sm" variant="primary" disabled={form.invalid} loading={flow.busy}><Check size={14} strokeWidth={2} /> {submitLabel}</Button>
+          <Button type="submit" form="mce-form" size="sm" variant="primary" disabled={form.invalid} loading={patch.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
