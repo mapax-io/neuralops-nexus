@@ -37,8 +37,14 @@ import { CreateModelDialog } from "./models-tab";
 
 export function PersonasTab({ canManage, embedded, defaultProjectId }: { canManage: boolean; embedded?: boolean; defaultProjectId?: string }) {
   const { data: projects } = useProjects();
-  const [projectId, setProjectId] = useState<string | undefined>(undefined);
-  // When opened from a chat's slash command, default to THAT chat's project.
+  // Page mode shares the pick with the nav's setup guide (ui store); embedded
+  // mode (a chat's slash dialog) keeps a local pick so THAT chat's project is
+  // the default and switching there never leaks into the Intelligence page.
+  const [localPick, setLocalPick] = useState<string | undefined>(undefined);
+  const storePick = useUiStore((u) => u.intelProject);
+  const setStorePick = useUiStore((u) => u.setIntelProject);
+  const projectId = defaultProjectId ? localPick : storePick;
+  const setProjectId = defaultProjectId ? setLocalPick : setStorePick;
   const activeProject = projectId ?? defaultProjectId ?? projects?.[0]?.id;
   const { data: personas, isLoading, error, refetch } = usePersonas(activeProject);
   const [creating, setCreating] = useState(false);

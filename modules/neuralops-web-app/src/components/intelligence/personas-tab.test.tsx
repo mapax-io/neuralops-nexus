@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useUiStore } from "@/stores/ui.store";
 import type { MCPServer, ModelConfig, Persona } from "@/lib/api/intelligence";
 import { PersonasTab } from "./personas-tab";
 
@@ -82,6 +83,7 @@ async function openEdit(name: string) {
 const toolBox = (scope: HTMLElement, name: string) => within(scope).getByRole("checkbox", { name }) as HTMLInputElement;
 
 beforeEach(() => {
+  useUiStore.setState({ intelProject: undefined, intelCreate: false });
   servers = [mcp("s1", "Warehouse tools"), mcp("s2", "Jira", { auth_type: "oauth2" })];
   modelList = [...MODELS];
   personas = [];

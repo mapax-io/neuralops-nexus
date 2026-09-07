@@ -16,6 +16,11 @@ interface UiState {
   // intelligence tab opens its create dialog once, then clears this.
   intelCreate: boolean;
   setIntelCreate: (v: boolean) => void;
+  // The project the Intelligence area is looking at (personas are per project)
+  // — shared so the nav's setup guide and the personas tab agree. Not
+  // persisted: it is a view choice, not a preference.
+  intelProject?: string;
+  setIntelProject: (id: string | undefined) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -27,6 +32,8 @@ export const useUiStore = create<UiState>()(
       setIntelSection: (s) => set({ intelSection: s }),
       intelCreate: false,
       setIntelCreate: (v) => set({ intelCreate: v }),
+      intelProject: undefined,
+      setIntelProject: (id) => set({ intelProject: id }),
     }),
     { name: "nx-ui", partialize: (s) => ({ chatsPanelCollapsed: s.chatsPanelCollapsed }) },
   ),
