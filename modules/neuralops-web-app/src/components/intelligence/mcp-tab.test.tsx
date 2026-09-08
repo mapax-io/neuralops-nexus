@@ -82,6 +82,8 @@ beforeEach(() => {
       posted = (await request.json()) as Record<string, unknown>;
       return HttpResponse.json({ ...S1, id: "s2", ...posted });
     }),
+    // The server's own view of itself (its public address for OAuth redirects).
+    http.get(`${BASE}/api/v1/auth/config/`, () => HttpResponse.json({ server_url: BASE, server_version: "dev" })),
   );
 });
 
@@ -179,7 +181,7 @@ describe("McpTab — single-project ownership (spec §3.3)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Local files" }));
     await screen.findByText("Edit Local files");
     expect(screen.queryByLabelText("Transport")).not.toBeInTheDocument();
-    expect(screen.getByText(/stdio/i, { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("STDIO")).toBeInTheDocument();
     expect(screen.getByLabelText("Command")).toHaveValue("npx -y server-fs /data");
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
   });
@@ -408,5 +410,109 @@ describe("McpTab — where an external server runs (server_type)", () => {
     fireEvent.submit(document.getElementById("mce-form")!);
     await waitFor(() => expect(patched).not.toBeNull());
     expect(patched).toEqual({ docker_command: "mcp --verbose" });
+  });
+});
+
+describe("McpTab — the Add button follows every rule", () => {
+  it("stays disabled until project, name and URL hold; a visited field explains itself live", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const add = within(screen.getByRole("dialog")).getByRole("button", { name: /add server/i });
+    expect(add).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // a blank form is not covered in red
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New tools" } });
+    expect(add).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "not a url" } });
+    fireEvent.blur(screen.getByLabelText("URL"));
+    expect(screen.getByLabelText("URL")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent(/valid URL/);
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "http://new.internal/mcp" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(add).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "0" } });
+    expect(add).toBeDisabled();
+    fireEvent.blur(screen.getByLabelText("Timeout (seconds)"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Must be at least 1.");
+    fireEvent.change(screen.getByLabelText("Timeout (seconds)"), { target: { value: "60" } });
+    fireEvent.change(screen.getByLabelText(/extra configuration/i), { target: { value: "{oops" } });
+    expect(add).toBeDisabled();
+    fireEvent.blur(screen.getByLabelText(/extra configuration/i));
+    expect(screen.getByRole("alert")).toHaveTextContent(/JSON object/);
+  });
+
+  it("built-in rows: unticking the last capability disables Add and says so", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fireEvent.click(screen.getByLabelText(/built-in capabilities/i));
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research" } });
+    const add = screen.getByRole("button", { name: /add capabilities/i });
+    expect(add).toBeEnabled();
+    for (const rx of [/^Filesystem/, /^Shell/, /^Web search/, /^Web fetch/]) fireEvent.click(screen.getByLabelText(rx));
+    expect(add).toBeDisabled();
+    expect(screen.getByText("Turn on at least one capability.")).toBeInTheDocument();
+  });
+});
+
+describe("McpTab — the address field explains the chosen transport", () => {
+  it("placeholder and hint follow the transport; WebSocket takes wss://, HTTP does not", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    const transport = within(dialog).getByLabelText("Transport");
+    expect(within(dialog).getByLabelText("URL")).toHaveAttribute("placeholder", "https://tools.example.com/mcp");
+    expect(within(dialog).getByText(/https and wss aren't separate choices/i)).toBeInTheDocument();
+    fireEvent.change(transport, { target: { value: "websocket" } });
+    expect(within(dialog).getByLabelText("URL")).toHaveAttribute("placeholder", "wss://tools.example.com/mcp");
+    expect(within(dialog).getByText(/ws:\/\/ or wss:\/\//)).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("URL"), { target: { value: "https://tools.example.com/mcp" } });
+    fireEvent.blur(within(dialog).getByLabelText("URL"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The URL must start with ws:// or wss://.");
+    fireEvent.change(within(dialog).getByLabelText("URL"), { target: { value: "wss://tools.example.com/mcp" } });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.change(transport, { target: { value: "sse" } });
+    expect(within(dialog).getByLabelText("URL")).toHaveAttribute("placeholder", "https://tools.example.com/sse");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The URL must start with http:// or https://."); // the value no longer fits
+    fireEvent.change(transport, { target: { value: "stdio" } });
+    expect(within(dialog).getByLabelText("Command")).toHaveAttribute("placeholder", "npx -y @modelcontextprotocol/server-filesystem /data");
+    // The address was judged already, so the empty command speaks up instead of showing its hint.
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter the command.");
+  });
+
+  it("a fresh STDIO pick shows how to write the command", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Transport"), { target: { value: "stdio" } });
+    expect(within(dialog).getByText(/as you would type them in a shell/i)).toBeInTheDocument();
+  });
+});
+
+describe("McpTab — the OAuth redirect URI comes from the server's public address", () => {
+  it("shows the address the server will send, and says so when it is not the one the app dialled", async () => {
+    server.use(http.get(`${BASE}/api/v1/auth/config/`, () => HttpResponse.json({ server_url: "https://tools.example.org", server_version: "dev" })));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Authentication"), { target: { value: "oauth2" } });
+    expect(await within(dialog).findAllByText("https://tools.example.org/api/v1/mcp-servers/oauth/callback/")).not.toHaveLength(0);
+    expect(within(dialog).queryByText(`${BASE}/api/v1/mcp-servers/oauth/callback/`)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/this server calls itself/i)).toBeInTheDocument();
+  });
+
+  it("stays quiet when the public address is the dialled one", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Authentication"), { target: { value: "oauth2" } });
+    expect(await within(dialog).findAllByText(`${BASE}/api/v1/mcp-servers/oauth/callback/`)).not.toHaveLength(0);
+    expect(within(dialog).queryByText(/this server calls itself/i)).not.toBeInTheDocument();
   });
 });

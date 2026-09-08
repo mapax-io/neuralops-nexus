@@ -1,7 +1,10 @@
 "use client";
 
 import { Brain, Cpu, Plug2, UserRound } from "lucide-react";
-import { useMcpServers, useModelConfigs } from "@/hooks/use-intelligence";
+import { useMcpServers, useModelConfigs, usePersonas } from "@/hooks/use-intelligence";
+import { useProjects } from "@/hooks/use-workspace";
+import { useUiStore } from "@/stores/ui.store";
+import { SetupGuide } from "./setup-guide";
 
 export const INTEL_SECTIONS = [
   { key: "personas", label: "Personas", hint: "AI teammates", icon: UserRound },
@@ -15,7 +18,12 @@ export type IntelSection = (typeof INTEL_SECTIONS)[number]["key"];
 export function IntelNav({ section, onSection }: { section: IntelSection; onSection: (s: IntelSection) => void }) {
   const { data: models } = useModelConfigs();
   const { data: mcp } = useMcpServers();
+  // Personas are per project: count the project the tab is showing.
+  const { data: projects } = useProjects();
+  const intelProject = useUiStore((u) => u.intelProject);
+  const { data: personas } = usePersonas(intelProject ?? projects?.[0]?.id);
   const counts: Partial<Record<IntelSection, number>> = {
+    personas: personas?.length,
     models: models?.length,
     mcp: mcp?.length,
   };
@@ -59,10 +67,7 @@ export function IntelNav({ section, onSection }: { section: IntelSection; onSect
         })}
       </nav>
       <div className="hidden flex-1 lg:block" />
-      <p className="hidden border-t border-line px-4 py-3 text-[11.5px] leading-relaxed text-ink2 lg:block">
-        Register a model, wire tools through MCP — then give the mix a name and a role as a persona. A persona
-        with tools acts; one without just answers.
-      </p>
+      <SetupGuide onSection={onSection} />
     </aside>
   );
 }

@@ -25,6 +25,7 @@
   --ok: #0e7a4b;
   --warn: #9a5b00;
   --crit: #b3223a;
+  --info: #1d5fa8;
   --star: rgba(217, 119, 87, 0.7);
   --link: rgba(193, 95, 60, 0.18);
 }
@@ -48,6 +49,7 @@
     --ok: #4ade80;
     --warn: #fbbf24;
     --crit: #fb7185;
+  --info: #7ab8ff;
     --star: rgba(217, 119, 87, 0.8);
     --link: rgba(217, 119, 87, 0.25);
   }
@@ -71,6 +73,7 @@
   --ok: #4ade80;
   --warn: #fbbf24;
   --crit: #fb7185;
+  --info: #7ab8ff;
   --star: rgba(217, 119, 87, 0.8);
   --link: rgba(217, 119, 87, 0.25);
 }
@@ -91,6 +94,7 @@
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-crit: var(--crit);
+  --color-info: var(--info);
   --font-sans: var(--font-inter);
   --font-display: var(--font-bricolage);
   --font-mono: var(--font-jetbrains);

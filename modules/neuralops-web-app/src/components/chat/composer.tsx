@@ -64,6 +64,8 @@ import { useComposerMruStore, orderByRecency } from "@/stores/composer-mru.store
 import { MentionHighlight, mentionHighlightKey, type KnownSets } from "@/components/chat/mention-highlight";
 import { fuzzyFilter, fuzzyScore } from "@/lib/composer/fuzzy";
 import { inviteToProject } from "@/lib/api/team";
+import { inviteRedirectTo } from "@/lib/api/members";
+import { notifyInvite } from "@/lib/invite-toast";
 import { isCompanyAdmin } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 
@@ -549,6 +551,7 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
           scope: action.scope,
           ...(action.scope === "topic" ? { topic_id: topicId } : {}),
           role: "member",
+          ...(action.email ? { redirect_to: inviteRedirectTo() } : {}),
         });
         const msg = out.message || (action.personaName ? `@${action.personaName} added to this project.` : `Invitation sent to ${action.email}.`);
         if (out.invite_url) {
@@ -561,6 +564,11 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
               onClick: () => void copyText(out.invite_url!).then((ok) => (ok ? toast.success("Invite link copied.") : toast.error("Couldn't copy the link."))),
             },
           });
+        } else if (action.email && out.is_new_user) {
+          // A brand-new person: the server pre-authorised the email and sent
+          // nothing — hand the inviter the steps to pass on.
+          const { connection } = useConnectionStore.getState();
+          notifyInvite({ email: action.email, is_new_user: true, email_sent: out.email_sent, email_note: out.email_note }, { serverUrl: out.server_url ?? serverUrl, appOrigin: window.location.origin, companyName: connection?.companyName });
         } else {
           toast.success(msg);
         }

@@ -1,5 +1,6 @@
 "use client";
 
+import { Info } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { NexusMark } from "@/components/brand/wordmark";
 import { APP_NAME, APP_STAGE, APP_VERSION } from "@/lib/version";
@@ -8,7 +9,7 @@ import { useConnectionStore } from "@/stores/connection.store";
 export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { serverUrl, connection } = useConnectionStore();
   return (
-    <Dialog open={open} onClose={onClose} title={`About ${APP_NAME}`}>
+    <Dialog open={open} onClose={onClose} title={`About ${APP_NAME}`} icon={<Info size={17} strokeWidth={2} />} tone="info">
       <div className="flex items-center gap-3">
         <NexusMark className="size-10" />
         <div>

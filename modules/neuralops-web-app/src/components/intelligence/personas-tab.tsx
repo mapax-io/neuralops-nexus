@@ -2,15 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { FolderKanban, Pencil, Plus, Sparkles, Trash2, UserRound } from "lucide-react";
+import { Check, FolderKanban, Pencil, Plus, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { absolutizeMedia } from "@/lib/api/client";
 import { isMentionableName } from "@/lib/composer/directives";
 import { validateNumber } from "@/lib/validation";
-import { fillPersonaName, hasPersonaNameToken } from "@/lib/persona-template";
+import { fillPersonaName, hasPersonaNameToken, rolePreview } from "@/lib/persona-template";
 import {
   useCreatePersona,
   useDeletePersona,
@@ -31,14 +31,21 @@ import {
   type PersonaPatch,
 } from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { CardGrid, Chip, EntityCard, ListState, ModelPicker, ProjectSelect, TabShell, Toolbar } from "./shared";
 import { CreateMcpDialog } from "./mcp-tab";
 import { CreateModelDialog } from "./models-tab";
 
 export function PersonasTab({ canManage, embedded, defaultProjectId }: { canManage: boolean; embedded?: boolean; defaultProjectId?: string }) {
   const { data: projects } = useProjects();
-  const [projectId, setProjectId] = useState<string | undefined>(undefined);
-  // When opened from a chat's slash command, default to THAT chat's project.
+  // Page mode shares the pick with the nav's setup guide (ui store); embedded
+  // mode (a chat's slash dialog) keeps a local pick so THAT chat's project is
+  // the default and switching there never leaks into the Intelligence page.
+  const [localPick, setLocalPick] = useState<string | undefined>(undefined);
+  const storePick = useUiStore((u) => u.intelProject);
+  const setStorePick = useUiStore((u) => u.setIntelProject);
+  const projectId = defaultProjectId ? localPick : storePick;
+  const setProjectId = defaultProjectId ? setLocalPick : setStorePick;
   const activeProject = projectId ?? defaultProjectId ?? projects?.[0]?.id;
   const { data: personas, isLoading, error, refetch } = usePersonas(activeProject);
   const [creating, setCreating] = useState(false);
@@ -145,7 +152,7 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
                     {needsReconnect && <Chip tone="warn">reconnect needed</Chip>}
                   </>
                 }
-                body={p.description ?? (p.prompt ? fillPersonaName(p.prompt.system_prompt, p.name) : undefined)}
+                body={p.description?.trim() || (p.prompt ? rolePreview(fillPersonaName(p.prompt.system_prompt, p.name)) : undefined)}
                 meta={
                   <>
                     <span>answers as {p.prompt?.output_type ?? "text"}</span>
@@ -329,7 +336,7 @@ const toolsReason = (model: { name: string; supports_tools: boolean } | undefine
 
 // Per-persona generation settings (moved off the model row server-side —
 // two personas sharing a key routinely want different ones).
-function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, onSteps }: {
+function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, onSteps, errors, onBlur }: {
   idPrefix: string;
   temp: string;
   tokens: string;
@@ -337,22 +344,27 @@ function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, o
   onTemp: (v: string) => void;
   onTokens: (v: string) => void;
   onSteps: (v: string) => void;
+  // Runtime validation from the host form, per field.
+  errors?: Partial<Record<GenField, string | null>>;
+  onBlur?: (field: GenField) => void;
 }) {
   return (
     <div>
-      <p className="mb-1.5 text-[13px] font-medium text-ink2">Generation settings</p>
       <div className="grid grid-cols-3 gap-3">
         <div>
           <Label htmlFor={`${idPrefix}-temp`} required>Temperature</Label>
-          <Input id={`${idPrefix}-temp`} type="number" required min={0} max={2} step={0.1} inputMode="decimal" value={temp} onChange={(e) => onTemp(e.target.value)} />
+          <Input id={`${idPrefix}-temp`} type="number" required min={0} max={2} step={0.1} inputMode="decimal" value={temp} aria-invalid={!!errors?.temp} onChange={(e) => onTemp(e.target.value)} onBlur={() => onBlur?.("temp")} />
+          <FieldError>{errors?.temp}</FieldError>
         </div>
         <div>
           <Label htmlFor={`${idPrefix}-max-tokens`} required>Max tokens</Label>
-          <Input id={`${idPrefix}-max-tokens`} type="number" required min={1} step={1} inputMode="numeric" value={tokens} onChange={(e) => onTokens(e.target.value)} />
+          <Input id={`${idPrefix}-max-tokens`} type="number" required min={1} step={1} inputMode="numeric" value={tokens} aria-invalid={!!errors?.tokens} onChange={(e) => onTokens(e.target.value)} onBlur={() => onBlur?.("tokens")} />
+          <FieldError>{errors?.tokens}</FieldError>
         </div>
         <div>
           <Label htmlFor={`${idPrefix}-max-steps`} required>Max steps</Label>
-          <Input id={`${idPrefix}-max-steps`} type="number" required min={1} max={50} step={1} inputMode="numeric" value={steps} onChange={(e) => onSteps(e.target.value)} />
+          <Input id={`${idPrefix}-max-steps`} type="number" required min={1} max={50} step={1} inputMode="numeric" value={steps} aria-invalid={!!errors?.steps} onChange={(e) => onSteps(e.target.value)} onBlur={() => onBlur?.("steps")} />
+          <FieldError>{errors?.steps}</FieldError>
         </div>
       </div>
       <p className="mt-1.5 text-[12px] text-ink2">Lower temperature means steadier answers. Steps cap the tool-call rounds per reply.</p>
@@ -361,10 +373,12 @@ function GenerationSettings({ idPrefix, temp, tokens, steps, onTemp, onTokens, o
 }
 
 // Server-side these are unbounded; the ranges here catch typos, not taste.
-const validateGeneration = (temp: string, tokens: string, steps: string) =>
-  validateNumber(temp, { label: "a temperature", min: 0, max: 2 }) ??
-  validateNumber(tokens, { label: "max tokens", min: 1, max: 1_000_000, integer: true }) ??
-  validateNumber(steps, { label: "max steps", min: 1, max: 50, integer: true });
+type GenField = "temp" | "tokens" | "steps";
+const GEN_RULES: Record<GenField, (v: string) => string | null> = {
+  temp: (v) => validateNumber(v, { label: "a temperature", min: 0, max: 2 }),
+  tokens: (v) => validateNumber(v, { label: "max tokens", min: 1, max: 1_000_000, integer: true }),
+  steps: (v) => validateNumber(v, { label: "max steps", min: 1, max: 50, integer: true }),
+};
 
 const sameIds = (a: string[], b: string[]) => {
   if (a.length !== b.length) return false;
@@ -403,9 +417,6 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
   const [temp, setTemp] = useState("0.7");
   const [tokens, setTokens] = useState("4096");
   const [steps, setSteps] = useState("10");
-  const [err, setErr] = useState<string | null>(null);
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
   // Server-shipped role templates: picking one fills the Role field with its
   // content. These are files, not DB templates — their ids never go in the
   // payload's template_id (that expects a DB PromptTemplate id).
@@ -435,6 +446,19 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     if (projectPersonas?.some((p) => p.name.toLowerCase() === n.toLowerCase())) return "A persona with this name already exists in this project.";
     return null;
   };
+  // Every rule the submit needs, derived live: the button gates on all of
+  // them, each field shows its own once visited. The tools rule mirrors the
+  // server's wiring check — unreachable through the controls, kept so a stale
+  // list can never produce a confusing round-trip 400.
+  const form = useFormErrors({
+    name: [name, validateName(name)],
+    model: [backing.modelId, backing.modelId ? null : "Pick the model that powers them."],
+    tools: backing.lacksTools && backing.serverIds.length > 0 ? toolsReason(backing.model) : null,
+    role: [systemPrompt, systemPrompt.trim() ? null : "Write the role — it's the persona's job description."],
+    temp: [temp, GEN_RULES.temp(temp)],
+    tokens: [tokens, GEN_RULES.tokens(tokens)],
+    steps: [steps, GEN_RULES.steps(steps)],
+  });
 
   const reset = () => {
     setProjectId(defaultProjectId);
@@ -446,9 +470,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     setTemp("0.7");
     setTokens("4096");
     setSteps("10");
-    setErr(null);
-    setNameErr(null);
-    setTouched(false);
+    form.reset();
     setTemplateId("");
     tplSeqRef.current++; // orphan any in-flight template fetch
     setTplLoading(false);
@@ -477,24 +499,18 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- replaceServers is recreated per render; the guards above are in the deps
   }, [projectId, defaultIds, touchedServers, lacksTools]);
 
+  // The attach await opens a window where create.isPending is still false —
+  // the footer button's loading covers it, this ref covers the race (a second
+  // submit in the same tick sees the same render, so mutation state can't).
+  const inFlight = useRef(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // The attach await opens a window where create.isPending is still false —
-    // the footer button's loading covers it, this guard covers the race.
-    if (create.isPending || setProject.isPending) return;
-    setErr(null);
-    setTouched(true);
+    if (inFlight.current || create.isPending || setProject.isPending) return;
+    // The button is gated on form.invalid; a submit that slips through (Enter
+    // with a stale list) reveals every message instead of posting.
+    if (form.invalid) return form.touchAll();
+    inFlight.current = true;
     const n = name.trim();
-    const ne = validateName(n);
-    setNameErr(ne);
-    if (ne) return;
-    if (!backing.modelId) return setErr("Pick the model that powers them.");
-    // Mirrors the server's wiring rules — unreachable through the controls,
-    // kept so a stale list can never produce a confusing round-trip 400.
-    if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
-    if (!systemPrompt.trim()) return setErr("Write the role — it's the persona's job description.");
-    const ge = validateGeneration(temp, tokens, steps);
-    if (ge) return setErr(ge);
     // Attach & use: a model picked from another project is attached here
     // first (the server requires it), then the persona is created — one
     // submit, no tab-hopping. Both slots.
@@ -504,6 +520,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
         try {
           await setProject.mutateAsync({ projectId, modelId: id, attach: true });
         } catch {
+          inFlight.current = false;
           return; // the hook already toasted; stay in the dialog to retry
         }
       }
@@ -519,7 +536,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       max_tokens: Number(tokens),
       max_steps: Number(steps),
       prompt: { system_prompt: fillPersonaName(systemPrompt, n).trim(), output_type: outputType },
-    });
+    }, { onSettled: () => { inFlight.current = false; } });
   };
 
   return (
@@ -531,15 +548,16 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       title={`New persona${projName ? ` — ${projName}` : ""}`}
       description="An AI teammate for this project. The role you write here is their standing instructions for every answer."
       icon={<Sparkles size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          {/* The name is the @mention handle — nothing to create without it. */}
-          <Button type="submit" form="pe-form" size="sm" variant="primary" disabled={!name.trim()} loading={create.isPending || setProject.isPending}>Create persona</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="pe-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending || setProject.isPending}><Plus size={14} strokeWidth={2} /> Create persona</Button>
         </div>
       }
     >
-      <form id="pe-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="pe-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics" hint="The project they work in, and the @name teammates will use.">
         <ProjectSelect
           id="pe-project"
           value={projectId}
@@ -558,31 +576,31 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
             autoFocus
             placeholder="e.g. Layla"
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              if (name) {
-                setTouched(true);
-                setNameErr(validateName(name));
-              }
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
             maxLength={30}
           />
-          {nameErr ? (
-            <FieldError>{nameErr}</FieldError>
+          {form.error("name") ? (
+            <FieldError>{form.error("name")}</FieldError>
           ) : (
             <p className="mt-1.5 text-[12px] text-ink2">Teammates will type @{name.trim() || "name"} to bring them in.</p>
           )}
         </div>
+        <div>
+          <Label htmlFor="pe-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="pe-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
+        </div>
+        </DialogSection>
+        <DialogSection title="Models" hint="Every answer comes from the model; the advisor is a second opinion it can ask for.">
         <ModelPicker
           id="pe-model"
           projectId={projectId}
           models={models}
           value={backing.modelId}
           onChange={backing.pickModel}
+          onBlur={() => form.touch("model")}
+          error={form.error("model")}
           onRegisterNew={() => setAddingModelFor("model")}
           hint={<p className="text-[12px] text-ink2">Every answer comes from this model.</p>}
         />
@@ -600,6 +618,8 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           registerLabel="Register a second model"
           hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
         />
+        </DialogSection>
+        <DialogSection title="Tools" hint="Tool sources from this project the persona may use.">
         <ToolServerPicker
           servers={projectServers}
           selected={backing.serverIds}
@@ -608,6 +628,9 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           clearedNote={backing.clearedTools}
           onAdd={() => setAddingMcp(true)}
         />
+        <FieldError>{form.error("tools")}</FieldError>
+        </DialogSection>
+        <DialogSection title="Instructions" hint="Their standing instructions, and the format answers default to.">
         {Object.keys(templates?.prompts ?? {}).length > 0 && (
           <div>
             <Label htmlFor="pe-template">Start from a template <span className="text-ink2">(optional)</span></Label>
@@ -636,9 +659,12 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
             rows={4}
             value={fillPersonaName(systemPrompt, name)}
             onChange={(e) => setSystemPrompt(e.target.value)}
+            onBlur={() => form.touch("role")}
+            aria-invalid={!!form.error("role")}
             placeholder="You are the project's data analyst. Answer with concrete numbers, cite the source table, and prefer charts for trends."
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
+          <FieldError>{form.error("role")}</FieldError>
           {hasPersonaNameToken(systemPrompt) && !name.trim() && (
             <p className="mt-1.5 text-[12px] text-ink2">{"{PERSONA_NAME} fills in with the name above."}</p>
           )}
@@ -652,12 +678,10 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           </select>
           <p className="mt-1.5 text-[12px] text-ink2">Anyone can still override per message with @chart, @table, and friends.</p>
         </div>
-        <GenerationSettings idPrefix="pe" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} />
-        <div>
-          <Label htmlFor="pe-desc">Description <span className="text-ink2">(optional)</span></Label>
-          <Input id="pe-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
-        </div>
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        <DialogSection title="Generation">
+        <GenerationSettings idPrefix="pe" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} errors={{ temp: form.error("temp"), tokens: form.error("tokens"), steps: form.error("steps") }} onBlur={form.touch} />
+        </DialogSection>
       </form>
     </Dialog>
     {/* Stacked prerequisite dialogs — the flow never leaves this screen. */}
@@ -714,9 +738,6 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
   const [temp, setTemp] = useState(String(persona.temperature));
   const [tokens, setTokens] = useState(String(persona.max_tokens));
   const [steps, setSteps] = useState(String(persona.max_steps));
-  const [err, setErr] = useState<string | null>(null);
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
   const patch = usePatchPersona(onClose);
   // This project's servers, plus any mounted one the list doesn't carry (so
   // it can still be unticked) — never another project's.
@@ -732,21 +753,23 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
     if (siblings.some((p) => p.name.toLowerCase() === n.toLowerCase())) return "A persona with this name already exists in this project.";
     return null;
   };
+  const form = useFormErrors({
+    name: [name, validateName(name)],
+    model: [backing.modelId, backing.modelId ? null : "Pick the model that powers them."],
+    tools: backing.lacksTools && backing.serverIds.length > 0 ? toolsReason(backing.model) : null,
+    role: [systemPrompt, systemPrompt.trim() ? null : "The role can't be empty — it's the persona's job description."],
+    temp: [temp, GEN_RULES.temp(temp)],
+    tokens: [tokens, GEN_RULES.tokens(tokens)],
+    steps: [steps, GEN_RULES.steps(steps)],
+  });
 
+  const inFlight = useRef(false);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (patch.isPending || setProject.isPending) return;
-    setErr(null);
-    setTouched(true);
+    if (inFlight.current || patch.isPending || setProject.isPending) return;
+    if (form.invalid) return form.touchAll();
+    inFlight.current = true;
     const n = name.trim();
-    const ne = validateName(n);
-    setNameErr(ne);
-    if (ne) return;
-    if (!backing.modelId) return setErr("Pick the model that powers them.");
-    if (backing.lacksTools && backing.serverIds.length > 0) return setErr(toolsReason(backing.model));
-    if (!systemPrompt.trim()) return setErr("The role can't be empty — it's the persona's job description.");
-    const ge = validateGeneration(temp, tokens, steps);
-    if (ge) return setErr(ge);
     const advisorBefore = persona.advisor_model?.id ?? "";
     const promptChanged =
       systemPrompt.trim() !== (persona.prompt?.system_prompt ?? "") || outputType !== (persona.prompt?.output_type ?? "text");
@@ -764,7 +787,7 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
       ...(Number(steps) !== persona.max_steps ? { max_steps: Number(steps) } : {}),
       ...(promptChanged ? { prompt: { system_prompt: fillPersonaName(systemPrompt, n).trim(), output_type: outputType } } : {}),
     };
-    if (Object.keys(payload).length === 0) return onClose(); // nothing changed
+    if (Object.keys(payload).length === 0) { inFlight.current = false; return onClose(); } // nothing changed
     // Attach & use for a swapped-in model from another project — same rule as
     // create: the server requires the model to be attached first.
     for (const id of [payload.model_config_id, payload.advisor_model_config_id].filter((x): x is string => !!x)) {
@@ -773,11 +796,12 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
         try {
           await setProject.mutateAsync({ projectId: persona.project_id, modelId: id, attach: true });
         } catch {
+          inFlight.current = false;
           return;
         }
       }
     }
-    patch.mutate({ id: persona.id, payload });
+    patch.mutate({ id: persona.id, payload }, { onSettled: () => { inFlight.current = false; } });
   };
 
   return (
@@ -789,14 +813,16 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
       title={`Edit @${persona.name}`}
       description="Changes apply to every future answer — a swapped model or tool set takes effect on the next @mention. Past messages stay as they were."
       icon={<Pencil size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="pd-form" size="sm" variant="primary" disabled={!name.trim()} loading={patch.isPending || setProject.isPending}>Save changes</Button>
+          <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="pd-form" size="sm" variant="primary" disabled={form.invalid} loading={patch.isPending || setProject.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
-      <form id="pd-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="pd-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics">
         <div>
           <Label htmlFor="pd-name" required>Name</Label>
           <Input
@@ -804,31 +830,31 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             required
             autoFocus
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              if (name) {
-                setTouched(true);
-                setNameErr(validateName(name));
-              }
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
             maxLength={30}
           />
-          {nameErr ? (
-            <FieldError>{nameErr}</FieldError>
+          {form.error("name") ? (
+            <FieldError>{form.error("name")}</FieldError>
           ) : (
             <p className="mt-1.5 text-[12px] text-ink2">Renaming updates the @mention everywhere from now on.</p>
           )}
         </div>
+        <div>
+          <Label htmlFor="pd-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="pd-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
+        </div>
+        </DialogSection>
+        <DialogSection title="Models" hint="Every answer comes from the model; the advisor is a second opinion it can ask for.">
         <ModelPicker
           id="pd-model"
           projectId={persona.project_id}
           models={models}
           value={backing.modelId}
           onChange={backing.pickModel}
+          onBlur={() => form.touch("model")}
+          error={form.error("model")}
           onRegisterNew={() => setAddingModelFor("model")}
           hint={<p className="text-[12px] text-ink2">Every answer comes from this model.</p>}
         />
@@ -846,6 +872,8 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           registerLabel="Register a second model"
           hint={<p className="text-[12px] text-ink2">A second model the primary can consult when it gets stuck — must differ from the model.</p>}
         />
+        </DialogSection>
+        <DialogSection title="Tools" hint="Tool sources from this project the persona may use.">
         <ToolServerPicker
           servers={projectServers}
           selected={backing.serverIds}
@@ -854,6 +882,9 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
           clearedNote={backing.clearedTools}
           onAdd={() => setAddingMcp(true)}
         />
+        <FieldError>{form.error("tools")}</FieldError>
+        </DialogSection>
+        <DialogSection title="Instructions" hint="Their standing instructions, and the format answers default to.">
         <div>
           <Label htmlFor="pd-role" required>Role</Label>
           {/* A role saved with {PERSONA_NAME} still in it shows filled; it is
@@ -864,8 +895,11 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             rows={5}
             value={fillPersonaName(systemPrompt, name)}
             onChange={(e) => setSystemPrompt(e.target.value)}
+            onBlur={() => form.touch("role")}
+            aria-invalid={!!form.error("role")}
             className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[14px] leading-relaxed outline-none focus:border-accent"
           />
+          <FieldError>{form.error("role")}</FieldError>
         </div>
         <div>
           <Label htmlFor="pd-output">Default answer format</Label>
@@ -880,12 +914,10 @@ function EditPersonaDialog({ persona, onClose, siblings }: { persona: Persona; o
             ))}
           </select>
         </div>
-        <GenerationSettings idPrefix="pd" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} />
-        <div>
-          <Label htmlFor="pd-desc">Description <span className="text-ink2">(optional)</span></Label>
-          <Input id="pd-desc" placeholder="Shown to teammates in pickers" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={200} />
-        </div>
-        <FieldError>{err}</FieldError>
+        </DialogSection>
+        <DialogSection title="Generation">
+        <GenerationSettings idPrefix="pd" temp={temp} tokens={tokens} steps={steps} onTemp={setTemp} onTokens={setTokens} onSteps={setSteps} errors={{ temp: form.error("temp"), tokens: form.error("tokens"), steps: form.error("steps") }} onBlur={form.touch} />
+        </DialogSection>
       </form>
     </Dialog>
     {addingModelFor && (

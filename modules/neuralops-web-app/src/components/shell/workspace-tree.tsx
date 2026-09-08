@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Users,
+  Archive,
   Boxes,
   Brain,
   ChevronRight,
@@ -13,6 +14,7 @@ import { Users,
   Plus,
   Rocket,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { absolutizeMedia } from "@/lib/api/client";
@@ -22,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { TeamDialog } from "@/components/shell/team-dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import {
   useArchiveChannel,
@@ -200,6 +203,7 @@ function ProjectNode({ project, activeChannelId, role }: { project: Project; act
           </p>
         }
         confirmLabel="Archive project"
+        confirmIcon={<Archive size={14} strokeWidth={2} />}
         loading={archive.isPending}
       />
       <TeamDialog pid={project.id} projectName={project.name} open={managingTeam} onClose={() => setManagingTeam(false)} />
@@ -276,6 +280,7 @@ function ChannelNode({ projectId, channel, isActive, canManage }: { projectId: s
           </p>
         }
         confirmLabel="Archive channel"
+        confirmIcon={<Archive size={14} strokeWidth={2} />}
         loading={archiveChannel.isPending}
       />
     </li>
@@ -287,8 +292,6 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
   const { data: projects } = useProjects();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
 
   // Projects are stored under a kebab-cased name, so the duplicate check must
   // compare the SAME normalized form — not the raw typed string (else
@@ -301,11 +304,17 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
     if (projects?.some((p) => p.name.toLowerCase() === s)) return `A project named "${v.trim()}" already exists.`;
     return null;
   };
+  // Both rules derived live: the button gates on them, the name shows its
+  // own once visited. The list must have loaded for the duplicate check to
+  // mean anything.
+  const form = useFormErrors({
+    name: [name, validate(name)],
+    loading: projects ? null : "Still loading projects — try again in a moment.",
+  });
   const reset = () => {
     setName("");
     setDescription("");
-    setNameErr(null);
-    setTouched(false);
+    form.reset();
   };
   const close = () => {
     reset();
@@ -318,11 +327,9 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
   });
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setTouched(true);
-    if (!projects) { setNameErr("Still loading projects — try again in a moment."); return; }
-    const err = validate(name);
-    setNameErr(err);
-    if (err) return;
+    // The button is gated on form.invalid; a submit that slips through
+    // reveals the message instead of posting.
+    if (form.invalid) return form.touchAll();
     create.mutate({ name: toSlug(name), description: description.trim() || undefined });
   };
   return (
@@ -332,10 +339,11 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
       title="New project"
       description="A project groups channels, chats, and the AI personas that work in them."
       icon={<FolderPlus size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="wp-form" size="sm" variant="primary" loading={create.isPending}>Create project</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="wp-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending}><FolderPlus size={14} strokeWidth={2} /> Create project</Button>
         </div>
       }
     >
@@ -349,17 +357,11 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
             placeholder="e.g. Quarterly Review"
             value={name}
             maxLength={60}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validate(e.target.value));
-            }}
-            onBlur={() => {
-              setTouched(true);
-              setNameErr(validate(name));
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name") ?? form.error("loading")}</FieldError>
         </div>
         <div>
           <Label htmlFor="pdesc">Description <span className="text-ink2">(optional)</span></Label>
@@ -381,8 +383,6 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
   const { setChannel } = useSelection();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
 
   // Channels are stored under a kebab-cased name — compare the normalized form,
   // not the raw typed string (see the project dialog for the same reasoning).
@@ -394,11 +394,11 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
     if (existingNames.some((n) => n.toLowerCase() === s)) return `A channel named "${v.trim()}" already exists.`;
     return null;
   };
+  const form = useFormErrors({ name: [name, validate(name)] });
   const reset = () => {
     setName("");
     setDescription("");
-    setNameErr(null);
-    setTouched(false);
+    form.reset();
   };
   const close = () => {
     reset();
@@ -410,10 +410,7 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
   });
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setTouched(true);
-    const err = validate(name);
-    setNameErr(err);
-    if (err) return;
+    if (form.invalid) return form.touchAll();
     create.mutate({ name: toSlug(name), description: description.trim() || undefined });
   };
   return (
@@ -423,10 +420,11 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
       title={`New channel in ${projectName}`}
       description="Channels split a project by subject — like #engineering or #marketing. Chats live inside them."
       icon={<Hash size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="wc-form" size="sm" variant="primary" loading={create.isPending}>Create channel</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="wc-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending}><Hash size={14} strokeWidth={2} /> Create channel</Button>
         </div>
       }
     >
@@ -440,17 +438,11 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
             placeholder="e.g. backend"
             value={name}
             maxLength={40}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validate(e.target.value));
-            }}
-            onBlur={() => {
-              setTouched(true);
-              setNameErr(validate(name));
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
           />
-          {nameErr ? <FieldError>{nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Short and lowercase reads best — it becomes #{name.trim().toLowerCase().replace(/\s+/g, "-") || "channel-name"}.</p>}
+          {form.error("name") ? <FieldError>{form.error("name")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Short and lowercase reads best — it becomes #{name.trim().toLowerCase().replace(/\s+/g, "-") || "channel-name"}.</p>}
         </div>
         <div>
           <Label htmlFor="cdesc">Description <span className="text-ink2">(optional)</span></Label>

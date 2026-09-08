@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useUiStore } from "@/stores/ui.store";
-import { CircleCheck, CircleX, Link2, Lock, Pencil, Plug2, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { Check, CircleCheck, CircleX, Link2, Lock, Pencil, Plug2, Plus, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateRequired, validateUrl as vUrl } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { useCreateMcpServer, useDeleteMcpServer, useMcpOAuthConnect, useMcpServers, usePatchMcpServer } from "@/hooks/use-intelligence";
 import { isCompanyAdmin } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
@@ -40,12 +41,16 @@ function connSignature(
 // The four transports the server accepts. URL transports are "remote"
 // servers; STDIO is a "local" one NeuralOps launches from a command. The
 // transport is fixed after creation (the server's PATCH has no such field).
+// The secure forms are not separate transports: TLS is the URL's scheme
+// (https://, wss://), so each transport names the schemes it takes and the
+// address field shows an example of the right shape.
 const TRANSPORTS = [
-  { value: "http", label: "HTTP" },
-  { value: "sse", label: "SSE" },
-  { value: "websocket", label: "WebSocket" },
-  { value: "stdio", label: "STDIO — a local command" },
+  { value: "http", label: "HTTP — a streamable HTTP endpoint", short: "HTTP", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/mcp", hint: "The server's streamable-HTTP endpoint, http:// or https:// — many servers serve it at /mcp." },
+  { value: "sse", label: "SSE — a server-sent events endpoint", short: "SSE", schemes: ["http:", "https:"], placeholder: "https://tools.example.com/sse", hint: "The server's SSE endpoint, http:// or https:// — many servers serve it at /sse." },
+  { value: "websocket", label: "WebSocket", short: "WebSocket", schemes: ["ws:", "wss:"], placeholder: "wss://tools.example.com/mcp", hint: "The server's WebSocket endpoint, ws:// or wss://." },
+  { value: "stdio", label: "STDIO — a local command", short: "STDIO", schemes: [], placeholder: "npx -y @modelcontextprotocol/server-filesystem /data", hint: "The program and its arguments, as you would type them in a shell. It runs on the NeuralOps server; its tools are read over stdin/stdout." },
 ] as const;
+const transportOf = (value: string) => TRANSPORTS.find((t) => t.value === value) ?? TRANSPORTS[0];
 const isStdio = (transport: string) => transport === "stdio";
 // server_type: where the server runs. remote/local follow the transport by
 // default; docker, kubernetes and hosted are explicit choices with their own
@@ -81,9 +86,11 @@ function parseConfig(text: string): { value?: Record<string, unknown>; error?: s
 }
 const formatConfig = (c: Record<string, unknown> | null | undefined) => (c && Object.keys(c).length ? JSON.stringify(c, null, 2) : "");
 
-function RuntimeFields({ idPrefix, config, onConfig, firstParty, onFirstParty, embed, onEmbed, firstPartyFixed }: {
+function RuntimeFields({ idPrefix, config, onConfig, firstParty, onFirstParty, embed, onEmbed, firstPartyFixed, configError, onConfigBlur }: {
   idPrefix: string;
   config: string; onConfig: (v: string) => void;
+  // Runtime validation from the host form: shown in place of the hint.
+  configError?: string | null; onConfigBlur?: () => void;
   firstParty: boolean; onFirstParty?: (v: boolean) => void; // absent on edit — fixed server-side
   embed: boolean; onEmbed: (v: boolean) => void;
   firstPartyFixed?: boolean;
@@ -96,12 +103,14 @@ function RuntimeFields({ idPrefix, config, onConfig, firstParty, onFirstParty, e
           id={`${idPrefix}-config`}
           rows={3}
           value={config}
+          aria-invalid={!!configError}
           onChange={(e) => onConfig(e.target.value)}
+          onBlur={onConfigBlur}
           placeholder={'{"root_path": "/data"}'}
           spellCheck={false}
           className="w-full resize-y rounded-[10px] border border-line bg-surface px-3 py-2 font-mono text-[12.5px] leading-relaxed outline-none focus:border-accent"
         />
-        <p className="mt-1.5 text-[12px] text-ink2">Non-secret settings handed to the server as-is. Secrets go under Authentication.</p>
+        {configError ? <FieldError>{configError}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Non-secret settings handed to the server as-is. Secrets go under Authentication.</p>}
       </div>
       {firstPartyFixed ? (
         <p className="text-[12px] text-ink2">{firstParty ? "First-party server (published by us)." : "Third-party server."} Fixed after creation.</p>
@@ -129,6 +138,18 @@ const KINDS: { value: Kind; label: string; blurb: string }[] = [
   { value: "external", label: "External MCP server", blurb: "Reached over HTTP, SSE or WebSocket, or run as a local STDIO command." },
   { value: "internal", label: "Built-in capabilities", blurb: "Filesystem, shell, web search and more — provided in-process, no server to run." },
 ];
+
+// A value fixed after creation, in the same shape as the field beside it —
+// caption above, input-height box — so the row lines up, and never a form
+// control: there is nothing to submit.
+function FixedField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[13px] font-medium text-ink2">{label} <span className="text-ink2/70">(fixed)</span></p>
+      <div className="flex h-10 items-center truncate rounded-[10px] border border-line bg-surface2/60 px-3 text-[13.5px]">{children}</div>
+    </div>
+  );
+}
 
 function KindSwitch({ value, onChange }: { value: Kind; onChange: (k: Kind) => void }) {
   return (
@@ -189,18 +210,23 @@ function RuntimeDetails({ idPrefix, runtime, image, dockerCommand, service, onIm
   return null;
 }
 
-function CallSettings({ idPrefix, timeout, retries, onTimeout, onRetries }: {
+function CallSettings({ idPrefix, timeout, retries, onTimeout, onRetries, errors, onBlur }: {
   idPrefix: string; timeout: string; retries: string; onTimeout: (v: string) => void; onRetries: (v: string) => void;
+  // Runtime validation from the host form, per field.
+  errors?: { timeout?: string | null; retries?: string | null };
+  onBlur?: (field: "timeout" | "retries") => void;
 }) {
   return (
     <div className="grid max-w-sm grid-cols-2 gap-3">
       <div>
         <Label htmlFor={`${idPrefix}-timeout`} required>Timeout (seconds)</Label>
-        <Input id={`${idPrefix}-timeout`} type="number" required min={1} max={3600} step={1} inputMode="numeric" value={timeout} onChange={(e) => onTimeout(e.target.value)} />
+        <Input id={`${idPrefix}-timeout`} type="number" required min={1} max={3600} step={1} inputMode="numeric" value={timeout} aria-invalid={!!errors?.timeout} onChange={(e) => onTimeout(e.target.value)} onBlur={() => onBlur?.("timeout")} />
+        <FieldError>{errors?.timeout}</FieldError>
       </div>
       <div>
         <Label htmlFor={`${idPrefix}-retries`} required>Max retries</Label>
-        <Input id={`${idPrefix}-retries`} type="number" required min={0} max={10} step={1} inputMode="numeric" value={retries} onChange={(e) => onRetries(e.target.value)} />
+        <Input id={`${idPrefix}-retries`} type="number" required min={0} max={10} step={1} inputMode="numeric" value={retries} aria-invalid={!!errors?.retries} onChange={(e) => onRetries(e.target.value)} onBlur={() => onBlur?.("retries")} />
+        <FieldError>{errors?.retries}</FieldError>
       </div>
       <p className="col-span-2 -mt-1 text-[12px] text-ink2">Per tool call: how long to wait for the server, and how many times to retry a failed call.</p>
     </div>
@@ -414,10 +440,6 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   const [embed, setEmbed] = useState(false);
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>("none");
   const [oauth, setOauth] = useState<OAuthDraft>(emptyOAuthDraft);
-  const [err, setErr] = useState<string | null>(null);
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [urlErr, setUrlErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
   const stdio = isStdio(transport);
 
   const validateName = (v: string) => {
@@ -431,10 +453,28 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
   };
   // URL transports need a URL; STDIO needs the command instead — the same
   // either/or the server enforces with its check constraints.
-  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
+  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL", schemes: transportOf(transport).schemes }));
 
   const internal = kind === "internal";
   const serverType = runtime ?? runtimeFor(transport);
+  // Duplicate CONNECTION guard: the same endpoint + auth config already
+  // registered in this project is a duplicate even under a different name.
+  const mySig = connSignature(stdio ? command : url, authType, authType === "oauth2" ? draftToPayload(oauth).oauth_config : null);
+  const dupConn = internal ? undefined : servers?.find((s) => s.project_id === projectId && connSignature(endpointOf(s), s.auth_type, s.oauth_config ?? null) === mySig);
+  // Every rule the submit needs, derived live: the button gates on all of
+  // them, each field shows its own once visited. capJson is the editor's own
+  // parse error — it displays it itself, so it only gates here.
+  const form = useFormErrors({
+    project: [projectId, projectId ? null : internal ? "Pick the project these capabilities belong to." : "Pick the project this server belongs to."],
+    name: [name, validateName(name)],
+    caps: internal && Object.keys(caps).length === 0 ? "Turn on at least one capability." : null,
+    capJson: internal ? capErr : null,
+    url: [stdio ? command : url, internal ? null : validateUrl(url) ?? (dupConn ? `This project already has a server with these exact connection details ("${dupConn.name}").` : null)],
+    timeout: [timeout, internal ? null : validateTimeout(timeout)],
+    retries: [retries, internal ? null : validateRetries(retries)],
+    config: [config, internal ? null : parseConfig(config).error ?? null],
+    oauth: [oauth.client_id || oauth.authorize_endpoint || oauth.token_endpoint || oauth.client_secret, !internal && authType === "oauth2" ? validateOAuth(oauth, { isEdit: false, hasStoredSecret: false }) : null],
+  });
 
   const reset = () => {
     setProjectId(defaultProjectId ?? "");
@@ -457,10 +497,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     setEmbed(false);
     setAuthType("none");
     setOauth(emptyOAuthDraft());
-    setErr(null);
-    setNameErr(null);
-    setUrlErr(null);
-    setTouched(false);
+    form.reset();
   };
   const close = () => {
     reset();
@@ -474,37 +511,16 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    setTouched(true);
-    const ne = validateName(name);
-    setNameErr(ne);
-    if (!projectId) return setErr(internal ? "Pick the project these capabilities belong to." : "Pick the project this server belongs to.");
+    // The button is gated on form.invalid; a submit that slips through
+    // reveals every message instead of posting.
+    if (form.invalid) return form.touchAll();
     if (internal) {
-      if (ne) return;
-      if (capErr) return setErr(capErr);
-      if (Object.keys(caps).length === 0) return setErr("Turn on at least one capability.");
       // Only the fields an internal row has — the server clears the rest and
       // forces auth_type to "none" anyway.
       create.mutate({ project_id: projectId, name: name.trim(), description: description.trim() || undefined, is_internal: true, capability_config: caps });
       return;
     }
-    const ue = validateUrl(url);
-    setUrlErr(ue);
-    if (ne || ue) return;
-    const ce = validateTimeout(timeout) ?? validateRetries(retries);
-    if (ce) return setErr(ce);
     const cfg = parseConfig(config);
-    if (cfg.error) return setErr(cfg.error);
-    if (authType === "oauth2") {
-      const oe = validateOAuth(oauth, { isEdit: false, hasStoredSecret: false });
-      if (oe) return setErr(oe);
-    }
-    // Duplicate CONNECTION guard: the same endpoint + auth config already
-    // registered in this project is a duplicate even under a different name.
-    const draftCfg = authType === "oauth2" ? draftToPayload(oauth).oauth_config : null;
-    const mySig = connSignature(stdio ? command : url, authType, draftCfg);
-    const dupConn = servers?.find((s) => s.project_id === projectId && connSignature(endpointOf(s), s.auth_type, s.oauth_config ?? null) === mySig);
-    if (dupConn) return setErr(`This project already has a server with these exact connection details ("${dupConn.name}").`);
     create.mutate({
       project_id: projectId, name: name.trim(),
       transport, server_type: serverType,
@@ -531,16 +547,18 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
         ? "Capabilities the AI worker provides in-process — filesystem, shell, web search and more. Personas in the owning project mount them like any tool source."
         : "Any server that speaks the Model Context Protocol — reached by URL over HTTP, SSE or WebSocket, or run as a local command over STDIO. Personas in the owning project can mount its tools."}
       icon={internal ? <Sparkles size={17} strokeWidth={2} /> : <Plug2 size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="mcp-form" size="sm" variant="primary" loading={create.isPending}>{internal ? "Add capabilities" : "Add server"}</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mcp-form" size="sm" variant="primary" disabled={form.invalid} loading={create.isPending}><Plus size={14} strokeWidth={2} /> {internal ? "Add capabilities" : "Add server"}</Button>
         </div>
       }
     >
-      <form id="mcp-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
-        <KindSwitch value={kind} onChange={(k) => { setKind(k); setErr(null); setUrlErr(null); }} />
-        <ProjectSelect id="mcp-project" value={projectId} onChange={setProjectId} only={allProjects ?? []} />
+      <form id="mcp-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics" hint="What kind of tool source this is, and the project that owns it.">
+        <KindSwitch value={kind} onChange={setKind} />
+        <ProjectSelect id="mcp-project" value={projectId} onChange={setProjectId} only={allProjects ?? []} onBlur={() => form.touch("project")} error={form.error("project")} />
         <div>
           <Label htmlFor="mcp-name" required>Name</Label>
           <Input
@@ -549,47 +567,41 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
             autoFocus
             placeholder={internal ? "e.g. Research capabilities" : "e.g. Warehouse tools"}
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              if (name) {
-                setTouched(true); // blur = first judgement; typing then re-validates live
-                setNameErr(validateName(name));
-              }
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
             maxLength={100}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name")}</FieldError>
         </div>
+        <div>
+          <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="mcp-desc" placeholder={internal ? "What are these for?" : "What tools does it expose?"} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </div>
+        </DialogSection>
         {internal && (
-          <>
-            <div>
-              <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mcp-desc" placeholder="What are these for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-            </div>
-            <CapabilityEditor idPrefix="mcp" value={caps} onChange={setCaps} onError={setCapErr} />
-          </>
+          <DialogSection title="Capabilities" hint="What a persona mounting this row can do, and how each capability is configured.">
+            <CapabilityEditor idPrefix="mcp" value={caps} onChange={(v) => { setCaps(v); form.touch("caps"); }} onError={setCapErr} />
+            <FieldError>{form.error("caps")}</FieldError>
+          </DialogSection>
         )}
         {!internal && (
+          <>
+        <DialogSection title="Connection" hint="How the AI worker reaches the server.">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
           <div>
             <Label htmlFor="mcp-transport">Transport</Label>
             <select
               id="mcp-transport"
               value={transport}
-              onChange={(e) => {
-                setTransport(e.target.value);
-                setUrlErr(null); // the other field's error no longer applies
-              }}
+              onChange={(e) => setTransport(e.target.value)}
               className={selectClass}
             >
               {TRANSPORTS.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
+            <p className="mt-1.5 text-[12px] text-ink2">HTTPS and WSS aren&apos;t separate choices — the scheme goes in the address.</p>
           </div>
           {stdio ? (
             <div>
@@ -597,16 +609,14 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
               <Input
                 id="mcp-command"
                 required
-                placeholder="npx -y @modelcontextprotocol/server-filesystem /data"
+                placeholder={transportOf("stdio").placeholder}
                 value={command}
-                aria-invalid={!!urlErr}
-                onChange={(e) => {
-                  setCommand(e.target.value);
-                  if (touched) setUrlErr(validateRequired(e.target.value, "the command"));
-                }}
+                aria-invalid={!!form.error("url")}
+                onChange={(e) => setCommand(e.target.value)}
+                onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              {urlErr ? <FieldError>{urlErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Runs on the NeuralOps server; its tools are read over stdin/stdout.</p>}
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf("stdio").hint}</p>}
             </div>
           ) : (
             <div>
@@ -615,28 +625,17 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
                 id="mcp-url"
                 required
                 inputMode="url"
-                placeholder="http://tools.internal:8080/mcp"
+                placeholder={transportOf(transport).placeholder}
                 value={url}
-                aria-invalid={!!urlErr}
-                onChange={(e) => {
-                  setUrl(e.target.value);
-                  if (touched) setUrlErr(validateUrl(e.target.value));
-                }}
-                onBlur={() => {
-                  if (url) {
-                    setTouched(true);
-                    setUrlErr(validateUrl(url));
-                  }
-                }}
+                aria-invalid={!!form.error("url")}
+                onChange={(e) => setUrl(e.target.value)}
+                onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              <FieldError>{urlErr}</FieldError>
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf(transport).hint}</p>}
             </div>
           )}
         </div>
-        )}
-        {!internal && (
-          <>
             <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
               <div>
                 <Label htmlFor="mcp-runtime">Runs as</Label>
@@ -646,17 +645,23 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
               </div>
               <RuntimeDetails idPrefix="mcp" runtime={serverType} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
             </div>
-            <div>
-              <Label htmlFor="mcp-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mcp-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </DialogSection>
+        <DialogSection title="Calls">
+            <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} errors={{ timeout: form.error("timeout"), retries: form.error("retries") }} onBlur={form.touch} />
+        </DialogSection>
+        <DialogSection title="Runtime">
+            <RuntimeFields idPrefix="mcp" config={config} onConfig={setConfig} firstParty={firstParty} onFirstParty={setFirstParty} embed={embed} onEmbed={setEmbed} configError={form.error("config")} onConfigBlur={() => form.touch("config")} />
+        </DialogSection>
+        <DialogSection title="Access" hint="How the worker authenticates to the server.">
+            {/* Blur bubbles: leaving any OAuth field is the cue to judge the set. */}
+            <div onBlur={() => form.touch("oauth")}>
+              <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+              <FieldError>{form.error("oauth")}</FieldError>
             </div>
-            <CallSettings idPrefix="mcp" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
-            <RuntimeFields idPrefix="mcp" config={config} onConfig={setConfig} firstParty={firstParty} onFirstParty={setFirstParty} embed={embed} onEmbed={setEmbed} />
-            <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit={false} hasStoredSecret={false} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
             {authType === "oauth2" && <p className="text-[11.5px] text-ink2">After adding, click <b>Connect</b> on the server to sign in.</p>}
+        </DialogSection>
           </>
         )}
-        <FieldError>{err}</FieldError>
       </form>
     </Dialog>
   );
@@ -679,10 +684,6 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
   const [authType, setAuthType] = useState<MCPServer["auth_type"]>(server.auth_type);
   const stdio = isStdio(server.transport);
   const [oauth, setOauth] = useState<OAuthDraft>(() => draftFromConfig(server.oauth_config));
-  const [authErr, setAuthErr] = useState<string | null>(null);
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [urlErr, setUrlErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
   const patch = usePatchMcpServer(onClose);
 
   const validateName = (v: string) => {
@@ -693,19 +694,26 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       return "This project already has an MCP server with this name.";
     return null;
   };
-  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL" }));
+  const validateUrl = (v: string) => (stdio ? validateRequired(command, "the command") : vUrl(v, { label: "the server URL", schemes: transportOf(server.transport).schemes }));
+  const form = useFormErrors({
+    name: [name, validateName(name)],
+    caps: server.is_internal && Object.keys(caps).length === 0 ? "Turn on at least one capability." : null,
+    capJson: server.is_internal ? capErr : null,
+    url: [stdio ? command : url, server.is_internal ? null : validateUrl(url)],
+    timeout: [timeout, server.is_internal ? null : validateTimeout(timeout)],
+    retries: [retries, server.is_internal ? null : validateRetries(retries)],
+    config: [config, server.is_internal ? null : parseConfig(config).error ?? null],
+    // A client_secret is already stored whenever the server was ALREADY
+    // oauth2 (create/edit both require one) — regardless of whether the
+    // OAuth sign-in completed (oauth_connected = refresh_token present).
+    // Switching static→oauth2 here has no stored secret yet, so it's required.
+    oauth: [oauth.client_id || oauth.authorize_endpoint || oauth.token_endpoint || oauth.client_secret, !server.is_internal && authType === "oauth2" ? validateOAuth(oauth, { isEdit: true, hasStoredSecret: server.auth_type === "oauth2" }) : null],
+  });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setTouched(true);
-    const ne = validateName(name);
-    const ue = validateUrl(url);
-    setNameErr(ne);
+    if (form.invalid) return form.touchAll();
     if (server.is_internal) {
-      if (ne) return;
-      if (capErr) { setAuthErr(capErr); return; }
-      if (Object.keys(caps).length === 0) { setAuthErr("Turn on at least one capability."); return; }
-      setAuthErr(null);
       const payload = {
         ...(name.trim() !== server.name ? { name: name.trim() } : {}),
         ...(description.trim() !== (server.description ?? "") ? { description: description.trim() } : {}),
@@ -715,22 +723,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       patch.mutate({ id: server.id, payload });
       return;
     }
-    setUrlErr(ue);
-    if (ne || ue) return;
-    const ce = validateTimeout(timeout) ?? validateRetries(retries);
-    if (ce) { setAuthErr(ce); return; }
     const cfg = parseConfig(config);
-    if (cfg.error) { setAuthErr(cfg.error); return; }
-    if (authType === "oauth2") {
-      // A client_secret is already stored whenever the server was ALREADY
-      // oauth2 (create/edit both require one) — regardless of whether the
-      // OAuth sign-in completed (oauth_connected = refresh_token present).
-      // Switching static→oauth2 here has no stored secret yet, so it's required.
-      const hasStoredSecret = server.auth_type === "oauth2";
-      const oe = validateOAuth(oauth, { isEdit: true, hasStoredSecret });
-      if (oe) { setAuthErr(oe); return; }
-    }
-    setAuthErr(null);
     const authChanged = authType !== server.auth_type;
     const oauthTouched = authType === "oauth2" && (authChanged
       || oauth.client_id.trim() !== (server.oauth_config?.client_id ?? "")
@@ -771,14 +764,16 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
       title={`Edit ${server.name}`}
       description={server.is_internal ? "Changes apply to the persona's next run." : "Changes apply to the next tool call — personas pick up the new address automatically."}
       icon={<Pencil size={17} strokeWidth={2} />}
+      tone="info"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="mce-form" size="sm" variant="primary" loading={patch.isPending}>Save changes</Button>
+          <Button type="button" size="sm" onClick={onClose}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mce-form" size="sm" variant="primary" disabled={form.invalid} loading={patch.isPending}><Check size={14} strokeWidth={2} /> Save changes</Button>
         </div>
       }
     >
-      <form id="mce-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form id="mce-form" onSubmit={submit} noValidate className="flex flex-col">
+        <DialogSection title="Basics">
         <div>
           <Label htmlFor="mce-name" required>Name</Label>
           <Input
@@ -786,55 +781,46 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
             required
             autoFocus
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              if (name) {
-                setTouched(true);
-                setNameErr(validateName(name));
-              }
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
             maxLength={100}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name")}</FieldError>
         </div>
         {server.is_internal && (
-          <>
-            <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-              <p className="text-[12px] text-ink2">Kind <span className="text-ink2/70">(fixed)</span></p>
-              <p className="mt-0.5">Built-in capabilities{server.is_default ? " — this project's default" : ""}</p>
-            </div>
-            <div>
-              <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mce-desc" placeholder="What are these for?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
-            </div>
-            <CapabilityEditor idPrefix="mce" value={caps} onChange={setCaps} onError={setCapErr} />
-          </>
+          <FixedField label="Kind">Built-in capabilities{server.is_default ? " — this project's default" : ""}</FixedField>
+        )}
+        <div>
+          <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
+          <Input id="mce-desc" placeholder={server.is_internal ? "What are these for?" : "What tools does it expose?"} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </div>
+        </DialogSection>
+        {server.is_internal && (
+          <DialogSection title="Capabilities" hint="What a persona mounting this row can do, and how each capability is configured.">
+            <CapabilityEditor idPrefix="mce" value={caps} onChange={(v) => { setCaps(v); form.touch("caps"); }} onError={setCapErr} />
+            <FieldError>{form.error("caps")}</FieldError>
+          </DialogSection>
         )}
         {!server.is_internal && (
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
-          <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-            <p className="text-[12px] text-ink2">Transport <span className="text-ink2/70">(fixed)</span></p>
-            <p className="mt-0.5"><code className="font-mono text-[12.5px]">{server.transport}</code></p>
-          </div>
+          <>
+        <DialogSection title="Connection" hint="How the AI worker reaches the server. Transport and runtime are fixed after creation.">
+        <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+          <FixedField label="Transport">{transportOf(server.transport).short}</FixedField>
           {stdio ? (
             <div>
               <Label htmlFor="mce-command" required>Command</Label>
               <Input
                 id="mce-command"
                 required
+                placeholder={transportOf("stdio").placeholder}
                 value={command}
-                aria-invalid={!!urlErr}
-                onChange={(e) => {
-                  setCommand(e.target.value);
-                  if (touched) setUrlErr(validateRequired(e.target.value, "the command"));
-                }}
+                aria-invalid={!!form.error("url")}
+                onChange={(e) => setCommand(e.target.value)}
+                onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              <FieldError>{urlErr}</FieldError>
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf("stdio").hint}</p>}
             </div>
           ) : (
             <div>
@@ -843,44 +829,36 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
                 id="mce-url"
                 required
                 inputMode="url"
+                placeholder={transportOf(server.transport).placeholder}
                 value={url}
-                aria-invalid={!!urlErr}
-                onChange={(e) => {
-                  setUrl(e.target.value);
-                  if (touched) setUrlErr(validateUrl(e.target.value));
-                }}
-                onBlur={() => {
-                  if (url) {
-                    setTouched(true);
-                    setUrlErr(validateUrl(url));
-                  }
-                }}
+                aria-invalid={!!form.error("url")}
+                onChange={(e) => setUrl(e.target.value)}
+                onBlur={() => form.touch("url")}
                 className="font-mono"
               />
-              <FieldError>{urlErr}</FieldError>
+              {form.error("url") ? <FieldError>{form.error("url")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">{transportOf(server.transport).hint}</p>}
             </div>
           )}
         </div>
-        )}
-        {!server.is_internal && (
-          <>
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
-              <div className="rounded-[10px] border border-line bg-surface2/60 px-3 py-2.5 text-[13px]">
-                <p className="text-[12px] text-ink2">Runs as <span className="text-ink2/70">(fixed)</span></p>
-                <p className="mt-0.5">{runtimeLabel(server.server_type)}</p>
-              </div>
+            <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,14rem)_1fr]">
+              <FixedField label="Runs as">{runtimeLabel(server.server_type)}</FixedField>
               <RuntimeDetails idPrefix="mce" runtime={server.server_type} image={dockerImage} dockerCommand={dockerCommand} service={k8sService} onImage={setDockerImage} onDockerCommand={setDockerCommand} onService={setK8sService} />
             </div>
-            <div>
-              <Label htmlFor="mce-desc">Description <span className="text-ink2">(optional)</span></Label>
-              <Input id="mce-desc" placeholder="What tools does it expose?" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={300} />
+        </DialogSection>
+        <DialogSection title="Calls">
+            <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} errors={{ timeout: form.error("timeout"), retries: form.error("retries") }} onBlur={form.touch} />
+        </DialogSection>
+        <DialogSection title="Runtime">
+            <RuntimeFields idPrefix="mce" config={config} onConfig={setConfig} firstParty={server.is_first_party} firstPartyFixed embed={embed} onEmbed={setEmbed} configError={form.error("config")} onConfigBlur={() => form.touch("config")} />
+        </DialogSection>
+        <DialogSection title="Access" hint="How the worker authenticates to the server.">
+            <div onBlur={() => form.touch("oauth")}>
+              <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+              <FieldError>{form.error("oauth")}</FieldError>
             </div>
-            <CallSettings idPrefix="mce" timeout={timeout} retries={retries} onTimeout={setTimeout_} onRetries={setRetries} />
-            <RuntimeFields idPrefix="mce" config={config} onConfig={setConfig} firstParty={server.is_first_party} firstPartyFixed embed={embed} onEmbed={setEmbed} />
-            <McpAuthSection authType={authType} onAuthType={setAuthType} oauth={oauth} onOauth={setOauth} isEdit hasStoredSecret={server.auth_type === "oauth2"} onSuggestUrl={(u) => { if (!stdio && !url.trim()) setUrl(u); }} />
+        </DialogSection>
           </>
         )}
-        <FieldError>{authErr}</FieldError>
       </form>
     </Dialog>
   );

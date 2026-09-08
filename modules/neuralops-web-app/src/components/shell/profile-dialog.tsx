@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, KeyRound, LogOut, UserRound } from "lucide-react";
+import { BadgeCheck, Check, KeyRound, LogOut, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
+import { Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { changeUsername, USERNAME_RE } from "@/lib/api/account";
 import { absolutizeMedia } from "@/lib/api/client";
 import { supabase } from "@/lib/supabase";
 import { useMembers } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useFormErrors } from "@/hooks/use-form-errors";
 
 // Profile & account settings. Identity is split across two systems on
 // purpose: password lives with Supabase (who you are), display name lives on
@@ -39,6 +40,13 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
     if (!USERNAME_RE.test(v.trim())) return "2–30 characters — letters, numbers and underscores only.";
     return null;
   };
+  // Each form's rules derived live: its button gates on them, each field
+  // shows its own once visited. nameErr / pwErr keep the server's answer.
+  const nameForm = useFormErrors({ name: [name, validateName(name)] });
+  const pwForm = useFormErrors({
+    pw: [pw, pw.length < 8 ? "Use at least 8 characters." : null],
+    pw2: [pw2, pw2 !== pw ? "The two passwords don't match." : null],
+  });
 
   const rename = useMutation({
     mutationFn: () => changeUsername(name.trim(), ""),
@@ -47,6 +55,7 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       setSavedName(out.display_name);
       setName("");
       setNameErr(null);
+      nameForm.reset();
       qc.invalidateQueries({ queryKey: ["members"] });
     },
     onError: (e) => setNameErr(e.message),
@@ -62,21 +71,21 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       setPw("");
       setPw2("");
       setPwErr(null);
+      pwForm.reset();
     },
     onError: (e) => setPwErr(e.message),
   });
 
   const submitName = (e: React.FormEvent) => {
     e.preventDefault();
-    const err = validateName(name);
-    setNameErr(err);
-    if (!err) rename.mutate();
+    if (nameForm.invalid) return nameForm.touchAll();
+    setNameErr(null);
+    rename.mutate();
   };
 
   const submitPw = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pw.length < 8) return setPwErr("Use at least 8 characters.");
-    if (pw !== pw2) return setPwErr("The two passwords don't match.");
+    if (pwForm.invalid) return pwForm.touchAll();
     setPwErr(null);
     changePw.mutate();
   };
@@ -89,6 +98,8 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
     setPw("");
     setPw2("");
     setPwErr(null);
+    nameForm.reset();
+    pwForm.reset();
     onClose();
   };
 
@@ -100,6 +111,7 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
       title="Your profile"
       description="Your password belongs to your NeuralOps account; your display name lives on this server."
       icon={<UserRound size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end">
           <Button type="button" size="sm" variant="ghost" onClick={onSignOut}>
@@ -131,7 +143,8 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
         </div>
       </div>
 
-      <form onSubmit={submitName} noValidate className="mt-5">
+      <DialogSection title="Your name" hint="How teammates and personas see you on this server." className="mt-5">
+      <form onSubmit={submitName} noValidate>
         <Label htmlFor="prof-name" required>Display name on {connection?.companyName ?? "this server"}</Label>
         <div className="flex gap-2">
           <Input
@@ -140,39 +153,39 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
             autoFocus
             placeholder={currentName || "your_name"}
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (nameErr) setNameErr(validateName(e.target.value));
-            }}
+            aria-invalid={!!(nameForm.error("name") ?? nameErr)}
+            onChange={(e) => { setName(e.target.value); setNameErr(null); }}
+            onBlur={() => nameForm.touch("name")}
           />
-          <Button type="submit" size="sm" variant="primary" loading={rename.isPending} disabled={!name.trim()} className="flex-none self-start">
-            Save
+          <Button type="submit" size="sm" variant="primary" loading={rename.isPending} disabled={nameForm.invalid} className="flex-none self-start"><Check size={14} strokeWidth={2} /> Save
           </Button>
         </div>
-        {nameErr ? <FieldError>{nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Teammates and personas will see this name. 2–30 characters, no spaces.</p>}
+        {(nameForm.error("name") ?? nameErr) ? <FieldError>{nameForm.error("name") ?? nameErr}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Teammates and personas will see this name. 2–30 characters, no spaces.</p>}
       </form>
+      </DialogSection>
 
+      <DialogSection title="Change password" hint="Belongs to your NeuralOps account, not to this server.">
       {/* method=post: an un-hydrated native submit keeps the password out of the URL. */}
-      <form onSubmit={submitPw} method="post" noValidate className="mt-5 border-t border-line pt-4">
-        <p className="mb-2.5 flex items-center gap-1.5 text-[13px] font-semibold"><KeyRound size={14} strokeWidth={2} /> Change password</p>
+      <form onSubmit={submitPw} method="post" noValidate>
         <div className="flex flex-col gap-3">
           <div>
             <Label htmlFor="prof-pw" required>New password</Label>
-            <Input id="prof-pw" type="password" required autoComplete="new-password" value={pw} aria-invalid={!!pwErr} onChange={(e) => setPw(e.target.value)} />
+            <Input id="prof-pw" type="password" required autoComplete="new-password" value={pw} aria-invalid={!!pwForm.error("pw") || !!pwErr} onChange={(e) => { setPw(e.target.value); setPwErr(null); }} onBlur={() => pwForm.touch("pw")} />
+            <FieldError>{pwForm.error("pw")}</FieldError>
           </div>
           <div>
             <Label htmlFor="prof-pw2" required>Confirm new password</Label>
-            <Input id="prof-pw2" type="password" required autoComplete="new-password" value={pw2} aria-invalid={!!pwErr} onChange={(e) => setPw2(e.target.value)} />
+            <Input id="prof-pw2" type="password" required autoComplete="new-password" value={pw2} aria-invalid={!!pwForm.error("pw2") || !!pwErr} onChange={(e) => { setPw2(e.target.value); setPwErr(null); }} onBlur={() => pwForm.touch("pw2")} />
+            <FieldError>{pwForm.error("pw2")}</FieldError>
           </div>
           <FieldError>{pwErr}</FieldError>
           <div className="flex">
-            <Button type="submit" size="sm" variant="primary" loading={changePw.isPending} disabled={!pw || !pw2}>
-              Update password
+            <Button type="submit" size="sm" variant="primary" loading={changePw.isPending} disabled={pwForm.invalid}><KeyRound size={14} strokeWidth={2} /> Update password
             </Button>
           </div>
         </div>
       </form>
+      </DialogSection>
     </Dialog>
   );
 }

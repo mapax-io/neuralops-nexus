@@ -16,12 +16,23 @@ export interface InviteResult {
   message: string;
   email: string;
   role: string;
+  // True when the server created a pending Invitation (nobody with this
+  // email yet) — only that outcome also carries expires_at. No email is sent.
+  is_new_user?: boolean;
   expires_at?: string | null;
+  // A server holding its identity project's service key also emails the
+  // invitee; email_note says why not otherwise (address already registered…).
+  email_sent?: boolean;
+  email_note?: string | null;
 }
 
+// Where the invitation email should land the invitee: the app's own reset
+// page, where they set a password. Must be on the project's redirect list.
+export const inviteRedirectTo = () => `${window.location.origin}/reset-password`;
+
 // Server checks the add_invitation permission; 403 surfaces as a toast.
-export const inviteMember = (email: string, role: string) =>
-  apiJson<InviteResult>(`/api/v1/members/invite/`, { method: "POST", body: JSON.stringify({ email, role }) });
+export const inviteMember = (email: string, role: string, redirectTo: string = inviteRedirectTo()) =>
+  apiJson<InviteResult>(`/api/v1/members/invite/`, { method: "POST", body: JSON.stringify({ email, role, redirect_to: redirectTo }) });
 
 // Server rules: cannot remove the owner or yourself; Admin+ only.
 export const removeMember = (userId: string) =>

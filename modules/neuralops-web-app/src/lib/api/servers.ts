@@ -23,6 +23,7 @@ interface VerifyResponse {
   ok: boolean;
   user_id?: string;
   email?: string;
+  is_new_user?: boolean; // the server just created this member on this connect
   company_exists?: boolean;
   is_owner?: boolean;
   role?: string | null;
@@ -34,7 +35,7 @@ interface VerifyResponse {
 }
 
 export type ConnectOutcome =
-  | { kind: "ok"; connection: ServerConnection }
+  | { kind: "ok"; connection: ServerConnection; isNewUser: boolean }
   | { kind: "not-member" }
   | { kind: "not-set-up" }
   | { kind: "unreachable" }
@@ -62,6 +63,7 @@ export async function connectToServer(url: string, token: string): Promise<Conne
   if (data.company_exists === false) return { kind: "not-set-up" };
   return {
     kind: "ok",
+    isNewUser: Boolean(data.is_new_user),
     connection: {
       serverUrl: url,
       nucleusUserId: data.user_id,

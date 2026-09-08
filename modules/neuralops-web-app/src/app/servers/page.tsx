@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LogOut, ServerCog } from "lucide-react";
+import { LogOut, Plus, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 import { validateName as vName } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { Constellation } from "@/components/brand/constellation";
 import { Nebula } from "@/components/brand/nebula";
 import { Wordmark } from "@/components/brand/wordmark";
+import { MissingEmailNotice } from "@/components/auth/missing-email-notice";
 import { ServerChooser, type ChooserEntry } from "@/components/servers/server-chooser";
 import { InsecureContextNotice } from "@/components/security/insecure-context-notice";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -69,7 +71,7 @@ export default function ServersPage() {
   }, [servers, configs]);
 
   const connect = async (s: SavedServer) => {
-    if (!token) return;
+    if (!token || !email) return; // no email claim → every server would 401 (see MissingEmailNotice)
     setErrors((e) => ({ ...e, [s.id]: "" }));
     if (compareServerVersion(configs[s.id]?.server_version) === "breaking") return;
     setConnecting(s.id);
@@ -91,6 +93,10 @@ export default function ServersPage() {
         useConnectionStore.getState().connect(out.connection);
         if (compareServerVersion(out.connection.serverVersion) === "minor")
           toast.warning("Server version differs slightly from this app — consider updating the server.");
+        // First connect: the server just created this member (and accepted
+        // any pending invitation) — say so, with the role they landed with.
+        if (out.isNewUser)
+          toast.success(`Welcome to ${out.connection.companyName ?? "the server"} — you're in as ${out.connection.role ?? "a member"}.`);
         router.push("/w");
         return;
       }
@@ -180,9 +186,10 @@ export default function ServersPage() {
               Welcome back{firstName ? `, ${firstName}` : ""}
             </p>
             <h1 className="mt-2 font-display text-[28px] font-extrabold">Where are you working today?</h1>
-            <p className="mb-7 mt-1.5 text-[14px] text-ink2">Signed in as {email}</p>
+            <p className="mb-7 mt-1.5 text-[14px] text-ink2">{email ? `Signed in as ${email}` : "Signed in"}</p>
 
             <InsecureContextNotice className="mb-5" />
+            {!email && <MissingEmailNotice onSignOut={() => setConfirmingSignOut(true)} />}
             <ServerChooser entries={entries} loading={syncing || showSync} onConnect={connect} onRemove={setRemoving} onAdd={() => setAdding(true)} />
 
             <p className="mt-5 text-center text-[12.5px] text-ink2">
@@ -240,6 +247,7 @@ export default function ServersPage() {
         title="Sign out?"
         body={<p>You&apos;ll be signed out on this device. Your saved servers stay with your account — they&apos;ll be back when you sign in again.</p>}
         confirmLabel="Sign out"
+        confirmIcon={<LogOut size={14} strokeWidth={2} />}
         tone="neutral"
       />
     </div>
@@ -272,31 +280,23 @@ export function normalizeServerAddress(raw: string): { url: string } | { error: 
 function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (name: string, url: string) => void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [nameErr, setNameErr] = useState<string | null>(null);
-  const [urlErr, setUrlErr] = useState<string | null>(null);
-  const [touched, setTouched] = useState(false);
-
   const validateName = (v: string) => vName(v, { label: "server name", max: 40 });
   const validateUrl = (v: string) => {
     const out = normalizeServerAddress(v);
     return "error" in out ? out.error : null;
   };
+  // Both rules derived live: the button gates on them, each field shows its
+  // own once visited.
+  const form = useFormErrors({ name: [name, validateName(name)], url: [url, validateUrl(url)] });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setTouched(true);
-    const ne = validateName(name);
-    const ue = validateUrl(url);
-    setNameErr(ne);
-    setUrlErr(ue);
-    if (ne || ue) return;
+    if (form.invalid) return form.touchAll();
     const normalized = normalizeServerAddress(url) as { url: string };
     onAdd(name.trim(), normalized.url);
     setName("");
     setUrl("");
-    setTouched(false);
-    setNameErr(null);
-    setUrlErr(null);
+    form.reset();
   };
 
   return (
@@ -306,7 +306,8 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
       title="Add a server"
       description="Point the app at a self-hosted NeuralOps deployment — yours, your team's, or a client's."
       icon={<ServerCog size={17} strokeWidth={2} />}
-      footer={<Button type="submit" form="sv-form" variant="primary" className="w-full">Add server</Button>}
+      tone="accent"
+      footer={<Button type="submit" form="sv-form" variant="primary" disabled={form.invalid} className="w-full"><Plus size={14} strokeWidth={2} /> Add server</Button>}
     >
       <form id="sv-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
@@ -317,17 +318,11 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
             autoFocus
             placeholder="e.g. Office, Home lab"
             value={name}
-            aria-invalid={!!nameErr}
-            onChange={(e) => {
-              setName(e.target.value);
-              if (touched) setNameErr(validateName(e.target.value));
-            }}
-            onBlur={() => {
-              setTouched(true);
-              setNameErr(validateName(name));
-            }}
+            aria-invalid={!!form.error("name")}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => form.touch("name")}
           />
-          <FieldError>{nameErr}</FieldError>
+          <FieldError>{form.error("name")}</FieldError>
         </div>
         <div>
           <Label htmlFor="surl" required>Address</Label>
@@ -337,18 +332,12 @@ function AddServerDialog({ open, onClose, onAdd }: { open: boolean; onClose: () 
             inputMode="url"
             placeholder="http://192.168.1.90:8096"
             value={url}
-            aria-invalid={!!urlErr}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              if (touched) setUrlErr(validateUrl(e.target.value));
-            }}
-            onBlur={() => {
-              setTouched(true);
-              setUrlErr(validateUrl(url));
-            }}
+            aria-invalid={!!form.error("url")}
+            onChange={(e) => setUrl(e.target.value)}
+            onBlur={() => form.touch("url")}
           />
-          {urlErr ? (
-            <FieldError>{urlErr}</FieldError>
+          {form.error("url") ? (
+            <FieldError>{form.error("url")}</FieldError>
           ) : (
             <p className="mt-1.5 text-[12px] text-ink2">A LAN IP, Tailscale address, or domain — http:// is assumed if you skip it.</p>
           )}

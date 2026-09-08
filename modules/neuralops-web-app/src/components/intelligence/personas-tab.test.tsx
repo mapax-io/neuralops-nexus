@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useUiStore } from "@/stores/ui.store";
 import type { MCPServer, ModelConfig, Persona } from "@/lib/api/intelligence";
 import { PersonasTab } from "./personas-tab";
 
@@ -82,6 +83,7 @@ async function openEdit(name: string) {
 const toolBox = (scope: HTMLElement, name: string) => within(scope).getByRole("checkbox", { name }) as HTMLInputElement;
 
 beforeEach(() => {
+  useUiStore.setState({ intelProject: undefined, intelCreate: false });
   servers = [mcp("s1", "Warehouse tools"), mcp("s2", "Jira", { auth_type: "oauth2" })];
   modelList = [...MODELS];
   personas = [];
@@ -178,18 +180,59 @@ describe("CreatePersonaDialog — required fields are marked", () => {
   });
 });
 
-describe("CreatePersonaDialog — name is mandatory", () => {
-  it("keeps Create persona disabled until a name is typed", async () => {
+describe("CreatePersonaDialog — the button follows every rule", () => {
+  it("stays disabled until name, model and role are given; a visited field explains itself live", async () => {
     renderTab();
     const dialog = await openCreate();
     const create = within(dialog).getByRole("button", { name: /create persona/i });
     expect(create).toBeDisabled();
+    // A blank form is not covered in red…
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    // …leaving a pristine empty field says nothing (the asterisk and the disabled button carry it)…
+    fireEvent.blur(within(dialog).getByLabelText("Name"));
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    // …but a field left with something wrong in it explains itself, and the message follows the value.
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "bad name!" } });
+    fireEvent.blur(within(dialog).getByLabelText("Name"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/must be @mentionable/);
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "" } });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Give the persona a name."); // judged once: live, empty included
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Layla" } });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(create).toBeDisabled(); // model and role still missing
+    fireEvent.change(within(dialog).getByLabelText("Model", { exact: true }), { target: { value: "m1" } });
+    expect(create).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Role"), { target: { value: "You analyse." } });
+    expect(create).toBeEnabled();
+    // A generation setting out of range disables again and says why once visited.
+    fireEvent.change(within(dialog).getByLabelText("Max steps"), { target: { value: "0" } });
+    expect(create).toBeDisabled();
+    fireEvent.blur(within(dialog).getByLabelText("Max steps"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Must be at least 1.");
+    fireEvent.change(within(dialog).getByLabelText("Max steps"), { target: { value: "10" } });
+    expect(create).toBeEnabled();
     fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "   " } });
     expect(create).toBeDisabled(); // whitespace is not a name
-    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Layla" } });
-    expect(create).toBeEnabled();
-    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "" } });
-    expect(create).toBeDisabled();
+  });
+
+  it("a submit that slips past the button reveals every unmet rule instead of posting", async () => {
+    renderTab();
+    const dialog = await openCreate();
+    fireEvent.submit(document.getElementById("pe-form")!);
+    const alerts = within(dialog).getAllByRole("alert").map((a) => a.textContent);
+    expect(alerts).toEqual(expect.arrayContaining(["Give the persona a name.", "Pick the model that powers them.", "Write the role — it's the persona's job description."]));
+  });
+
+  it("edit: Save follows the rules too — clearing the role disables it and explains", async () => {
+    personas = [LAYLA];
+    renderTab();
+    const dialog = await openEdit("Layla");
+    const save = within(dialog).getByRole("button", { name: /save changes/i });
+    expect(save).toBeEnabled();
+    fireEvent.change(within(dialog).getByLabelText("Role"), { target: { value: "" } });
+    expect(save).toBeDisabled();
+    fireEvent.blur(within(dialog).getByLabelText("Role"));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The role can't be empty");
   });
 });
 
@@ -522,5 +565,17 @@ describe("EditPersonaDialog — mutable backing", () => {
     fireEvent.submit(document.getElementById("pd-form")!);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(patchBody).toBeNull();
+  });
+});
+
+describe("PersonaCard — the preview reads as prose", () => {
+  it("a persona without a description shows its role's first sentences, not the template's front matter", async () => {
+    personas = [{ ...LAYLA, description: null, prompt: { system_prompt: "---\npersona_name: Layla\nrole_type: execution\nversion: 1.1.0\n---\n\n# ROLE & IDENTITY\nYou are the Lead Developer. You write the code.", output_type: "text" } }];
+    renderTab();
+    const card = (await screen.findByRole("button", { name: "Edit persona Layla" })).closest("article, li, div")!;
+    expect(screen.getByText(/you are the lead developer\. you write the code\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/persona_name/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ROLE & IDENTITY/)).not.toBeInTheDocument();
+    expect(card).toBeTruthy();
   });
 });

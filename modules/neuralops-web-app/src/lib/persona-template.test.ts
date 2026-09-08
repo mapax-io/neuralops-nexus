@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillPersonaName, hasPersonaNameToken, PERSONA_NAME_TOKEN } from "./persona-template";
+import { fillPersonaName, hasPersonaNameToken, PERSONA_NAME_TOKEN, rolePreview } from "./persona-template";
 
 describe("fillPersonaName", () => {
   it("replaces every {PERSONA_NAME} with the trimmed name", () => {
@@ -18,5 +18,32 @@ describe("fillPersonaName", () => {
   it("reports whether the token is present", () => {
     expect(hasPersonaNameToken("a {PERSONA_NAME} b")).toBe(true);
     expect(hasPersonaNameToken("a b")).toBe(false);
+  });
+});
+
+describe("rolePreview", () => {
+  const template = `---
+persona_name: Yasir
+role_type: execution
+version: 1.1.0
+---
+
+# ROLE & IDENTITY
+You are the **Lead Developer**. Your primary function is to write code.
+
+# CORE OBJECTIVES
+- Translate tickets into code.
+`;
+
+  it("drops the front matter and headings and reads the role as prose", () => {
+    expect(rolePreview(template)).toBe("You are the Lead Developer. Your primary function is to write code. Translate tickets into code.");
+  });
+
+  it("leaves a plain role alone", () => {
+    expect(rolePreview("You scout the market and report trends.")).toBe("You scout the market and report trends.");
+  });
+
+  it("does not mistake a horizontal rule further down for front matter", () => {
+    expect(rolePreview("Be brief.\n\n---\n\nCite sources.")).toBe("Be brief. --- Cite sources.");
   });
 });

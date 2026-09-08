@@ -8,6 +8,7 @@ import { Input, Label } from "@/components/ui/field";
 import type { McpAuthType, McpOAuthConfig } from "@/lib/api/intelligence";
 import { validateUrl } from "@/lib/validation";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useServerConfig } from "@/hooks/use-server-config";
 
 // ── OAuth draft (form state) ──────────────────────────────────────────────────
 export interface OAuthDraft {
@@ -157,8 +158,15 @@ export function McpAuthSection({
   onSuggestUrl?: (url: string) => void; // parent fills the server URL if empty
 }) {
   const serverUrl = useConnectionStore((s) => s.serverUrl);
-  // The redirect URI the provider must be registered with (backend-fixed).
-  const callbackUrl = serverUrl ? `${serverUrl.replace(/\/$/, "")}/api/v1/mcp-servers/oauth/callback/` : "";
+  // The redirect URI the provider must be registered with. The server builds
+  // it from ITS public address (NEURALOPS_SERVER_URL), which need not be the
+  // address the app dialled — so ask the server, and only fall back to the
+  // dialled address while that answer is on its way.
+  const { data: serverConfig } = useServerConfig();
+  const publicUrl = (serverConfig?.server_url || serverUrl || "").replace(/\/$/, "");
+  const callbackUrl = publicUrl ? `${publicUrl}/api/v1/mcp-servers/oauth/callback/` : "";
+  const dialled = (serverUrl ?? "").replace(/\/$/, "");
+  const publicDiffers = !!serverConfig?.server_url && publicUrl !== dialled;
   const set = (patch: Partial<OAuthDraft>) => onOauth({ ...oauth, ...patch });
   // Track which preset is active (inferred from the endpoints on edit) so the
   // guide can show provider-specific hints. null = a custom/other provider.
@@ -200,7 +208,7 @@ export function McpAuthSection({
         >
           <option value="none">None — the server needs no credentials</option>
           <option value="static_secrets">Static secret — a fixed token you paste</option>
-          <option value="oauth2">OAuth 2.0 — sign in to a provider (GitHub, GitLab, Jira, Google, …)</option>
+          <option value="oauth2">OAuth 2.0 — sign in to the server&apos;s identity provider</option>
         </select>
       </div>
 
@@ -214,12 +222,12 @@ export function McpAuthSection({
 
       {authType === "oauth2" && (
         <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface2/40 p-3.5">
-          <p className="text-[12px] text-ink2">Sign in to <b className="text-ink">any OAuth 2.0 provider</b> after you save. Pick one below for one-click setup, or fill the fields for any other provider.</p>
+          <p className="text-[12px] text-ink2">Add the server, then press <b className="text-ink">Connect</b> on its card to sign in. Any provider that does the OAuth 2.0 authorization-code flow works — fill the fields from its OAuth docs, or start from a preset for a common one.</p>
 
           {/* Provider preset picker — one click fills the endpoints, scopes and
               any extra sign-in params a provider needs. */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 text-[12px] font-medium text-ink2"><Wand2 size={13} strokeWidth={2} /> Quick setup:</span>
+            <span className="inline-flex items-center gap-1 text-[12px] font-medium text-ink2"><Wand2 size={13} strokeWidth={2} /> Presets (optional):</span>
             {PROVIDERS.map((p) => (
               <button key={p.id} type="button" onClick={() => applyPreset(p)}
                 className={`cursor-pointer rounded-lg border px-2.5 py-1 text-[12px] font-medium transition-colors ${providerId === p.id ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-surface text-ink2 hover:border-accent/50 hover:text-ink"}`}>
@@ -254,15 +262,15 @@ export function McpAuthSection({
                   ) : <span className="text-warn"> (connect to a server first so we can show your redirect URI)</span>}
                 </GuideStep>
                 <GuideStep n={3}>
-                  <b className="text-crit">Important:</b> make sure it issues a <b className="text-ink">refresh token</b> — NeuralOps needs it to keep the connection alive, and without it the server stays &ldquo;not connected&rdquo; after you sign in.{" "}
+                  <b className="text-crit">Important:</b> make sure the app issues a <b className="text-ink">refresh token</b> — NeuralOps needs it to keep the connection alive, and without it the server stays &ldquo;not connected&rdquo; after you sign in.{" "}
                   {provider ? provider.refreshNote : <>Request offline access: an <code className="rounded bg-surface2 px-1">offline_access</code> scope, or params like <code className="rounded bg-surface2 px-1">access_type=offline</code> / <code className="rounded bg-surface2 px-1">prompt=consent</code> in the field below — check your provider&apos;s docs.</>}
                 </GuideStep>
                 <GuideStep n={4}>Copy the <b className="text-ink">Client ID</b> and generate a <b className="text-ink">Client Secret</b> (providers usually show the secret only once), then paste both below.</GuideStep>
                 <GuideStep n={5}>
-                  Set the server&apos;s <b className="text-ink">URL</b> (top of this form) to your MCP server&apos;s endpoint
-                  {provider?.suggestUrl ? <> — e.g. <code className="rounded bg-surface2 px-1">{provider.suggestUrl}</code></> : <> (the MCP server that talks to {provider ? provider.label : "your provider"})</>}.
+                  Set the server&apos;s <b className="text-ink">URL</b> (in Connection above) to the MCP server&apos;s endpoint
+                  {provider?.suggestUrl ? <> — e.g. <code className="rounded bg-surface2 px-1">{provider.suggestUrl}</code></> : <> — the MCP server that uses this sign-in</>}.
                 </GuideStep>
-                <GuideStep n={6}>Save, then click <b className="text-ink">Connect</b> on the server and sign in.</GuideStep>
+                <GuideStep n={6}>Add the server, then press <b className="text-ink">Connect</b> on its card and sign in. Reconnect from the same place whenever the provider asks again.</GuideStep>
               </ol>
             )}
           </div>
@@ -270,6 +278,9 @@ export function McpAuthSection({
           {callbackUrl && (
             <div className="rounded-lg border border-line bg-surface px-3 py-2 text-[11.5px]">
               <p className="text-ink2">Register this <b className="text-ink">redirect URI / callback URL</b> in your OAuth app:</p>
+              {publicDiffers && (
+                <p className="mt-1 text-warn">This server calls itself <code className="rounded bg-surface2 px-1 py-px font-mono">{publicUrl}</code>, not the address you connected with — the sign-in redirects there, so register exactly this one.</p>
+              )}
               <div className="mt-1 flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate font-mono text-ink">{callbackUrl}</code>
                 <button type="button" aria-label="Copy callback URL"
@@ -295,19 +306,19 @@ export function McpAuthSection({
             <div>
               <Label htmlFor="oa-auth" required>Authorize endpoint</Label>
               <Input id="oa-auth" required inputMode="url" placeholder="https://provider.com/oauth/authorize" value={oauth.authorize_endpoint} onChange={(e) => set({ authorize_endpoint: e.target.value })} className="font-mono text-[12px]" />
-              <FieldHint>Required. Where you&apos;re sent to sign in and approve access — from your provider&apos;s OAuth docs. GitHub <code className="rounded bg-surface2 px-1 py-px">…/login/oauth/authorize</code>, GitLab <code className="rounded bg-surface2 px-1 py-px">…/oauth/authorize</code>, Atlassian <code className="rounded bg-surface2 px-1 py-px">auth.atlassian.com/authorize</code>. A preset fills it.</FieldHint>
+              <FieldHint>Required. The provider&apos;s authorization URL — where you&apos;re sent to sign in and approve access. It&apos;s in the provider&apos;s OAuth docs; a preset fills it.</FieldHint>
             </div>
             <div>
               <Label htmlFor="oa-token" required>Token endpoint</Label>
               <Input id="oa-token" required inputMode="url" placeholder="https://provider.com/oauth/token" value={oauth.token_endpoint} onChange={(e) => set({ token_endpoint: e.target.value })} className="font-mono text-[12px]" />
-              <FieldHint>Required. Where your approval is exchanged for a token (server-side). Note the exact path differs per provider — GitHub uses <code className="rounded bg-surface2 px-1 py-px">/access_token</code>, most others <code className="rounded bg-surface2 px-1 py-px">/token</code>. A preset fills it.</FieldHint>
+              <FieldHint>Required. The provider&apos;s token URL — where your approval is exchanged for a token, server-side. The exact path differs per provider, so copy it from the same docs; a preset fills it.</FieldHint>
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <Label htmlFor="oa-scopes">Scopes <span className="text-ink2">(optional · space-separated)</span></Label>
               <Input id="oa-scopes" placeholder="read_api read_user" value={oauth.scopes} onChange={(e) => set({ scopes: e.target.value })} />
-              <FieldHint>Permissions to request — keep it minimal, and include the provider&apos;s offline/refresh scope if it has one (e.g. Atlassian&apos;s <code className="rounded bg-surface2 px-1 py-px">offline_access</code>). Leave blank to accept the provider&apos;s defaults.</FieldHint>
+              <FieldHint>Permissions to request — keep them minimal, and include the provider&apos;s offline/refresh scope if it has one. Leave blank to accept the provider&apos;s defaults.</FieldHint>
             </div>
             <div>
               <Label htmlFor="oa-env">Token env var <span className="text-ink2">(optional)</span></Label>
@@ -318,7 +329,7 @@ export function McpAuthSection({
           <div>
             <Label htmlFor="oa-params">Extra authorize parameters <span className="text-ink2">(optional)</span></Label>
             <Input id="oa-params" placeholder="audience=api.atlassian.com, prompt=consent" value={oauth.authorize_params} onChange={(e) => set({ authorize_params: e.target.value })} className="font-mono text-[12px]" />
-            <FieldHint>Extra query params some providers require on the sign-in URL to return a refresh token, as <code className="rounded bg-surface2 px-1 py-px">key=value</code> (comma-separated). <b>Jira</b> needs <code className="rounded bg-surface2 px-1 py-px">audience=api.atlassian.com, prompt=consent</code>; <b>Google</b> needs <code className="rounded bg-surface2 px-1 py-px">access_type=offline, prompt=consent</code>. The presets fill these; GitHub/GitLab need none.</FieldHint>
+            <FieldHint>Extra query parameters some providers require on the sign-in URL to return a refresh token, as <code className="rounded bg-surface2 px-1 py-px">key=value</code> (comma-separated) — the provider&apos;s docs say whether it needs any. A preset fills them when its provider does.</FieldHint>
           </div>
         </div>
       )}

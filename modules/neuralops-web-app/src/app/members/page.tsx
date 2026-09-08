@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { BadgeCheck, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { BadgeCheck, Search, Trash2, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
@@ -15,11 +15,13 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { FullPageLoader } from "@/components/ui/full-page-loader";
 import { absolutizeMedia } from "@/lib/api/client";
+import { notifyInvite } from "@/lib/invite-toast";
 import { inviteMember, removeMember, type Member } from "@/lib/api/members";
 import { useMembers } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
+import { validateEmail } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // The team, at its own URL — no ids in the address bar.
 export default function MembersPage() {
@@ -209,12 +211,16 @@ export default function MembersPage() {
 function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
+  // The server's answer lives in err; the rule below gates the button and
+  // shows under the field once visited.
   const [err, setErr] = useState<string | null>(null);
+  const form = useFormErrors({ email: [email, validateEmail(email)] });
 
   const reset = () => {
     setEmail("");
     setRole("member");
     setErr(null);
+    form.reset();
   };
   const close = () => {
     reset();
@@ -223,7 +229,8 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
   const invite = useMutation({
     mutationFn: () => inviteMember(email.trim(), role),
     onSuccess: (r) => {
-      toast.success(r.message || `Invitation sent to ${r.email}.`);
+      const { serverUrl, connection } = useConnectionStore.getState();
+      notifyInvite(r, { serverUrl, appOrigin: window.location.origin, companyName: connection?.companyName });
       close();
       onDone();
     },
@@ -233,7 +240,7 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
-    if (!EMAIL_RE.test(email.trim())) return setErr("Enter a valid email address.");
+    if (form.invalid) return form.touchAll();
     invite.mutate();
   };
 
@@ -244,17 +251,19 @@ function InviteDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
       title="Invite a teammate"
       description="They sign in with this email and land on the server as a member the moment they connect."
       icon={<UserPlus size={17} strokeWidth={2} />}
+      tone="accent"
       footer={
         <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" onClick={close}>Cancel</Button>
-          <Button type="submit" form="mi-form" size="sm" variant="primary" loading={invite.isPending}>Send invite</Button>
+          <Button type="button" size="sm" onClick={close}><X size={14} strokeWidth={2} /> Cancel</Button>
+          <Button type="submit" form="mi-form" size="sm" variant="primary" disabled={form.invalid} loading={invite.isPending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
         </div>
       }
     >
       <form id="mi-form" onSubmit={submit} noValidate className="flex flex-col gap-4">
         <div>
           <Label htmlFor="mi-email" required>Email</Label>
-          <Input id="mi-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!err} onChange={(e) => setEmail(e.target.value)} />
+          <Input id="mi-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!form.error("email") || !!err} onChange={(e) => setEmail(e.target.value)} onBlur={() => form.touch("email")} />
+          <FieldError>{form.error("email")}</FieldError>
         </div>
         <div>
           <Label htmlFor="mi-role">Role</Label>

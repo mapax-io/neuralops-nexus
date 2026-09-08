@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MessageSquarePlus, MessageSquareText, PanelRightClose, Plus, Trash2 } from "lucide-react";
+import { Archive, MessageSquarePlus, MessageSquareText, PanelRightClose, Plus, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
@@ -149,6 +149,7 @@ export function ChatListPanel({ pid, cid }: { pid: string; cid: string }) {
           </p>
         }
         confirmLabel="Archive topic"
+        confirmIcon={<Archive size={14} strokeWidth={2} />}
         loading={archive.isPending}
       />
     </aside>

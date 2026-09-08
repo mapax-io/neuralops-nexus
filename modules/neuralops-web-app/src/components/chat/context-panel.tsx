@@ -2,12 +2,13 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, ChevronDown, FileText, Globe, Layers, Link2, Minus, MessagesSquare, Paperclip, Trash2 } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, FileText, Globe, Layers, Link2, Minus, MessagesSquare, Paperclip, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateUrl as vUrl } from "@/lib/validation";
+import { useFormErrors } from "@/hooks/use-form-errors";
 import { SectionHeader } from "@/components/ui/section-header";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import {
@@ -421,7 +422,12 @@ function CheckBox({ checked, indeterminate, onToggle, label }: { checked: boolea
 function AddLinkForm({ projectId, topicId, onDone }: { projectId: string; topicId: string; onDone: () => void }) {
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+  // Both rules derived live: the button gates on them, each field shows its
+  // own once visited.
+  const form = useFormErrors({
+    url: [url, vUrl(url, { label: "a web address" })],
+    name: [name, name.trim() ? vName(name, { label: "label", max: 80 }) : null],
+  });
   const add = useMutation({
     mutationFn: () => attachContextWeb(projectId, topicId, url.trim(), name.trim() || undefined),
     onSuccess: (s) => {
@@ -433,26 +439,24 @@ function AddLinkForm({ projectId, topicId, onDone }: { projectId: string; topicI
   });
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    const ue = vUrl(url, { label: "a web address" });
-    if (ue) return setErr(ue);
-    if (name.trim()) { const ne = vName(name, { label: "label", max: 80 }); if (ne) return setErr(ne); }
+    if (form.invalid) return form.touchAll();
     add.mutate();
   };
   return (
     <form onSubmit={submit} noValidate className="mt-3 flex max-w-xl flex-col gap-3 rounded-xl border border-line bg-surface p-3.5">
       <div>
         <Label htmlFor="ctx-url" required>Web address</Label>
-        <Input id="ctx-url" required placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} autoFocus />
+        <Input id="ctx-url" required placeholder="https://…" value={url} aria-invalid={!!form.error("url")} onChange={(e) => setUrl(e.target.value)} onBlur={() => form.touch("url")} autoFocus />
+        <FieldError>{form.error("url")}</FieldError>
       </div>
       <div>
         <Label htmlFor="ctx-name">Name <span className="text-ink2">(optional)</span></Label>
-        <Input id="ctx-name" placeholder="What to call it" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input id="ctx-name" placeholder="What to call it" value={name} aria-invalid={!!form.error("name")} onChange={(e) => setName(e.target.value)} onBlur={() => form.touch("name")} />
+        <FieldError>{form.error("name")}</FieldError>
       </div>
-      <FieldError>{err}</FieldError>
       <div className="flex gap-2">
         <Button type="button" size="sm" onClick={onDone}>Cancel</Button>
-        <Button type="submit" size="sm" variant="primary" loading={add.isPending}>Add to context</Button>
+        <Button type="submit" size="sm" variant="primary" disabled={form.invalid} loading={add.isPending}><Plus size={14} strokeWidth={2} /> Add to context</Button>
       </div>
     </form>
   );

@@ -1,0 +1,80 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { FieldError, Input, Label } from "@/components/ui/field";
+import { useFormErrors } from "@/hooks/use-form-errors";
+import { supabase } from "@/lib/supabase";
+
+// Both the password-reset link and an invitation email land here with a
+// session in the URL (recovery or invite); the identity SDK picks it up on
+// load. Without one, updateUser can only fail — so the form waits for the
+// session and says what to do when there is none.
+export function ResetPasswordForm() {
+  const router = useRouter();
+  const [session, setSession] = useState<"checking" | "present" | "missing">("checking");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  // Both rules derived live: the button gates on them, each field shows its
+  // own once visited. Length agrees with sign-up and the profile dialog (8).
+  const form = useFormErrors({
+    pw: [password, password.length < 8 ? "Use at least 8 characters." : null],
+    confirm: [confirm, confirm !== password ? "Passwords don't match." : null],
+  });
+
+  useEffect(() => {
+    let alive = true;
+    supabase()
+      .auth.getSession()
+      .then(({ data }) => alive && setSession(data.session ? "present" : "missing"))
+      .catch(() => alive && setSession("missing"));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (form.invalid) return form.touchAll();
+    setPending(true);
+    const { error: err } = await supabase().auth.updateUser({ password });
+    setPending(false);
+    if (err) {
+      return setError(/session/i.test(err.message) ? "This link has expired or was already used — request a new one from the sign-in page." : err.message);
+    }
+    router.push("/servers");
+  };
+
+  if (session === "checking") return <p className="text-[13px] text-ink2" aria-busy>Checking your reset link…</p>;
+  if (session === "missing") {
+    return (
+      <div role="alert" className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2.5 text-[13px] text-ink">
+        This page needs the link from your email (a password reset or an invitation) — open it from there, or{" "}
+        <Link href="/login" className="font-semibold underline underline-offset-2">request a new link</Link> from the sign-in page.
+      </div>
+    );
+  }
+
+  return (
+    // method=post: an un-hydrated native submit keeps the password out of the URL.
+    <form onSubmit={submit} method="post" noValidate className="flex flex-col gap-4">
+      <div>
+        <Label htmlFor="pw" required>New password</Label>
+        <Input id="pw" type="password" required autoFocus autoComplete="new-password" value={password} aria-invalid={!!form.error("pw")} onChange={(e) => setPassword(e.target.value)} onBlur={() => form.touch("pw")} />
+        <FieldError>{form.error("pw")}</FieldError>
+      </div>
+      <div>
+        <Label htmlFor="pw2" required>Confirm password</Label>
+        <Input id="pw2" type="password" required autoComplete="new-password" value={confirm} aria-invalid={!!form.error("confirm")} onChange={(e) => setConfirm(e.target.value)} onBlur={() => form.touch("confirm")} />
+        <FieldError>{form.error("confirm")}</FieldError>
+      </div>
+      <FieldError>{error}</FieldError>
+      <Button type="submit" variant="primary" size="lg" disabled={form.invalid} loading={pending}>Update password</Button>
+    </form>
+  );
+}

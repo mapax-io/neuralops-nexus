@@ -98,3 +98,47 @@ describe("WorkspaceTree", () => {
     expect(screen.getByText(/ask an admin/i)).toBeInTheDocument();
   });
 });
+
+describe("WorkspaceTree — create dialogs follow every rule", () => {
+  it("New project: disabled until a valid name; a visited field explains itself live, duplicates included", async () => {
+    // Projects are stored kebab-cased — the duplicate check compares that form.
+    server.use(http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([{ id: "p1", name: "demo-project", slug: "demo", description: null, channels: [] }])));
+    connectAs("owner");
+    renderTree();
+    await screen.findByText("demo-project");
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    const dialog = screen.getByRole("dialog");
+    const create = within(dialog).getByRole("button", { name: /create project/i });
+    expect(create).toBeDisabled();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument(); // a blank form is not covered in red
+    const name = within(dialog).getByLabelText("Name");
+    fireEvent.blur(name);
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument(); // pristine and empty: quiet
+    fireEvent.change(name, { target: { value: "Demo Project" } });
+    fireEvent.blur(name);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/already exists/);
+    fireEvent.change(name, { target: { value: "" } });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter a project name."); // judged once: live
+    expect(create).toBeDisabled();
+    fireEvent.change(name, { target: { value: "Launch" } });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(create).toBeEnabled();
+  });
+
+  it("New channel: disabled until a valid name that is not already in the project", async () => {
+    connectAs("owner");
+    renderTree();
+    await screen.findByText("Demo Project");
+    fireEvent.click(screen.getByRole("button", { name: "New channel in Demo Project" }));
+    const dialog = screen.getByRole("dialog");
+    const create = within(dialog).getByRole("button", { name: /create channel/i });
+    expect(create).toBeDisabled();
+    const name = within(dialog).getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "general" } });
+    expect(create).toBeDisabled();
+    fireEvent.blur(name);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(/already exists/);
+    fireEvent.change(name, { target: { value: "backend" } });
+    expect(create).toBeEnabled();
+  });
+});
