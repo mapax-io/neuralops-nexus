@@ -108,7 +108,9 @@ AUTH_USER_MODEL = "nucleus.User"
 # Supabase JWT verification
 # =========================================================
 
-SUPABASE_URL = "https://xgfsxikypxjhqlutiepw.supabase.co"
+# Overridable so a deployment can verify sign-ins against its own Supabase
+# project (the web app must point at the same one); JWKS and issuer follow it.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://xgfsxikypxjhqlutiepw.supabase.co").rstrip("/")
 SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_JWT_ISSUER = f"{SUPABASE_URL}/auth/v1"
 SUPABASE_JWT_AUDIENCE = "authenticated"

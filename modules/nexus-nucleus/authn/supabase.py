@@ -12,7 +12,11 @@ class SupabaseTokenError(Exception):
 
 
 class SupabaseAdminError(Exception):
-    pass
+    """`code` is "exists" when the address already has an account (Supabase 422)."""
+
+    def __init__(self, message: str, code: str = "failed"):
+        super().__init__(message)
+        self.code = code
 
 
 jwks_client = PyJWKClient(settings.SUPABASE_JWKS_URL)
@@ -92,6 +96,7 @@ def invite_user_by_email(email: str, redirect_to: str = "", metadata: dict = Non
             detail = json.loads(raw).get("msg") or json.loads(raw).get("message") or raw
         except Exception:
             detail = raw
-        raise SupabaseAdminError(f"Supabase invite failed: {detail}") from exc
+        code = "exists" if exc.code == 422 and "regist" in str(detail).lower() else "failed"
+        raise SupabaseAdminError(f"Supabase invite failed: {detail}", code=code) from exc
     except Exception as exc:
         raise SupabaseAdminError(f"Supabase invite error: {exc}") from exc

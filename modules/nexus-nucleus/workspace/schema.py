@@ -52,6 +52,9 @@ class TopicOut(Schema):
 class InviteRequest(Schema):
     email: str
     role: str = "member"
+    # Where the invitation email lands the invitee (the web app's password
+    # page). Used only when the server holds SUPABASE_SERVICE_KEY.
+    redirect_to: Optional[str] = None
 
 
 class InviteResponse(Schema):
@@ -59,6 +62,12 @@ class InviteResponse(Schema):
     message: str
     email: str
     role: str
+    # invite_to_system() has always returned is_new_user; the schema dropped it.
+    is_new_user: bool = False
+    # Whether the invitee was emailed (needs the service key); email_note says
+    # why not otherwise.
+    email_sent: bool = False
+    email_note: Optional[str] = None
     # Optional now that invite_to_system() has two non-pending outcomes
     # (already a member / granted immediately) with no Invitation row,
     # hence no expiry -- only the "brand new person, pending invite"
@@ -103,6 +112,7 @@ class InviteToProjectRequest(Schema):
     scope: str = "topic"
     topic_id: Optional[str] = None
     role: str = "member"
+    redirect_to: Optional[str] = None   # see InviteRequest.redirect_to
 
 
 class InviteToProjectOut(Schema):
@@ -113,6 +123,8 @@ class InviteToProjectOut(Schema):
     message: str
     server_url: Optional[str] = None
     invite_url: Optional[str] = None   # full link to share with the invitee
+    email_sent: bool = False           # see InviteResponse.email_sent
+    email_note: Optional[str] = None
 
 
 class AvailableUserOut(Schema):
