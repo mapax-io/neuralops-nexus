@@ -15,11 +15,15 @@ mapping raw sender_type into the "user"/"assistant" role an LLM expects.
 from __future__ import annotations
 
 import logging
+from threading import local
 
 import httpx
+from pydantic_ai.capabilities import MCP
 
 from apps.core.config import settings
-from apps.schemas.trigger import HistoryMessage, MCPServerConfig, ModelConfig, PersonaConfig
+import shlex
+from apps.schemas.trigger import HistoryMessage, MCPArgs, ModelConfig, PersonaConfig, PersonaCapabilities
+from fastmcp.client.transports import StdioTransport
 
 log = logging.getLogger(__name__)
 
@@ -51,24 +55,37 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
         max_tokens=model_data.get("max_tokens", 4096) if model_data else 4096,
         temperature=model_data.get("temperature", 0.7) if model_data else 0.7,
     )
+    
+    if data['capabilities']:
+        capabilities = PersonaCapabilities.model_validate(data['capabilities'][0]['capability_config'])
+    else:
+        capabilities = PersonaCapabilities()
 
-    mcp_servers = [
-        MCPServerConfig(
-            id=s["id"],
-            name=s["name"],
-            transport=s["transport"],
-            url=s.get("url"),
-            command=s.get("command"),
-            config=s.get("config") or {},
-            secrets=s.get("secrets") or {},
-            is_first_party=s.get("is_first_party", False),
-            embed_output=s.get("embed_output", False),
-            needs_reauth=s.get("needs_reauth", False),  # NEW
-            auth_type=s.get("auth_type", "static_secrets"),
-            token_env_var=s.get("token_env_var", "OAUTH_ACCESS_TOKEN"),
-        )
-        for s in data.get("mcp_servers", [])
-    ]
+    log.info(data['capabilities'])
+    log.info(data["mcp_servers"])
+    _mcp_servers = data.get('mcp_servers')
+    mcp_servers = []
+    if _mcp_servers:
+        for _mcp_server in _mcp_servers:
+            network_url = _mcp_server.get('url')
+            local_cmd = _mcp_server.get('command')
+            secrets = _mcp_server.get('secrets') or {}
+            
+            if network_url:
+                # Route A: HTTP Server
+                mcp_servers.append(MCPArgs(
+                    url=network_url,
+                    authorization_token=secrets.get('client_secret')
+                ))
+            elif local_cmd:
+                # Route B: Local Server
+                parts = shlex.split(local_cmd)
+                mcp_servers.append(MCPArgs(
+                    url=None,
+                    command=parts[0],
+                    args=parts[1:],
+                    env=secrets  # FastMCP will safely load these as subprocess env vars
+                ))
 
     return PersonaConfig(
         id=data["id"],
@@ -76,6 +93,7 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
         system_prompt=(data.get("prompt") or {}).get("system_prompt", ""),
         model=model,
         mcp_servers=mcp_servers,
+        capabilities=capabilities,
     )
 
 

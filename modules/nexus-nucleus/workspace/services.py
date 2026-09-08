@@ -61,13 +61,13 @@ def get_project_folder_name(project) -> str:
 # Filesystem without also giving it Shell. If that ever needs to be possible,
 # split this into a row per capability -- the model already supports it, only
 # this function would change.
-DEFAULT_PROJECT_CAPABILITIES = ("Filesystem", "Shell", "Web Search", "Web Fetch")
+DEFAULT_PROJECT_CAPABILITIES = ("filesystem", "shell", "web_search", "web_fetch")
 
 # Capability keys whose value must point at THIS project's folder rather than
 # the template's container-wide default of ".".
 _PROJECT_SCOPED_KEYS = {
-    "Filesystem": "root_dir",
-    "Shell": "cwd",
+    "filesystem": "root_dir",
+    "shell": "cwd",
 }
 
 

@@ -11,6 +11,8 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     XSearch,
+    capability,
+    web_search,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -22,6 +24,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
+from fastmcp.client.transports import StdioTransport
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -45,11 +48,14 @@ from apps.interfaces.agent import AgentRunner
 from apps.schemas.trigger import (
     AgentEvent,
     AgentEventType,
-    NativePydanticAICapabilities,
+    PydanticAICapabilities,
+    PersonaCapabilities,
     PersonaConfig,
     ToolCallData,
     TriggerJob,
     TriggerSwarmJob,
+    MCPServerConfig,
+    MCPArgs,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,27 +80,27 @@ class PydanticAIRunner(AgentRunner):
         Planning(),
     ]
 
-    _OPTIONAL_CAPABILITY_REGISTRY = {
-        NativePydanticAICapabilities.ADVISOR: Advisor,
-        NativePydanticAICapabilities.CAPABILITY_CREATION: CapabilityCreation,
-        NativePydanticAICapabilities.COMPACTION: SummarizingCompaction,
-        NativePydanticAICapabilities.DYNAMIC_WORKFLOW: DynamicWorkflow,
-        NativePydanticAICapabilities.FILESYSTEM: FileSystem,
-        NativePydanticAICapabilities.LOCAL_STACK: LocalStack,
-        NativePydanticAICapabilities.MCP: MCP,
-        NativePydanticAICapabilities.MEMORY: Memory,
-        NativePydanticAICapabilities.PLANNING: Planning,
-        NativePydanticAICapabilities.REPO_CONTEXT: RepoContext,
-        NativePydanticAICapabilities.SHELL: Shell,
-        NativePydanticAICapabilities.SKILLS: Skills,
-        NativePydanticAICapabilities.SPEND_LIMITS: SpendLimits,
-        NativePydanticAICapabilities.SUBAGENTS: SubAgents,
-        NativePydanticAICapabilities.THINKING: Thinking,
-        NativePydanticAICapabilities.TOOL_APPROVAL: None,
-        NativePydanticAICapabilities.TOOL_SEARCH: ToolSearch,
-        NativePydanticAICapabilities.WEB_FETCH: WebFetch,
-        NativePydanticAICapabilities.WEB_SEARCH: WebSearch,
-        NativePydanticAICapabilities.X_SEARCH: XSearch,
+    _CAPABILITY_REGISTRY = {
+        PydanticAICapabilities.ADVISOR: lambda x: Advisor(**x),
+        PydanticAICapabilities.CAPABILITY_CREATION: lambda x: CapabilityCreation(**x),
+        PydanticAICapabilities.COMPACTION: lambda x: SummarizingCompaction(**x),
+        PydanticAICapabilities.DYNAMIC_WORKFLOW: lambda x: DynamicWorkflow(**x),
+        PydanticAICapabilities.FILESYSTEM: lambda x: FileSystem(**x),
+        PydanticAICapabilities.LOCAL_STACK: lambda x: LocalStack(**x),
+        PydanticAICapabilities.MCP: lambda x: MCP(**x),
+        PydanticAICapabilities.MEMORY: lambda x: Memory(**x),
+        PydanticAICapabilities.PLANNING: lambda x: Planning(**x),
+        PydanticAICapabilities.REPO_CONTEXT: lambda x: RepoContext(**x),
+        PydanticAICapabilities.SHELL: lambda x: Shell(**x),
+        PydanticAICapabilities.SKILLS: lambda x: Skills(**x),
+        PydanticAICapabilities.SPEND_LIMITS: lambda x: SpendLimits(**x),
+        PydanticAICapabilities.SUBAGENTS: lambda x: SubAgents(**x),
+        PydanticAICapabilities.THINKING: lambda x: Thinking(**x),
+        PydanticAICapabilities.TOOL_APPROVAL: None,
+        PydanticAICapabilities.TOOL_SEARCH: lambda x: ToolSearch(**x),
+        PydanticAICapabilities.WEB_FETCH: lambda x: WebFetch(**x),
+        PydanticAICapabilities.WEB_SEARCH: lambda x: WebSearch(**x),
+        PydanticAICapabilities.X_SEARCH: lambda x: XSearch(**x),
     }
 
     async def run_stream(
@@ -184,15 +190,43 @@ class PydanticAIRunner(AgentRunner):
         return Agent(
             model=PydanticAIRunner._resolve_model(persona),
             instructions=persona.system_prompt,
-            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities),
+            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers),
             retries={"tools": 3},
         )
 
     @classmethod
     def _resolve_capabilities(
-        cls, capabilities: list[NativePydanticAICapabilities]
+        cls, capabilities: PersonaCapabilities, mcp_servers: list[MCPArgs]
     ) -> list[NativeOrLocalTool]:
-        return cls._DEFAULT_CAPABILITY_REGISTRY
+        resolved = []
+
+        if capabilities.filesystem is not None:
+            resolved.append(FileSystem(**capabilities.filesystem.model_dump(exclude_none=True)))
+        if capabilities.web_search is not None:
+            resolved.append(WebSearch(**capabilities.web_search.model_dump(exclude_none=True)))
+        if capabilities.shell is not None:
+            resolved.append(Shell(**capabilities.shell.model_dump(exclude_none=True)))
+        
+        for mcp_server in mcp_servers:
+            if mcp_server.url:
+                # Route A: HTTP/SSE
+                mcp_kwargs = {"url": mcp_server.url}
+                if mcp_server.authorization_token:
+                    mcp_kwargs["authorization_token"] = mcp_server.authorization_token
+                resolved.append(MCP(**mcp_kwargs))
+                
+            elif mcp_server.command:
+                # Route B: Local stdio subprocess
+                # Instantiate the runtime transport object HERE, right before passing it
+                transport = StdioTransport(
+                    command=mcp_server.command,
+                    args=mcp_server.args,
+                    env=mcp_server.env if mcp_server.env else None
+                )
+                resolved.append(MCP(local=transport))
+        return resolved
+
+
 
     @classmethod
     def _resolve_model(cls, persona: PersonaConfig) -> Model:
