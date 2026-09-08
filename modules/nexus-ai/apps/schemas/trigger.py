@@ -3,8 +3,10 @@
 from enum import Enum
 from typing import Any
 from typing import Annotated
+from mcp.client.stdio import StdioServerParameters
 from pydantic import BaseModel, Field, validate_call
-from pydantic_ai import capabilities
+from fastmcp.client.transports import StdioTransport
+
 
 
 # ── Inbound job payload ────────────────────────────────────────────────────────
@@ -45,29 +47,29 @@ class MCPServerConfig(BaseModel):
     token_env_var: str = "OAUTH_ACCESS_TOKEN"
 
 
-class NativePydanticAICapabilities(str, Enum):
-    FILESYSTEM = "Filesystem"
-    SHELL = "Shell"
-    MCP = "MCP"
-    STACK_ONE = "Stack One"
-    LOCAL_STACK = "Local Stack"
-    WEB_SEARCH = "Web Search"
-    WEB_FETCH = "Web Fetch"
-    X_SEARCH = "X Search"
-    THINKING = "Thinking"
-    PLANNING = "Planning"
-    SUBAGENTS = "Sub Agents"
-    DYNAMIC_WORKFLOW = "Dynamic Workflow"
-    ADVISOR = "Advisor"
-    TOOL_SEARCH = "Tool Search"
-    COMPACTION = "Compaction"
-    MEMORY = "Memory"
-    SKILLS = "Skills"
-    REPO_CONTEXT = "Repo Context"
-    GAURDRAILS = "Gaurdrails"
-    SPEND_LIMITS = "Spend Limits"
-    TOOL_APPROVAL = "Tool Approval"
-    CAPABILITY_CREATION = "Capability Creation"
+class PydanticAICapabilities(str, Enum):
+    FILESYSTEM = "filesystem"
+    SHELL = "shell"
+    MCP = "mcp"
+    STACK_ONE = "stack_one"
+    LOCAL_STACK = "local_stack"
+    WEB_SEARCH = "web_search"
+    WEB_FETCH = "web_fetch"
+    X_SEARCH = "x_search"
+    THINKING = "thinking"
+    PLANNING = "planning"
+    SUBAGENTS = "sub_agents"
+    DYNAMIC_WORKFLOW = "dynamic_workflow"
+    ADVISOR = "advisor"
+    TOOL_SEARCH = "tool_search"
+    COMPACTION = "compaction"
+    MEMORY = "memory"
+    SKILLS = "skills"
+    REPO_CONTEXT = "repo_context"
+    GAURDRAILS = "gaurdrails"
+    SPEND_LIMITS = "spend_limits"
+    TOOL_APPROVAL = "tool_approval"
+    CAPABILITY_CREATION = "capability_creation"
 
 
 FileSystemPattern = Annotated[
@@ -83,7 +85,7 @@ FileSystemPattern = Annotated[
 class FileSystem(BaseModel):
     root_dir: str = Field(
         default=".",
-        pattern=r'^[^/\\<>:"|\x00][^<>:"|\x00]*$',
+        pattern=r'^(?:[a-zA-Z]:[\\/])?[^<>:"|?*\x00]*$',
     )
     allowed_patterns: list[FileSystemPattern] = Field(
         default_factory=list,
@@ -120,6 +122,7 @@ class ShellCommands(str, Enum):
     cat = "cat"
     echo = "echo"
     grep = "grep"
+    sed = "sed"
     pwd = "pwd"
     mkdir = "mkdir"
     cp = "cp"
@@ -127,30 +130,93 @@ class ShellCommands(str, Enum):
     head = "head"
     tail = "tail"
     curl = "curl"
+    wget = "wget"
 
 
 class Shell(BaseModel):
-    allowed_commands: list[ShellCommands]
-    denied_commands: list[ShellCommands]
-    allow_interactive: bool = True
-    default_timeout: float = 30.0
-    max_output_chars: int = 50_000
+    cwd: str = Field(
+        default=".",
+        min_length=1,
+        pattern=r'^(?:[a-zA-Z]:[\\/])?[^<>:"|?*\x00]*$',
+        description="Current working directory for the shell execution.",
+    )
 
-class MCPArgs(BaseModel):...
-class Thinking(BaseModel):...
+    allowed_commands: list[ShellCommands] = Field(
+        default_factory = 
+            lambda: [
+                ShellCommands.ls,
+                ShellCommands.touch,
+                ShellCommands.cat,
+                ShellCommands.cd,
+                ShellCommands.grep,
+                ShellCommands.cp,
+                ShellCommands.mkdir
+                    ],
+        description="List of allowed shell commands",
+    )
+    denied_commands: list[ShellCommands] = Field(
+        default_factory=list,
+        description="List of denied commands",
+    )
+    allow_interactive: bool = Field(
+        default=True,
+        description="Allow interactive shell comands",
+    )
+    default_timeout: float = Field(
+        default=30.0,
+        description="Timeout for shell commands"
+    )
+    max_output_chars: int = Field(
+        default=50_000,
+        description="Max output length"
+    )
+
+class MCPArgs(BaseModel):
+    url: str | None = Field(
+        default=None,
+        description=""
+    )
+    authorization_token: str | None = Field(
+        default = None,
+        pattern=r"^[A-Za-z0-9\-_.~+/=]+$"
+    )
+    command: str | None = Field(default=None)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+
+class ThinkingEffort(str, Enum):
+    minimal="minimal"
+    low="low"
+    medium="medium"
+    high="high"
+    xhigh="xhigh"
+
+class Thinking(BaseModel):
+    effort: ThinkingEffort = Field(
+        default=ThinkingEffort.medium,
+        description="Configurable model's thinking effort",
+    )
+
 class Planning(BaseModel):...
 class Memory(BaseModel):...
 
 # TODO *still under construction, do not touch!*
-class PersonaCapabilities(BaseModel):...
+class PersonaCapabilities(BaseModel):
+
+    shell: Shell | None = None
+    thinking: Thinking | None = None
+    web_search: WebSearchArgs | None = None
+    web_fetch: WebFetchArgs | None = None
+    filesystem: FileSystem | None = None
+
 
 class PersonaConfig(BaseModel):
     id: str
     name: str  # "NeuralBot"
     system_prompt: str
     model: ModelConfig
-    mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
-    capabilities: PersonaCapabilities = Field(default_factory=PersonaCapabilities)
+    mcp_servers: list[MCPArgs]
+    capabilities: PersonaCapabilities
 
 
 class HistoryMessage(BaseModel):

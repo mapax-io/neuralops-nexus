@@ -189,7 +189,7 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")  # shared secret with nexus
 # Re-derive it whenever trigger.py's argument models change.
 PROJECTS_ROOT = Path("/nexus/projects")
 MCP_CAPABILITY_TEMPLATE = {
-    "Filesystem": {
+    "filesystem": {
         "root_dir": ".",
         "allowed_patterns": [],
         "denied_patterns": [],
@@ -197,7 +197,7 @@ MCP_CAPABILITY_TEMPLATE = {
             ".git/*", ".env", ".env.*", "*.pem", "*.key", "**/secrets*",
         ],
     },
-    "Shell": {
+    "shell": {
         "cwd": ".",
         # Valid values, from trigger.py's ShellCommands enum: ls touch rm git
         # cd cat echo grep sed pwd mkdir cp mv head tail curl wget. Anything
@@ -208,26 +208,26 @@ MCP_CAPABILITY_TEMPLATE = {
         "default_timeout": 30.0,
         "max_output_chars": 50000,
     },
-    "Stack One": {},
-    "Local Stack": {},
-    "Web Search": {"local": "duckduckgo"},
-    "Web Fetch": {"local": True},
-    "X Search": {},
+    "stack_one": {},
+    "local_stack": {},
+    "web_search": {"local": "duckduckgo"},
+    "web_fetch": {"local": True},
+    "x_search": {},
     # effort: minimal | low | medium | high | xhigh
-    "Thinking": {"effort": "medium"},
-    "Planning": {},
-    "Sub Agents": {},
-    "Dynamic Workflow": {},
-    "Advisor": {},
-    "Tool Search": {},
-    "Compaction": {},
-    "Memory": {},
-    "Skills": {},
-    "Repo Context": {},
-    "Gaurdrails": {},
-    "Spend Limits": {},
-    "Tool Approval": {},
-    "Capability Creation": {},
+    "thinking": {"effort": "medium"},
+    "planning": {},
+    "sub_agents": {},
+    "dynamic_workflow": {},
+    "advisor": {},
+    "tool_search": {},
+    "compaction": {},
+    "memory": {},
+    "skills": {},
+    "repo_context": {},
+    "gaurdrails": {},
+    "spend_limits": {},
+    "tool_approval": {},
+    "capability_creation": {},
 }
 
 # =========================================================
