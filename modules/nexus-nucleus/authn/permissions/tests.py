@@ -686,3 +686,52 @@ class UC16_UC17_McpServerProjectScopeTests(AIResourceTestCase):
 
         PermissionChecker.assign_role(self.sara, self.role_company_admin, self.company)
         self.assertTrue(PermissionChecker.can(self.sara, "mcp_server.delete", obj=unsaved))
+
+
+class UC19_RightsForRespectsScopeReachTests(PermissionCheckerTestCase):
+    """
+    rights_for() must apply the SAME reach rule can() does.
+
+    can() narrows the scope chain before matching assignments:
+
+        eligible = [(level, obj_id) for level, obj_id in chain
+                    if _SCOPE_ORDER[level] <= _SCOPE_ORDER[right_scope]]
+
+    so a TOPIC-anchored assignment can never grant a COMPANY-scoped right.
+    rights_for() gathers assignments from the same chain but has no such
+    filter -- it returns every right on every matching role.
+
+    This is not a theoretical disagreement. rights_for() exists to build
+    the frontend's permission payload (see its docstring), so it decides
+    which buttons get drawn, while can() decides which requests succeed.
+    Where they disagree, the user sees a control that 403s when clicked.
+
+    The fixture below is the realistic shape, not a contrived one: the
+    seeded "Member" role holds model_config.list / persona.list / 
+    mcp_server.list -- all COMPANY scope -- and UC4 already establishes
+    that Member is assigned at TOPIC scope in normal use.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # persona.create is COMPANY scope (see the fixture above), granted
+        # here to a TOPIC-scoped role.
+        RoleRight.objects.create(role=self.role_topic_member, right=self.r_persona_create)
+        PermissionChecker.assign_role(self.ali, self.role_topic_member, self.topic_a)
+
+    def test_can_denies_the_out_of_reach_company_right(self):
+        """The existing, correct behaviour -- included so the pair reads together."""
+        self.assertFalse(
+            PermissionChecker.can(self.ali, "persona.create", obj=self.topic_a)
+        )
+
+    def test_rights_for_does_not_report_the_out_of_reach_right(self):
+        held = PermissionChecker.rights_for(self.ali, obj=self.topic_a)
+        # Genuinely held: a TOPIC right from a TOPIC assignment.
+        self.assertIn("topic.mark_read", held)
+        # Out of reach: a COMPANY right from a TOPIC assignment.
+        self.assertNotIn(
+            "persona.create", held,
+            "rights_for() reported a right that can() denies -- the frontend "
+            "would draw a control the API refuses.",
+        )

@@ -100,8 +100,12 @@ def get_active_session(user_id, topic_id):
         Prefetch(
             "personas",
             queryset=Persona.objects.select_related(
-                "model", "prompt", "agent__model", "agent__mcp_server",
-            ),
+                # agent__model / agent__mcp_server are gone with AIAgent. A
+                # persona now IS the composition: one ModelConfig, optionally
+                # an advisor, and an mcp_servers M2M (prefetched, not
+                # select_related -- it is many-to-many).
+                "model", "advisor_model", "prompt",
+            ).prefetch_related("mcp_servers"),
         )
     ).first()
 
