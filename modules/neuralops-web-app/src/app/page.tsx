@@ -153,7 +153,7 @@ export default function LandingPage() {
               One platform. One source of truth.
             </p>
             <div className="nx-rise mt-8 flex flex-wrap gap-3" style={{ animationDelay: "270ms" }}>
-              <Link href="/login" className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-accent px-6 text-[15px] font-semibold text-accent-ink shadow-[0_8px_24px_-10px_var(--accent-deep)] transition-transform hover:-translate-y-0.5 hover:brightness-110">
+              <Link href="/login" className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-accent px-6 text-[15px] font-semibold text-accent-ink shadow-[0_8px_24px_-10px_var(--accent-deep)] transition-[filter] hover:brightness-110">
                 Open the app <ArrowRight size={16} strokeWidth={2} />
               </Link>
               <a href="#how" className="inline-flex h-11 items-center rounded-[10px] border border-line bg-surface/80 px-6 text-[15px] font-semibold backdrop-blur transition-colors hover:border-accent">
@@ -180,7 +180,7 @@ export default function LandingPage() {
           <div className="mt-11 grid gap-4 md:grid-cols-3">
             {STEPS.map((s) => (
               <Reveal key={s.n}>
-                <div className="group h-full rounded-2xl border border-line bg-surface p-6 transition-all hover:-translate-y-1 hover:border-accent/50 hover:shadow-[0_18px_50px_-28px_var(--accent-deep)]">
+                <div className="group h-full rounded-2xl border border-line bg-surface p-6 transition-[border-color,box-shadow] hover:border-accent/50 hover:shadow-[0_18px_50px_-28px_var(--accent-deep)]">
                   <p className="mb-3 font-mono text-xs text-accent">{s.n}</p>
                   <h3 className="mb-2 font-display text-[17.5px] font-bold">{s.title}</h3>
                   <p className="text-sm text-ink2">{s.body}</p>
@@ -203,7 +203,7 @@ export default function LandingPage() {
           <div className="mt-11 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {PRIMITIVES.map((f) => (
               <Reveal key={f.title}>
-                <div className="group h-full rounded-2xl border border-line bg-surface/90 p-6 backdrop-blur transition-all hover:-translate-y-1 hover:border-accent/50 hover:shadow-[0_18px_50px_-28px_var(--accent-deep)]">
+                <div className="group h-full rounded-2xl border border-line bg-surface/90 p-6 backdrop-blur transition-[border-color,box-shadow] hover:border-accent/50 hover:shadow-[0_18px_50px_-28px_var(--accent-deep)]">
                   <span className="mb-3.5 flex size-9 items-center justify-center rounded-[10px] border border-accent/30 bg-accent/10 text-accent transition-transform group-hover:scale-110">
                     <f.icon size={17} strokeWidth={2} />
                   </span>
@@ -354,7 +354,7 @@ export default function LandingPage() {
           <h2 className="mx-auto font-display text-[clamp(28px,3.6vw,40px)] font-extrabold">Give your team its first AI teammate today.</h2>
           <p className="mx-auto mt-4 max-w-xl text-ink2">Connect to your server, build a persona, and @mention it — ten minutes from sign-in to your first chart.</p>
           <div className="mt-9 flex justify-center gap-3">
-            <Link href="/login" className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-accent px-6 text-[15px] font-semibold text-accent-ink shadow-[0_8px_24px_-10px_var(--accent-deep)] transition-transform hover:-translate-y-0.5 hover:brightness-110">
+            <Link href="/login" className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-accent px-6 text-[15px] font-semibold text-accent-ink shadow-[0_8px_24px_-10px_var(--accent-deep)] transition-[filter] hover:brightness-110">
               Open the app <ArrowRight size={16} strokeWidth={2} />
             </Link>
           </div>
