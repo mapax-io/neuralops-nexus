@@ -159,18 +159,23 @@ describe("loading is distinguishable from holding nothing", () => {
     const { result } = renderGate();
     await waitFor(() => expect(result.current.serverTooOld).toBe(true));
     expect(result.current.loading).toBe(false);
+    // An absent route is not a failure to retry -- different banner, no retry.
+    expect(result.current.failed).toBe(false);
   });
 
   // A 500 is retried (the hook's own retry policy overrides the test client's),
   // so loading stays true across attempts -- correct, the answer really is
   // still unknown -- and only clears once the attempts are exhausted.
-  it("stops loading once a transient failure has exhausted its retries", async () => {
+  it("stops loading once a transient failure has exhausted its retries, and reports it", async () => {
     server.use(http.get(`${BASE}/api/v1/me/permissions/`, () => new HttpResponse(null, { status: 500 })));
     connect("owner");
     const { result } = renderGate();
     await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 10_000 });
     expect(result.current.ready).toBe(false);
+    // Not an out-of-date server -- a failure, which is separately reportable
+    // and retryable. Without this the app hides every control and says nothing.
     expect(result.current.serverTooOld).toBe(false);
+    expect(result.current.failed).toBe(true);
   }, 15_000);
 
   it("is not loading before a server is connected — a disabled query must not hold the app", async () => {

@@ -47,6 +47,17 @@ export interface PermissionGate {
    * such a server, so it says so instead of silently hiding every control.
    */
   serverTooOld: boolean;
+  /**
+   * The request settled without an answer for a reason that is NOT the route
+   * being absent — a 500, a dropped connection. Same consequence as
+   * serverTooOld (nothing can be offered) but a different cause and a
+   * different remedy, so it is surfaced separately and is retryable. Without
+   * this the app would render every control hidden and say nothing, which is
+   * the bug this file exists to prevent, wearing a different hat.
+   */
+  failed: boolean;
+  /** Try again after a failure. */
+  retry: () => void;
   /** May the caller do `right` against the object named by `scope`? */
   can: (right: Right, scope: Scope) => boolean;
   /**
@@ -70,7 +81,7 @@ export function usePermissions(): PermissionGate {
   const token = useConnectionStore((s) => s.token);
 
   const enabled = !!serverUrl && !!token;
-  const { data, error, isPending } = useQuery({
+  const { data, error, isPending, refetch } = useQuery({
     queryKey: permissionsQueryKey(serverUrl),
     queryFn: getMyPermissions,
     // Prerequisites must exist or the call 401s on a reload.
@@ -84,13 +95,15 @@ export function usePermissions(): PermissionGate {
   const can = useCallback((right: Right, scope: Scope) => canRight(data, right, scope), [data]);
   const canAnyProject = useCallback((right: Right) => canAnyProjectRight(data, right), [data]);
   const serverTooOld = error instanceof ApiError && error.status === 404;
+  const failed = !!error && !serverTooOld;
+  const retry = useCallback(() => void refetch(), [refetch]);
   // A disabled query sits at "pending" forever, so only count it as loading
   // once it can actually run. Settled-with-an-error is NOT loading: the app
   // must move on and say so rather than hold the screen indefinitely.
   const loading = enabled && isPending;
 
   return useMemo(
-    () => ({ ready: !!data, loading, serverTooOld, can, canAnyProject }),
-    [data, loading, serverTooOld, can, canAnyProject],
+    () => ({ ready: !!data, loading, serverTooOld, failed, retry, can, canAnyProject }),
+    [data, loading, serverTooOld, failed, retry, can, canAnyProject],
   );
 }
