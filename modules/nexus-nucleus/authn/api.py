@@ -4,7 +4,8 @@ from typing import Optional
 
 from django.conf import settings
 from django.utils import timezone
-from ninja import Router, Schema
+from ninja import File, Router, Schema
+from ninja.files import UploadedFile
 from ninja.errors import HttpError
 
 from .schema import (
@@ -12,8 +13,9 @@ from .schema import (
     SetRoleRightsOut, SignInRequest, SignInResponse,
 )
 from .services import (
-    RoleEditError, SignInError, auth_verify, list_roles, my_permissions,
-    set_role_rights, signin_with_supabase_token,
+    AvatarError, RoleEditError, SignInError, auth_verify, clear_profile_photo,
+    list_roles, my_permissions, set_role_rights, set_profile_photo,
+    signin_with_supabase_token,
 )
 from .supabase import SupabaseTokenError
 from .versions import read_module_versions
@@ -250,3 +252,30 @@ def update_role_rights(request, role_id: str, payload: SetRoleRightsIn):
         return set_role_rights(company, role_id, payload.rights)
     except RoleEditError as exc:
         raise HttpError(400, str(exc))
+
+
+# ── Profile photo ────────────────────────────────────────────────────────────
+
+class AvatarOut(Schema):
+    # Server-relative, like every other avatar the API returns; the client
+    # resolves it against the connected server (absolutizeMedia).
+    avatar: Optional[str] = None
+
+
+@me_router.post("/avatar/", response=AvatarOut)
+def upload_avatar(request, file: UploadedFile = File(...)):
+    """
+    Replace the caller's photo. The upload is decoded and re-encoded server
+    side -- see set_profile_photo -- so nothing the client says about the file
+    is taken at face value.
+    """
+    try:
+        return {"avatar": set_profile_photo(request.auth, file)}
+    except AvatarError as exc:
+        raise HttpError(400, str(exc))
+
+
+@me_router.delete("/avatar/", response=AvatarOut)
+def delete_avatar(request):
+    """Drop a custom photo and fall back to a server-assigned default."""
+    return {"avatar": clear_profile_photo(request.auth)}
