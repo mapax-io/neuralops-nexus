@@ -42,7 +42,7 @@ class Command(BaseCommand):
             sb.invite_user_by_email = stub_ok
             with override_settings(SUPABASE_SERVICE_KEY="", **env):
                 r = wsvc.invite_to_system(company, company.owner, f"nokey-{uuid.uuid4().hex[:6]}@example.test", redirect_to="https://app.example.test/reset-password")
-            self._check("no service key -> pending invite, no email", (r["is_new_user"], r["email_sent"], r["email_note"], len(calls)), (True, False, None, 0))
+            self._check("no service key -> pending invite, no email, note names the gap", (r["is_new_user"], r["email_sent"], "SUPABASE_SERVICE_KEY" in (r["email_note"] or ""), len(calls)), (True, False, True, 0))
             with override_settings(SUPABASE_SERVICE_KEY="service-key", **env):
                 r = wsvc.invite_to_system(company, company.owner, f"sent-{uuid.uuid4().hex[:6]}@example.test", redirect_to="https://app.example.test/reset-password")
             seeded = (calls[-1]["metadata"] or {}).get("nx_servers") or []

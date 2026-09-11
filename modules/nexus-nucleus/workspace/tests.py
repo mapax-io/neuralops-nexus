@@ -485,6 +485,15 @@ class InviteEmailNoteTests(InviteGrantsFixture):
         self.assertIn("no email could be sent", r["email_note"])
         self.assertNotIn("so no email was sent", r["email_note"])
 
+    @override_settings(SUPABASE_SERVICE_KEY="")
+    def test_without_a_service_key_the_note_names_the_gap(self):
+        with patch("authn.supabase.invite_user_by_email") as invite:
+            r = invite_to_system(self.company, self.owner, "fresh@acme.test")
+        invite.assert_not_called()
+        self.assertTrue(r["is_new_user"])
+        self.assertFalse(r["email_sent"])
+        self.assertIn("SUPABASE_SERVICE_KEY", r["email_note"])
+
     @override_settings(SUPABASE_SERVICE_KEY="service-key")
     def test_a_brand_new_address_is_emailed_the_invite(self):
         with patch("authn.supabase.invite_user_by_email", return_value={"id": "x"}) as invite, \
