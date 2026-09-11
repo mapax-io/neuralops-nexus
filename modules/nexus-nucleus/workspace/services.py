@@ -441,7 +441,10 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
     from authn.supabase import SupabaseAdminError, invite_user_by_email, send_recovery_email
 
     if not settings.SUPABASE_SERVICE_KEY:
-        return False, None
+        # A configuration gap, not a delivery failure -- say which, so the
+        # admin reading the toast knows what to set rather than wondering
+        # whether the address was wrong.
+        return False, "This server is not set up to send email -- no SUPABASE_SERVICE_KEY is configured."
     if redirect_to and not redirect_to.startswith(("http://", "https://")):
         redirect_to = None
     server_url = (getattr(settings, "NEURALOPS_SERVER_URL", "") or "").rstrip("/")
