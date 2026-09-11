@@ -163,3 +163,38 @@ describe("message_done after upstream #101 (render_as without a matching output_
     expect(parseEvent({ type: "persist_internal_state", id: "c1", metadata: { internal_model_state: [] } })).toBeNull();
   });
 });
+
+// Tool activity: the worker emits tool_call_start, nucleus relays it as
+// tool_activity, and the bubble shows the server's wording instead of guessing.
+describe("tool activity", () => {
+  const started = () => ev(initialChatState(), { type: "message_start", id: "m1", sender_name: "Layla" });
+  const activity = (label: string, tool = "web_search") =>
+    ({ type: "tool_activity", id: "m1", tool, label });
+
+  it("records the server's label on the streaming message", () => {
+    const s = ev(started(), activity("Searching the web"));
+    expect(s.messages.m1.activity).toBe("Searching the web");
+  });
+
+  it("counts as activity, so a long tool call is not read as a stall", () => {
+    const s = ev(started(), activity("Running a command", "shell"), NOW + 1000);
+    expect(s.messages.m1.isStalled).toBe(false);
+    expect(s.messages.m1.lastActivity).toBe(NOW + 1000);
+  });
+
+  it("clears once tokens start flowing", () => {
+    let s = ev(started(), activity("Searching the web"));
+    s = ev(s, { type: "message_delta", id: "m1", delta: "Found " });
+    expect(s.messages.m1.activity).toBeNull();
+    expect(s.messages.m1.content).toBe("Found ");
+  });
+
+  it("is ignored for a message that does not exist", () => {
+    const s = ev(initialChatState(), { type: "tool_activity", id: "ghost", tool: "x", label: "Using x" });
+    expect(s.messages.ghost).toBeUndefined();
+  });
+
+  it("is dropped when the server sent no label", () => {
+    expect(parseEvent({ type: "tool_activity", id: "m1", tool: "web_search" })).toBeNull();
+  });
+});
