@@ -205,8 +205,10 @@ def remove_user_from_server(company, user_id: str, requesting_user) -> dict:
     ).update(is_active=False)
     # The rights themselves. Left in place, they outlive the membership and
     # come back with the next invite -- a removed company Admin re-invited
-    # into one topic would still be a company Admin.
+    # into one topic would still be a company Admin. The legacy Django group
+    # carries the old has_perm() checks and goes the same way.
     revoke_all_roles(company, access.user)
+    access.user.groups.clear()
     return {"ok": True, "message": f"{email} removed from server."}
 
 
@@ -683,9 +685,16 @@ def apply_grants(company, user, grants: list, role: str, granted_by, strict: boo
     """
     # ProjectMember, Role, PermissionChecker — imported at top of file.
 
+    resolved = _resolve_grants(company, grants, strict=strict)
     project_role = Role.objects.filter(company=company, name=role.capitalize()).first()
+    if resolved and project_role is None:
+        # Membership rows without the RoleAssignment would look granted and
+        # confer nothing -- refuse rather than half-apply.
+        if strict:
+            raise ValueError(f"Role '{role}' is not set up on this server. Run manage.py seed_permissions.")
+        logger.warning("[invite] role %r is not seeded; %s gets membership rows but no rights", role, user.email)
     applied = []
-    for project, topics in _resolve_grants(company, grants, strict=strict):
+    for project, topics in resolved:
         member = ProjectMember.objects.filter(company=company, project=project, user=user).first()
         if not member:
             ProjectMember.objects.create(company=company, project=project, user=user, role=role)
