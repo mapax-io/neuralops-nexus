@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { LogOut, Plus, ServerCog } from "lucide-react";
 import { toast } from "sonner";
 import { validateName as vName } from "@/lib/validation";
@@ -25,11 +26,13 @@ import { pullServers, pushServersDebounced } from "@/lib/servers-sync";
 import { supabase } from "@/lib/supabase";
 import { compareServerVersion } from "@/lib/version";
 import { useConnectionStore } from "@/stores/connection.store";
+import { primePermissions } from "@/hooks/use-permissions";
 import { useSelectionStore } from "@/stores/selection.store";
 import { useServersStore, type SavedServer } from "@/stores/servers.store";
 
 export default function ServersPage() {
   const router = useRouter();
+  const qc = useQueryClient();
   const { token, email, hydrated } = useConnectionStore();
   const { servers, removed, add, remove, touch } = useServersStore();
   const [configs, setConfigs] = useState<Record<string, ServerConfig | null>>({});
@@ -91,6 +94,10 @@ export default function ServersPage() {
         }
         touch(s.id);
         useConnectionStore.getState().connect(out.connection);
+        // Load rights before entering the workspace. Without this the shell
+        // mounts first and every gated control resolves to hidden until the
+        // request lands -- which an owner reads as "I can't create a topic".
+        await primePermissions(qc, out.connection.serverUrl);
         if (compareServerVersion(out.connection.serverVersion) === "minor")
           toast.warning("Server version differs slightly from this app — consider updating the server.");
         // First connect: the server just created this member (and accepted

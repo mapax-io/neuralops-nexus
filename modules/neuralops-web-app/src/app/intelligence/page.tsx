@@ -12,6 +12,7 @@ import { IntelNav, type IntelSection } from "@/components/intelligence/nav";
 import { PersonasTab } from "@/components/intelligence/personas-tab";
 import { FullPageLoader } from "@/components/ui/full-page-loader";
 import { useConnectionStore } from "@/stores/connection.store";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useUiStore } from "@/stores/ui.store";
 
 // The Intelligence area: everything that powers AI teammates. Static URL —
@@ -19,6 +20,7 @@ import { useUiStore } from "@/stores/ui.store";
 export default function IntelligencePage() {
   const router = useRouter();
   const { token, serverUrl, hydrated } = useConnectionStore();
+  const { loading: permsLoading } = usePermissions();
   const [about, setAbout] = useState(false);
   // Section state lives in the ui store — the top bar reads it for its
   // active states and writes it from the quick-launch icons.
@@ -33,7 +35,9 @@ export default function IntelligencePage() {
     else if (!serverUrl) router.replace("/servers");
   }, [hydrated, token, serverUrl, router]);
 
-  if (!hydrated || !token || !serverUrl) {
+  // Rights decide which controls exist, so hold rather than paint a
+  // screen with every gated control resolved to hidden.
+  if (!hydrated || !token || !serverUrl || permsLoading) {
     return (
       <FullPageLoader />
     );
