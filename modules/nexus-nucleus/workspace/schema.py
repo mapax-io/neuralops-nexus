@@ -49,12 +49,23 @@ class TopicOut(Schema):
 
 # ── Members ───────────────────────────────────────────────────────────────────
 
+class GrantIn(Schema):
+    project_id: str
+    # Empty = the whole project: one project-scope assignment, which also
+    # reaches topics created later. Ids = only those topics, each its own
+    # topic-scope assignment (they cannot see sibling topics).
+    topic_ids: List[str] = []
+
+
 class InviteRequest(Schema):
     email: str
     role: str = "member"
     # Where the invitation email lands the invitee (the web app's password
     # page). Used only when the server holds SUPABASE_SERVICE_KEY.
     redirect_to: Optional[str] = None
+    # Projects/topics to add them to as well, with the same role. Applied at
+    # once for an existing user, at acceptance for a brand-new one.
+    grants: List[GrantIn] = []
 
 
 class InviteResponse(Schema):
@@ -73,6 +84,9 @@ class InviteResponse(Schema):
     # hence no expiry -- only the "brand new person, pending invite"
     # outcome sets this. See #120.
     expires_at: Optional[str] = None
+    # What was granted (or stored for acceptance). Echoed so a client can tell
+    # a server that understood `grants` from one that silently dropped them.
+    grants: List[GrantIn] = []
 
 
 class MemberOut(Schema):

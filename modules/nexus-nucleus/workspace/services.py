@@ -6,6 +6,7 @@ import copy
 import hashlib
 import logging
 import secrets
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
@@ -15,7 +16,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from authn.permissions.checker import PermissionChecker
-from authn.permissions.models import Role
+from authn.permissions.models import Role, RoleAssignment
 from authn.permissions.row_rules import (
     _reachable_project_ids, visible_channels, visible_projects, visible_topics,
 )
@@ -199,7 +200,30 @@ def remove_user_from_server(company, user_id: str, requesting_user) -> dict:
     ProjectMember.objects.filter(
         company=company, user_id=user_id, is_active=True
     ).update(is_active=False)
+    TopicParticipant.objects.filter(
+        company=company, user_id=user_id, is_active=True
+    ).update(is_active=False)
+    # The rights themselves. Left in place, they outlive the membership and
+    # come back with the next invite -- a removed company Admin re-invited
+    # into one topic would still be a company Admin. The legacy Django group
+    # carries the old has_perm() checks and goes the same way.
+    revoke_all_roles(company, access.user)
+    access.user.groups.clear()
     return {"ok": True, "message": f"{email} removed from server."}
+
+
+def revoke_all_roles(company, user) -> int:
+    """Delete every RoleAssignment `user` holds in `company`, at any scope."""
+    # RoleAssignment, Project, ChatTopic, Q — imported at top of file.
+
+    project_ids = Project.objects.filter(company=company).values_list("id", flat=True)
+    topic_ids = ChatTopic.objects.filter(company=company).values_list("id", flat=True)
+    deleted, _ = RoleAssignment.objects.filter(user=user).filter(
+        Q(scope_object_type="company", scope_object_id=company.id)
+        | Q(scope_object_type="project", scope_object_id__in=project_ids)
+        | Q(scope_object_type="topic", scope_object_id__in=topic_ids)
+    ).delete()
+    return deleted
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
@@ -348,14 +372,14 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
         return False, "The invitation email could not be sent; pass the steps on instead."
 
 
-def invite_to_system(company, inviter, email: str, role: str = "member", access_payload: dict = None,
+def invite_to_system(company, inviter, email: str, role: str = "member", grants: list | None = None,
                      redirect_to: str | None = None) -> dict:
     """
     The ONE entry point for adding anyone to this company. Every other
     invite (invite_to_project() below, and by extension its topic-scope
     case) calls this FIRST to guarantee real system-level membership,
-    then layers its own narrower grant on top. Idempotent -- calling it
-    on someone who's already a member is a no-op.
+    then layers its narrower grants on top. Idempotent -- calling it on
+    someone who's already a member adds nothing but the grants.
 
     Was named send_invite() -- same job (it's still what POST
     /members/invite/ calls), renamed + fixed as part of #120: the old
@@ -364,39 +388,61 @@ def invite_to_system(company, inviter, email: str, role: str = "member", access_
     PermissionChecker actually checks, so invited people had no real
     rights at all.
 
-    Two outcomes:
-      - Known platform user, just not on this company yet -> grant
-        CompanyAccess + a company-scope RoleAssignment immediately.
+    `grants` -- [{"project_id", "topic_ids"}] -- are the projects/topics
+    they also get `role` in (see apply_grants). Refused up front if any id
+    is unknown, so nothing is half-applied. Two outcomes:
+      - Known platform user (already a member, or not on this company yet)
+        -> CompanyAccess + a company-scope RoleAssignment if missing, then
+        the grants, immediately. An existing member keeps their server
+        role; only the grants use `role`.
       - Nobody with this email exists yet -> create a pending Invitation
-        (token + link) and stop. Membership + the RoleAssignment happen
-        later, when they accept -- see auth_verify() /
-        _add_user_to_invited_project() in authn/services.py, which reads
-        `access_payload` back out to finish the job.
+        (token + link) carrying the grants, and stop. Membership + every
+        RoleAssignment happen later, when they accept -- see auth_verify()
+        / _add_user_to_invited_project() in authn/services.py.
     """
     # CompanyAccess, Invitation, Role, PermissionChecker, User — imported at top of file.
 
     valid_roles = [r.value for r in CompanyAccess.Role]
     if role not in valid_roles:
         raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+    grants = [_grant_dict(project, topics) for project, topics in _resolve_grants(company, grants)]
 
     existing_access = CompanyAccess.objects.filter(
         company=company, user__email=email, is_active=True
-    ).first()
+    ).select_related("user").first()
     if existing_access:
+        applied = apply_grants(company, existing_access.user, grants, role, inviter)
+        added = f" — now also in {_describe_grants(applied)}" if applied else ""
         return {
             "ok": True, "is_new_user": False, "email": email, "role": existing_access.role,
-            "message": f"{email} is already a member of this server.",
+            "message": f"{email} is already a member of this server{added}.",
+            "grants": applied,
         }
 
     user = User.objects.filter(email=email, is_active=True).first()
     if user:
-        CompanyAccess.objects.create(company=company, user=user, role=role, invited_by=inviter)
-        company_role = Role.objects.filter(company=company, name=role.capitalize()).first()
-        if company_role:
-            PermissionChecker.assign_role(user, company_role, company, granted_by=inviter)
+        # A removed member leaves a deactivated row behind (one per company
+        # and user) -- bring it back rather than tripping the constraint.
+        CompanyAccess.objects.update_or_create(
+            company=company, user=user,
+            defaults={"role": role, "invited_by": inviter, "is_active": True},
+        )
+        if grants:
+            # Scoped on purpose: the role lands on the named projects/topics
+            # only. A company-scope role reaches every project (project.list,
+            # channel.list, topic.list are in every default bundle) and would
+            # undo the scoping -- see row_rules.visible_*.
+            applied = apply_grants(company, user, grants, role, inviter)
+        else:
+            company_role = Role.objects.filter(company=company, name=role.capitalize()).first()
+            if company_role:
+                PermissionChecker.assign_role(user, company_role, company, granted_by=inviter)
+            applied = []
+        added = f" and to {_describe_grants(applied)}" if applied else ""
         return {
             "ok": True, "is_new_user": False, "email": email, "role": role,
-            "message": f"{email} added to this server.",
+            "message": f"{email} added to this server{added}.",
+            "grants": applied,
         }
 
     if Invitation.objects.filter(
@@ -409,7 +455,7 @@ def invite_to_system(company, inviter, email: str, role: str = "member", access_
     invitation = Invitation.objects.create(
         company=company, email=email, role=role, invited_by=inviter,
         token_hash=token_hash, expires_at=timezone.now() + timedelta(days=7),
-        access_payload=access_payload or {},
+        access_payload={"grants": grants} if grants else {},
     )
     email_sent, email_note = _send_invite_email(company, email, redirect_to)
     return {
@@ -418,6 +464,7 @@ def invite_to_system(company, inviter, email: str, role: str = "member", access_
         "email": email, "role": role,
         "expires_at": invitation.expires_at.isoformat(),
         "email_sent": email_sent, "email_note": email_note,
+        "grants": grants,
     }
 
 
@@ -586,52 +633,16 @@ def invite_to_project(
     if not email:
         raise ValueError("Provide either an email address or a persona name.")
 
-    # Step 1: invite_to_system() is the ONE place company membership gets
-    # granted. Idempotent -- if this person is already a member, it's a
-    # no-op and we fall straight through to the project-level grant below.
-    # If they're brand new, it stashes {project_id, scope, topic_id} on the
-    # pending Invitation so the project/topic grant can finish later, at
-    # acceptance (see authn/services.py: auth_verify /
-    # _add_user_to_invited_project). See #120.
-    system_result = invite_to_system(
-        company, inviter, email, role=role,
-        access_payload={"project_id": str(project.id), "scope": scope, "topic_id": topic_id},
-        redirect_to=redirect_to,
-    )
+    # One grant -- the whole project, or just this topic. invite_to_system()
+    # owns membership and applies it at once for a known user, or stores it
+    # on the pending Invitation for acceptance when they are brand new. Both
+    # end in apply_grants(), so a /invite and a members-page invite write the
+    # same rows. See #120.
+    grant = {"project_id": str(project.id), "topic_ids": [topic_id] if scope == "topic" and topic_id else []}
+    system_result = invite_to_system(company, inviter, email, role=role, grants=[grant], redirect_to=redirect_to)
 
     if system_result["is_new_user"]:
         return {**system_result, "scope": scope}
-
-    # Step 2: real system member now (just granted above, or already was)
-    # -- add the legacy project membership row.
-    user = User.objects.filter(email=email, is_active=True).first()
-
-    member = ProjectMember.objects.filter(
-        company=company, project=project, user=user
-    ).first()
-    if not member:
-        ProjectMember.objects.create(
-            company=company, project=project, user=user, role=role
-        )
-    elif not member.is_active:
-        member.is_active = True
-        member.role = role
-        member.save(update_fields=["is_active", "role"])
-
-    # Step 3: the actual RBAC grant -- scoped to the project OR the one
-    # topic, never both, so a topic-only invite stays narrow (can't see
-    # sibling topics -- that's the whole point of scope="topic").
-    project_role = Role.objects.filter(company=company, name=role.capitalize()).first()
-    if scope == "topic" and topic_id:
-        _add_to_topic(company, project, topic_id, user, role)
-        topic = ChatTopic.objects.filter(
-            company=company, project=project, id=topic_id, is_active=True
-        ).first()
-        if topic and project_role:
-            PermissionChecker.assign_role(user, project_role, topic, granted_by=inviter)
-    elif project_role:
-        PermissionChecker.assign_role(user, project_role, project, granted_by=inviter)
-
     return {"ok": True, "is_new_user": False, "email": email, "scope": scope, "message": f"{email} added."}
 
 
@@ -643,10 +654,137 @@ def _add_to_topic(company, project, topic_id: str, user, role: str = "participan
     ).first()
     if not topic:
         return
-    TopicParticipant.objects.get_or_create(
+    participant, _ = TopicParticipant.objects.get_or_create(
         company=company, project=project, topic=topic, user=user,
         defaults={"role": TopicParticipant.Role.PARTICIPANT},
     )
+    # Removal deactivates participations; an invite back must revive them.
+    if not participant.is_active:
+        participant.is_active = True
+        participant.save(update_fields=["is_active"])
+
+
+def apply_grants(company, user, grants: list, role: str, granted_by, strict: bool = True) -> list:
+    """
+    Give `user` the `role` in each project or topic listed -- the one place
+    that writes both the legacy rows (ProjectMember / TopicParticipant) and
+    the RoleAssignment the checker actually reads. Every invite path ends
+    here: an existing member at once, a brand-new one at acceptance, the
+    composer's /invite with its single grant.
+
+    A grant is {"project_id", "topic_ids"}. No topic_ids = the whole project:
+    one project-scope assignment, which reaches topics created later too.
+    With ids = only those topics, each its own topic-scope assignment, so
+    they cannot see siblings. Idempotent -- re-applying creates nothing.
+
+    strict: refuse an unknown or archived id (ValueError) before writing
+    anything. Off at acceptance, where a project archived since the invite
+    was sent is skipped rather than failing the sign-in.
+
+    Returns the grants actually applied, in the request's shape.
+    """
+    # ProjectMember, Role, PermissionChecker — imported at top of file.
+
+    resolved = _resolve_grants(company, grants, strict=strict)
+    project_role = Role.objects.filter(company=company, name=role.capitalize()).first()
+    if resolved and project_role is None:
+        # Membership rows without the RoleAssignment would look granted and
+        # confer nothing -- refuse rather than half-apply.
+        if strict:
+            raise ValueError(f"Role '{role}' is not set up on this server. Run manage.py seed_permissions.")
+        logger.warning("[invite] role %r is not seeded; %s gets membership rows but no rights", role, user.email)
+    applied = []
+    for project, topics in resolved:
+        member = ProjectMember.objects.filter(company=company, project=project, user=user).first()
+        if not member:
+            ProjectMember.objects.create(company=company, project=project, user=user, role=role)
+        elif not member.is_active:
+            member.is_active = True
+            member.role = role
+            member.save(update_fields=["is_active", "role"])
+
+        if topics:
+            for topic in topics:
+                _add_to_topic(company, project, str(topic.id), user, role)
+                if project_role:
+                    PermissionChecker.assign_role(user, project_role, topic, granted_by=granted_by)
+        elif project_role:
+            PermissionChecker.assign_role(user, project_role, project, granted_by=granted_by)
+
+        applied.append(_grant_dict(project, topics))
+        logger.info(
+            "[invite] user=%s granted %s in project=%s",
+            user.email, f"{len(topics)} topic(s)" if topics else "the whole project", project.name,
+        )
+    return applied
+
+
+def _resolve_grants(company, grants, strict: bool = True) -> list:
+    """
+    Turn grant dicts into (project, topics) pairs. Entries for the same
+    project merge, and a whole-project entry wins over topic lists for it.
+    Unknown, archived or malformed ids raise ValueError when strict and are
+    dropped otherwise; a topic list whose topics are all gone drops the
+    project rather than widening it to the whole project.
+    """
+    # Project, ChatTopic — imported at top of file.
+
+    merged = {}  # project id -> set of topic ids, or None for the whole project
+    for grant in grants or []:
+        project_id = _as_uuid(grant.get("project_id"))
+        if not project_id:
+            if strict:
+                raise ValueError("A grant is missing its project.")
+            continue
+        raw_topic_ids = grant.get("topic_ids") or []
+        topic_ids = {t for t in (_as_uuid(x) for x in raw_topic_ids) if t}
+        if len(topic_ids) < len(set(raw_topic_ids)) and strict:
+            raise ValueError("A topic id is malformed.")
+        if merged.get(project_id, ()) is None:
+            continue
+        if not topic_ids:
+            merged[project_id] = None
+        else:
+            merged.setdefault(project_id, set()).update(topic_ids)
+
+    resolved = []
+    for project_id, topic_ids in merged.items():
+        project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
+        if not project:
+            if strict:
+                raise ValueError(f"Project {project_id} was not found.")
+            continue
+        topics = []
+        if topic_ids:
+            topics = list(ChatTopic.objects.filter(
+                company=company, project=project, id__in=topic_ids, is_active=True,
+            ))
+            missing = topic_ids - {t.id for t in topics}
+            if missing and strict:
+                raise ValueError(f"Topic {min(str(m) for m in missing)} was not found in project '{project.name}'.")
+            if not topics:
+                continue
+        resolved.append((project, topics))
+    return resolved
+
+
+def _as_uuid(value):
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except ValueError:
+        return None
+
+
+def _grant_dict(project, topics) -> dict:
+    return {"project_id": str(project.id), "topic_ids": [str(t.id) for t in topics]}
+
+
+def _describe_grants(grants: list) -> str:
+    """'2 projects and 3 topics' -- for the outcome message."""
+    projects = sum(1 for g in grants if not g["topic_ids"])
+    topics = sum(len(g["topic_ids"]) for g in grants)
+    parts = [f"{n} {word}{'' if n == 1 else 's'}" for n, word in ((projects, "project"), (topics, "topic")) if n]
+    return " and ".join(parts)
 
 
 def list_available_users(company, project, search: str = "") -> list:

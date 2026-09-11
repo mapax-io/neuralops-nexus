@@ -63,10 +63,9 @@ def _resolve_topic_sync(request, project_id: str, channel_id: str, topic_id: str
     same visible_channels/visible_topics row-visibility used by the sidebar
     list endpoints in workspace/api.py) rather than a plain ID lookup, so a
     channel or topic this user can't see can't be reached here either just
-    because they're a member of the parent project. See the git history /
-    prior chat discussion for the still-open half of this: a user with
-    ONLY a Topic-scoped RoleAssignment (no Project-scope role) still fails
-    the project.view check below before we even get here.
+    because they're a member of the parent project. A user with ONLY a
+    Topic-scoped RoleAssignment gets through get_project() via its
+    reachable-projects fallback, then sees just their topic here.
     """
     user = request.auth
     company = ws_svc.get_company()

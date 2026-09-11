@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { listMembers } from "@/lib/api/members";
 import * as ws from "@/lib/api/workspace";
@@ -22,6 +22,48 @@ export function useTopics(projectId?: string, channelId?: string) {
     refetchInterval: 30_000, // unread dots for closed topics (no user-level realtime channel exists)
     refetchOnWindowFocus: true,
   });
+}
+
+const NO_CHANNELS: ws.Channel[] = [];
+const NO_IDS: string[] = [];
+
+export interface ChannelTopics { channel: ws.Channel; topics: ws.Topic[] }
+
+// Every topic in the listed projects, grouped by channel per project — for
+// pickers that span projects. Topics are listed per channel on the server, so
+// this is one query per channel, on the SAME key useTopics reads: the
+// sidebar's cache, not a copy.
+export function useProjectsTopics(projectIds: string[]) {
+  const serverUrl = useConnectionStore((s) => s.serverUrl);
+  const token = useConnectionStore((s) => s.token);
+  const projects = useProjects();
+  const targets = projectIds.flatMap((pid) =>
+    (projects.data?.find((p) => p.id === pid)?.channels ?? NO_CHANNELS).map((channel) => ({ pid, channel })),
+  );
+  const results = useQueries({
+    queries: targets.map(({ pid, channel }) => ({
+      queryKey: ["topics", serverUrl, pid, channel.id],
+      queryFn: () => ws.listTopics(pid, channel.id),
+      enabled: !!serverUrl && !!token,
+    })),
+  });
+  const failed = results.filter((r) => r.isError);
+  const byProject: Record<string, ChannelTopics[]> = {};
+  for (const pid of projectIds) byProject[pid] = [];
+  targets.forEach(({ pid, channel }, i) => byProject[pid].push({ channel, topics: results[i]?.data ?? [] }));
+  return {
+    loading: projectIds.length > 0 && (projects.isPending || results.some((r) => r.isPending)),
+    error: failed[0]?.error ?? null,
+    // Only what failed: a channel that loaded is not asked again.
+    retry: () => { failed.forEach((r) => void r.refetch()); },
+    byProject,
+  };
+}
+
+// One project's topics by channel — the single-item form of the above.
+export function useProjectTopics(projectId?: string) {
+  const { loading, error, retry, byProject } = useProjectsTopics(projectId ? [projectId] : NO_IDS);
+  return { loading, error, retry, groups: (projectId && byProject[projectId]) || [] };
 }
 
 export function useMembers() {

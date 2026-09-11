@@ -248,18 +248,24 @@ def auth_verify(access_token: str) -> dict:
         # "is this person a member" flag; PermissionChecker only ever reads
         # RoleAssignment. Without this, an accepted invite still leaves the
         # person with zero real rights. See #120.
+        #
+        # Server-wide invites only. One that named projects/topics is scoped
+        # on purpose: the role lands on those objects alone (see
+        # _add_user_to_invited_project). A company-scope role reaches every
+        # project and would undo the scoping -- see row_rules.visible_*.
         from authn.permissions.checker import PermissionChecker
         from authn.permissions.models import Role
-        company_role = Role.objects.filter(company=company, name=invitation.role.capitalize()).first()
-        if company_role:
-            PermissionChecker.assign_role(user, company_role, company, granted_by=invitation.invited_by)
-
-        # Add to corresponding Django group
-        try:
-            group = Group.objects.get(name=invitation.role.capitalize())
-            user.groups.add(group)
-        except Group.DoesNotExist:
-            pass
+        if not _invitation_is_scoped(invitation):
+            company_role = Role.objects.filter(company=company, name=invitation.role.capitalize()).first()
+            if company_role:
+                PermissionChecker.assign_role(user, company_role, company, granted_by=invitation.invited_by)
+            # The legacy Django group carries the old has_perm() checks
+            # (add_invitation and friends), which are company-wide too.
+            try:
+                group = Group.objects.get(name=invitation.role.capitalize())
+                user.groups.add(group)
+            except Group.DoesNotExist:
+                pass
 
         # Mark invitation as accepted
         invitation.status = Invitation.Status.ACCEPTED
@@ -612,53 +618,34 @@ def _delete_stored_avatar(path: str) -> None:
 
 def _add_user_to_invited_project(company, user, invitation):
     """
-    Finish the project/topic half of an accepted invite.
-
-    Reads what was promised in invitation.access_payload -- stashed by
-    workspace/services.py:invite_to_project() when this person was brand
-    new -- and grants BOTH the legacy row (ProjectMember/TopicParticipant)
-    AND the real RoleAssignment the RBAC system checks. Mirrors the
-    existing-member path inside invite_to_project() itself, step for
-    step. If access_payload has no project_id, this was a system-only
-    invite (e.g. POST /members/invite/) -- nothing more to grant. See #120.
+    Finish the project/topic half of an accepted invite: apply the grants
+    invite_to_system() stashed on invitation.access_payload when this person
+    was brand new. Invitations sent before `grants` existed carry a single
+    {project_id, scope, topic_id}; both shapes end in apply_grants(), the one
+    place that writes the legacy rows AND the RoleAssignment the checker
+    reads. A system-only invite has nothing here. See #120.
     """
-    from nucleus.models import Project, ProjectMember, ChatTopic
-    from authn.permissions.checker import PermissionChecker
-    from authn.permissions.models import Role
-    from workspace.services import _add_to_topic
+    from workspace.services import apply_grants
 
     payload = invitation.access_payload or {}
-    project_id = payload.get("project_id")
-    if not project_id:
-        return
+    grants = payload.get("grants")
+    if grants is None:
+        project_id = payload.get("project_id")
+        if not project_id:
+            return
+        topic_id = payload.get("topic_id") if payload.get("scope") == "topic" else None
+        grants = [{"project_id": project_id, "topic_ids": [topic_id] if topic_id else []}]
 
-    project = Project.objects.filter(id=project_id, company=company, is_active=True).first()
-    if not project:
-        return
+    # Not strict: a project archived since the invite went out must not fail
+    # the sign-in -- the rest of the grants still apply.
+    applied = apply_grants(company, user, grants, invitation.role, invitation.invited_by, strict=False)
+    logger.info("[invite] user=%s granted %d project(s) at acceptance", user.email, len(applied))
 
-    member, _ = ProjectMember.objects.get_or_create(
-        company=company, project=project, user=user,
-        defaults={"role": invitation.role},
-    )
-    if not member.is_active:
-        member.is_active = True
-        member.save(update_fields=["is_active"])
 
-    project_role = Role.objects.filter(company=company, name=invitation.role.capitalize()).first()
-    scope = payload.get("scope", "project")
-    topic_id = payload.get("topic_id")
-
-    if scope == "topic" and topic_id:
-        _add_to_topic(company, project, topic_id, user, invitation.role)
-        topic = ChatTopic.objects.filter(
-            company=company, project=project, id=topic_id, is_active=True
-        ).first()
-        if topic and project_role:
-            PermissionChecker.assign_role(user, project_role, topic, granted_by=invitation.invited_by)
-    elif project_role:
-        PermissionChecker.assign_role(user, project_role, project, granted_by=invitation.invited_by)
-
-    logger.info("[invite] user=%s added to project=%s (scope=%s)", user.email, project.name, scope)
+def _invitation_is_scoped(invitation) -> bool:
+    """True when the invite named projects/topics, in either payload shape."""
+    payload = invitation.access_payload or {}
+    return bool(payload.get("grants") or payload.get("project_id"))
 
 
 # =========================================================

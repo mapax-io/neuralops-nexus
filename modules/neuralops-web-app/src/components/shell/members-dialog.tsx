@@ -2,22 +2,18 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation } from "@tanstack/react-query";
 import { BadgeCheck, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { FieldError, Input, Label } from "@/components/ui/field";
 import { Skeleton } from "@/components/ui/surfaces";
 import { absolutizeMedia } from "@/lib/api/client";
-import { notifyInvite } from "@/lib/invite-toast";
-import { inviteMember } from "@/lib/api/members";
 import { useMembers } from "@/hooks/use-workspace";
 import { useQuery } from "@tanstack/react-query";
 import { listTeam } from "@/lib/api/team";
 import { listPersonas } from "@/lib/api/intelligence";
 import { useConnectionStore } from "@/stores/connection.store";
-import { validateEmail } from "@/lib/validation";
-import { useFormErrors } from "@/hooks/use-form-errors";
+import { useInvite } from "@/hooks/use-invite";
+import { InviteFields } from "@/components/shell/invite-fields";
 import { usePermissions } from "@/hooks/use-permissions";
 import { companyScope } from "@/lib/permissions";
 
@@ -30,40 +26,15 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
   const { can } = usePermissions();
   const canInvite = can("company.invite_member", companyScope());
   const [inviting, setInviting] = useState(false);
-  const [email, setEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("member");
-  // The server's answer lives in err; the rule below gates the button and
-  // shows under the field once visited.
-  const [err, setErr] = useState<string | null>(null);
-  const form = useFormErrors({ email: [email, validateEmail(email)] });
+  // A sent invite folds the form away; the hook has already reset the fields.
+  const inv = useInvite({ onDone: () => { setInviting(false); refetch(); } });
 
   const router = useRouter();
-  const invite = useMutation({
-    mutationFn: () => inviteMember(email.trim(), inviteRole),
-    onSuccess: (r) => {
-      const { serverUrl, connection } = useConnectionStore.getState();
-      notifyInvite(r, { serverUrl, appOrigin: window.location.origin, companyName: connection?.companyName });
-      setEmail("");
-      setInviting(false);
-      form.reset();
-      refetch();
-    },
-    onError: (e) => setErr(e.message),
-  });
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setErr(null);
-    if (form.invalid) return form.touchAll();
-    invite.mutate();
-  };
 
   // Closing forgets the half-typed invite and its error — reopening starts clean.
   const close = () => {
     setInviting(false);
-    setEmail("");
-    setErr(null);
-    form.reset();
+    inv.reset();
     onClose();
   };
 
@@ -127,29 +98,11 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
         })}
       </ul>
       {canInvite && inviting && (
-        <form onSubmit={submit} noValidate className="mt-4 flex flex-col gap-3 rounded-xl border border-line bg-surface2/50 p-3.5">
-          <div>
-            <Label htmlFor="inv-email" required>Email</Label>
-            <Input id="inv-email" type="email" required autoFocus placeholder="teammate@company.com" value={email} aria-invalid={!!form.error("email") || !!err} onChange={(e) => setEmail(e.target.value)} onBlur={() => form.touch("email")} />
-          <FieldError>{form.error("email")}</FieldError>
-          </div>
-          <div>
-            <Label htmlFor="inv-role">Role</Label>
-            <select
-              id="inv-role"
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value)}
-              className="h-10 w-full rounded-[10px] border border-line bg-surface px-3 text-[14px] outline-none transition-[border-color,box-shadow] focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)]"
-            >
-              <option value="member">Member — works in projects</option>
-              <option value="admin">Admin — manages projects, models, people</option>
-              <option value="viewer">Viewer — read-only</option>
-            </select>
-          </div>
-          <FieldError>{err}</FieldError>
+        <form onSubmit={inv.submit} noValidate className="mt-4 flex flex-col gap-3 rounded-xl border border-line bg-surface2/50 p-3.5">
+          <InviteFields inv={inv} idPrefix="inv" />
           <div className="flex justify-end gap-2">
             <Button type="button" size="sm" onClick={() => setInviting(false)}>Cancel</Button>
-            <Button type="submit" size="sm" variant="primary" disabled={form.invalid} loading={invite.isPending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
+            <Button type="submit" size="sm" variant="primary" disabled={inv.invalid} loading={inv.pending}><UserPlus size={14} strokeWidth={2} /> Invite</Button>
           </div>
         </form>
       )}

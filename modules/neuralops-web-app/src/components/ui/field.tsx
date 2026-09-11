@@ -1,3 +1,4 @@
+import { Check, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // `required` draws the house asterisk. It is CSS-generated (::after) on
@@ -42,6 +43,33 @@ export function Input({ className, autoComplete, type, ...props }: React.InputHT
       )}
       {...props}
     />
+  );
+}
+
+// Themed tri-state checkbox (button + aria-checked) — native color styling is
+// unreliable across the token themes, so we draw it.
+export function Checkbox({ checked, indeterminate, onToggle, label, disabled }: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onToggle: () => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={indeterminate ? "mixed" : checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onToggle}
+      className={cn(
+        "flex size-[18px] flex-none items-center justify-center rounded-[5px] border transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        checked || indeterminate ? "border-accent bg-accent text-accent-ink" : "border-line bg-surface hover:border-ink2",
+      )}
+    >
+      {indeterminate ? <Minus size={12} strokeWidth={3} /> : checked ? <Check size={12} strokeWidth={3} /> : null}
+    </button>
   );
 }
 

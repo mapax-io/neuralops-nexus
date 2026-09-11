@@ -11,6 +11,13 @@ export interface Member {
 
 export const listMembers = () => apiJson<Member[]>(`/api/v1/members/`);
 
+// A project to add the invitee to. Empty topic_ids = the whole project (a
+// project-scope role, reaching topics created later); ids = only those topics.
+export interface Grant {
+  project_id: string;
+  topic_ids: string[];
+}
+
 export interface InviteResult {
   ok: boolean;
   message: string;
@@ -24,15 +31,22 @@ export interface InviteResult {
   // invitee; email_note says why not otherwise (address already registered…).
   email_sent?: boolean;
   email_note?: string | null;
+  // Echoed by a server that understood `grants`; absent on one that silently
+  // ignored the field — which is how the client tells the two apart.
+  grants?: Grant[];
 }
 
 // Where the invitation email should land the invitee: the app's own reset
 // page, where they set a password. Must be on the project's redirect list.
 export const inviteRedirectTo = () => `${window.location.origin}/reset-password`;
 
-// Server checks the add_invitation permission; 403 surfaces as a toast.
-export const inviteMember = (email: string, role: string, redirectTo: string = inviteRedirectTo()) =>
-  apiJson<InviteResult>(`/api/v1/members/invite/`, { method: "POST", body: JSON.stringify({ email, role, redirect_to: redirectTo }) });
+// Server checks the add_invitation permission; 403 surfaces as a toast. With
+// grants, the role lands on those projects/topics only; without, server-wide.
+export const inviteMember = (email: string, role: string, grants: Grant[] = [], redirectTo: string = inviteRedirectTo()) =>
+  apiJson<InviteResult>(`/api/v1/members/invite/`, {
+    method: "POST",
+    body: JSON.stringify({ email, role, redirect_to: redirectTo, ...(grants.length ? { grants } : {}) }),
+  });
 
 // Server rules: cannot remove the owner or yourself; Admin+ only.
 export const removeMember = (userId: string) =>
