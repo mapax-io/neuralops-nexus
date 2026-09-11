@@ -34,8 +34,15 @@ beforeEach(() => {
     http.get(`${BASE}/api/v1/members/`, () => HttpResponse.json([{ user_id: "u1", email: "owner@acme.test", role: "owner", avatar: null, invited_by: null }])),
     http.post(`${BASE}/api/v1/members/invite/`, async ({ request }) => {
       invited = (await request.json()) as Record<string, unknown>;
-      return HttpResponse.json({ status: "invited", email: "new@acme.test", role: "member", message: "ok", email_sent: false });
+      return HttpResponse.json({ status: "invited", email: "new@acme.test", role: "member", message: "ok", email_sent: false, grants: invited.grants ?? [] });
     }),
+    http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([
+      { id: "p1", name: "Alpha", slug: "alpha", description: null, channels: [{ id: "c1", name: "general", slug: "general", description: null }] },
+    ])),
+    http.get(`${BASE}/api/v1/projects/p1/channels/c1/topics/`, () => HttpResponse.json([
+      { id: "t1", title: "chat#1", slug: "chat-1", channel_id: "c1", project_id: "p1" },
+      { id: "t2", title: "chat#2", slug: "chat-2", channel_id: "c1", project_id: "p1" },
+    ])),
   );
 });
 
@@ -58,5 +65,22 @@ describe("MembersDialog — the invite form follows its rule", () => {
     fireEvent.click(invite);
     await waitFor(() => expect(invited).not.toBeNull());
     expect(invited).toMatchObject({ email: "new@acme.test", role: "member" });
+  });
+});
+
+describe("MembersDialog — an invite can land in projects and topics", () => {
+  it("sends the picks as grants: a whole project narrowed to one topic", async () => {
+    renderDialog();
+    fireEvent.click(await screen.findByRole("button", { name: /invite a teammate/i }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Email"), { target: { value: "new@acme.test" } });
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "Add to Alpha" }));
+    fireEvent.click(await within(dialog).findByRole("checkbox", { name: "Add to chat#2" }));
+    expect(within(dialog).getByRole("checkbox", { name: "Add to Alpha" })).toHaveAttribute("aria-checked", "mixed");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^invite$/i }));
+    await waitFor(() => expect(invited).not.toBeNull());
+    expect(invited).toMatchObject({ email: "new@acme.test", role: "member", grants: [{ project_id: "p1", topic_ids: ["t1"] }] });
+    // The form folds away on success, as it always did.
+    await waitFor(() => expect(within(dialog).queryByLabelText("Email")).not.toBeInTheDocument());
   });
 });
