@@ -21,8 +21,13 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 DICEBEAR_BASE = "https://api.dicebear.com/9.x"
+# Personas only. The human pool was "avataaars" -- cartoon faces with hair --
+# and assigning one at random put a face of the wrong apparent gender on real
+# teammates. People now fall back to the initials the UI renders for an empty
+# avatar, which is accurate by construction; see assign_avatar() in
+# authn/services.py. A persona is a robot, so "bottts" claims nothing about
+# anyone.
 DICEBEAR_STYLES = {
-    "human": "avataaars",
     "persona": "bottts",
 }
 

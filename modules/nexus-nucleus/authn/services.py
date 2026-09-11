@@ -49,6 +49,16 @@ def assign_avatar(user) -> str | None:
     Auto-assign a random avatar from the preset pool (see #148), mirroring
     assign_display_name()'s "skip if already set" idempotency.
 
+    PERSONAS ONLY. Real people no longer get one: the human pool was DiceBear
+    "avataaars", cartoon faces with hair, and handing them out at random put a
+    face of the wrong apparent gender on real teammates. A picture of a person
+    that is not them is worse than no picture, and there is nothing to derive a
+    correct one from -- the server knows an email and a display name. So humans
+    fall through to the initials the UI already renders when avatar is empty
+    (message bubbles, the members list, the team dialog), which is accurate by
+    construction. Personas keep theirs: "bottts" is a robot, which is what a
+    persona is, and it carries no claim about a person.
+
     Pool must be pre-seeded once via `python manage.py seed_avatars`, which
     caches DiceBear-generated PNGs under MEDIA_ROOT/avatars/pool/<kind>/ --
     a different style for humans vs personas so identity type is visually
@@ -69,11 +79,14 @@ def assign_avatar(user) -> str | None:
     if user.avatar:
         return user.avatar.name
 
+    if user.user_type != User.UserType.PERSONA:
+        return None
+
     import random
     from pathlib import Path
     from django.conf import settings
 
-    kind = "persona" if user.user_type == User.UserType.PERSONA else "human"
+    kind = "persona"
     pool_dir = Path(settings.MEDIA_ROOT) / "avatars" / "pool" / kind
 
     if not pool_dir.is_dir():
