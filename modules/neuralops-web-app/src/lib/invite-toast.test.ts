@@ -24,6 +24,11 @@ describe("notifyInvite — one toast per outcome", () => {
     expect(opts.action).toBeUndefined();
   });
 
+  it("a pending invite the server emailed WITH a note: the note is the explanation (a sign-in email went instead)", () => {
+    notifyInvite({ email: "a@b.test", is_new_user: true, email_sent: true, email_note: "They already had a NeuralOps account, so a sign-in email was sent instead." }, ctx);
+    expect(success).toHaveBeenCalledWith("Invitation email sent to a@b.test.", expect.objectContaining({ description: expect.stringMatching(/sign-in email was sent instead/) }));
+  });
+
   it("a pending invite with no email: steps to copy, with the server's note when it gave one", () => {
     notifyInvite({ email: "sam@acme.io", is_new_user: true, email_sent: false, email_note: "They already have a NeuralOps account, so no email was sent." }, ctx);
     const [title, opts] = success.mock.calls[0] as [string, { description?: string; action?: { label: string } }];

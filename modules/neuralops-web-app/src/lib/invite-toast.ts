@@ -16,8 +16,10 @@ export function notifyInvite(
     return;
   }
   if (r.email_sent) {
+    // The server says when it sent something other than the invite itself
+    // (a sign-in email for an address Supabase already knew).
     toast.success(`Invitation email sent to ${r.email}.`, {
-      description: "They set a password from the email, find this server on their launcher, and connect.",
+      description: r.email_note ?? "They set a password from the email, find this server on their launcher, and connect.",
       duration: 8_000,
     });
     return;
