@@ -450,11 +450,15 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       .finally(() => tplSeqRef.current === seq && setTplLoading(false));
   };
 
+  // True from submit until the create has settled: the persona list refetches
+  // before this dialog closes, and the name just sent must not read as a
+  // duplicate of itself for that gap.
+  const [submitting, setSubmitting] = useState(false);
   const validateName = (v: string) => {
     const n = v.trim();
     if (!n) return "Give the persona a name.";
     if (!isMentionableName(n)) return "Names must be @mentionable — letters, numbers and underscores only, and not a reserved word.";
-    if (projectPersonas?.some((p) => p.name.toLowerCase() === n.toLowerCase())) return "A persona with this name already exists in this project.";
+    if (!submitting && projectPersonas?.some((p) => p.name.toLowerCase() === n.toLowerCase())) return "A persona with this name already exists in this project.";
     return null;
   };
   // Every rule the submit needs, derived live: the button gates on all of
@@ -521,6 +525,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
     // with a stale list) reveals every message instead of posting.
     if (form.invalid) return form.touchAll();
     inFlight.current = true;
+    setSubmitting(true);
     const n = name.trim();
     // Attach & use: a model picked from another project is attached here
     // first (the server requires it), then the persona is created — one
@@ -532,6 +537,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
           await setProject.mutateAsync({ projectId, modelId: id, attach: true });
         } catch {
           inFlight.current = false;
+          setSubmitting(false);
           return; // the hook already toasted; stay in the dialog to retry
         }
       }
@@ -547,7 +553,7 @@ function CreatePersonaDialog({ open, onClose, defaultProjectId, onCreated }: {
       max_tokens: Number(tokens),
       max_steps: Number(steps),
       prompt: { system_prompt: fillPersonaName(systemPrompt, n).trim(), output_type: outputType },
-    }, { onSettled: () => { inFlight.current = false; } });
+    }, { onSettled: () => { inFlight.current = false; setSubmitting(false); } });
   };
 
   return (
