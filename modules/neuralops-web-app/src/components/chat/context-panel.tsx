@@ -2,11 +2,11 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, ChevronDown, FileText, Globe, Layers, Link2, Minus, MessagesSquare, Paperclip, Plus, Trash2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, FileText, Globe, Layers, Link2, MessagesSquare, Paperclip, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
-import { FieldError, Input, Label } from "@/components/ui/field";
+import { Checkbox, FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateUrl as vUrl } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -251,7 +251,7 @@ export function ContextPanel({ projectId, topicId, onViewInChat }: { projectId: 
                   {/* Select-all header — only when the tab has selectable items. */}
                   {deletableIds.length > 0 && (
                     <div className="mt-4 flex items-center gap-2.5 px-1">
-                      <CheckBox checked={allSelected} indeterminate={someSelected} onToggle={toggleAll} label="Select all in this tab" />
+                      <Checkbox checked={allSelected} indeterminate={someSelected} onToggle={toggleAll} label="Select all in this tab" />
                       <span className="text-[12px] text-ink2">
                         {selectedInTab.length > 0 ? `${selectedInTab.length} selected` : "Select all"}
                       </span>
@@ -348,7 +348,7 @@ function ItemRow({ item, directive, selected, onToggle, onRemoveOne, onViewInCha
   return (
     <li className="border-b border-line last:border-b-0">
       <div className="flex items-center gap-2.5 px-3.5 py-2">
-        {item.deletable && <CheckBox checked={selected} onToggle={onToggle} label={`Select ${item.label}`} />}
+        {item.deletable && <Checkbox checked={selected} onToggle={onToggle} label={`Select ${item.label}`} />}
         {hasDetails ? (
           <button
             onClick={() => setExpanded((v) => !v)}
@@ -397,25 +397,6 @@ function ItemRow({ item, directive, selected, onToggle, onRemoveOne, onViewInCha
         </dl>
       )}
     </li>
-  );
-}
-
-// Themed tri-state checkbox (button + aria-checked) — native color styling is
-// unreliable across the token themes, so we draw it.
-function CheckBox({ checked, indeterminate, onToggle, label }: { checked: boolean; indeterminate?: boolean; onToggle: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={indeterminate ? "mixed" : checked}
-      aria-label={label}
-      onClick={onToggle}
-      className={`flex size-[18px] flex-none items-center justify-center rounded-[5px] border transition-colors ${
-        checked || indeterminate ? "border-accent bg-accent text-accent-ink" : "border-line bg-surface hover:border-ink2"
-      }`}
-    >
-      {indeterminate ? <Minus size={12} strokeWidth={3} /> : checked ? <Check size={12} strokeWidth={3} /> : null}
-    </button>
   );
 }
 
