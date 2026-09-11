@@ -259,6 +259,54 @@ class UC12_RightsForTests(PermissionCheckerTestCase):
         rights = PermissionChecker.rights_for(self.ali, obj=self.topic_a)
         self.assertEqual(rights, set())
 
+    def test_rights_for_narrows_by_right_scope_like_can_does(self):
+        """
+        A company-scoped right must NOT be reported for a topic-scoped
+        assignment. rights_for() used to return every right on every matching
+        role, so it claimed rights can() denies -- and that payload is what
+        the frontend draws its buttons from.
+        """
+        # Give the topic-scoped role a company-scoped right it can never reach.
+        RoleRight.objects.create(role=self.role_topic_member, right=self.r_persona_create)
+        PermissionChecker.assign_role(self.ali, self.role_topic_member, self.topic_a)
+
+        rights = PermissionChecker.rights_for(self.ali, obj=self.topic_a)
+        self.assertNotIn("persona.create", rights)
+        self.assertEqual(rights, {"topic.mark_read", "persona.mention"})
+        # ... and it now agrees with can(), which is the point.
+        self.assertFalse(PermissionChecker.can(self.ali, "persona.create", obj=self.topic_a))
+
+    def test_rights_for_keeps_levels_separate_when_roles_differ(self):
+        """
+        Viewer at company + Admin on one project: the project row must not
+        hand out company-scoped rights, and the company row must still grant
+        the ones it legitimately holds.
+        """
+        viewer = Role.objects.create(
+            company=self.company, name="Viewer", scope="company", description="Read-only.",
+        )
+        RoleRight.objects.create(role=viewer, right=self.r_topic_mark_read)
+
+        PermissionChecker.assign_role(self.ali, viewer, self.company)
+        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
+
+        rights = PermissionChecker.rights_for(self.ali, obj=self.project)
+        # From the project-scoped Admin row (project/topic-scoped rights).
+        self.assertIn("channel.create", rights)
+        # persona.create is COMPANY-scoped and only the Viewer row is anchored
+        # there -- the Admin row must not reach up to grant it.
+        self.assertNotIn("persona.create", rights)
+        self.assertFalse(PermissionChecker.can(self.ali, "persona.create", obj=self.project))
+
+    def test_rights_for_company_scope_is_unchanged(self):
+        """A company-scoped assignment still reports every right on its role."""
+        PermissionChecker.assign_role(self.ali, self.role_company_admin, self.company)
+        rights = PermissionChecker.rights_for(self.ali, company=self.company)
+        self.assertIn("project.create", rights)
+        self.assertIn("persona.create", rights)
+        self.assertIn("topic.mark_read", rights)
+
+
 
 class EdgeCaseTests(PermissionCheckerTestCase):
     """Things that don't map to a single use case above, but matter for correctness."""

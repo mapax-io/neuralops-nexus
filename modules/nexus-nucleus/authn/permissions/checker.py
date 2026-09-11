@@ -17,9 +17,15 @@ Usage from an api.py view:
 
     ...
 
-    visible_projects = PermissionChecker.objects_of_type(
-        request.auth, "project.list", Project, company=company,
-    )
+"Which rows may this user SEE at all" is a different question, and a
+different module: authn/permissions/row_rules.py.
+
+    from authn.permissions.row_rules import visible_projects
+
+    projects = visible_projects(request.auth, company)
+
+(This docstring used to show a PermissionChecker.objects_of_type() example.
+No such method has ever existed -- following it raised AttributeError.)
 """
 from django.db.models import Q
 
@@ -186,26 +192,50 @@ class PermissionChecker:
         "union of stacked roles" behaviour). Useful for building a
         frontend permissions payload in one query instead of calling
         can() once per right.
+
+        Agrees with can() by construction: a right appears here if and only
+        if can() would return True for it against the same object.
         """
+        if user is None or not getattr(user, "is_authenticated", False):
+            return set()
+
         chain = _scope_chain(obj) if obj is not None else (
             [(ScopeType.COMPANY, company.id)] if company else []
         )
         if not chain:
             return set()
 
-        # Every right whose scope is reachable from at least one link
-        # in the chain, then narrowed down to the ones actually granted.
+        # Only role_id and the anchor scope are read below, so no join.
         assignments = RoleAssignment.objects.filter(user=user).filter(
             Q(*[
                 Q(scope_object_type=level, scope_object_id=obj_id)
                 for level, obj_id in chain
             ], _connector=Q.OR)
-        ).select_related("role")
-        if not assignments.exists():
+        ).values_list("scope_object_type", "role_id")
+
+        # Group the roles by the scope each assignment is anchored at, then
+        # keep only rights that anchor can actually reach. Without this an
+        # assignment reports every right on its role regardless of the right's
+        # own scope -- so a topic-scoped role claimed company-scoped rights
+        # that can() denies, and the two disagreed. Grouping (rather than one
+        # flat role_id list) matters when the levels carry different roles:
+        # Viewer at company + Admin on one project must not let the Admin row
+        # hand out company-scoped rights.
+        roles_by_level = {}
+        for level, role_id in assignments:
+            roles_by_level.setdefault(level, set()).add(role_id)
+        if not roles_by_level:
             return set()
 
-        role_ids = [a.role_id for a in assignments]
-        codes = RoleRight.objects.filter(role_id__in=role_ids).values_list("right__code", flat=True)
+        query = Q()
+        for level, role_ids in roles_by_level.items():
+            reachable = [
+                scope for scope, order in _SCOPE_ORDER.items()
+                if order >= _SCOPE_ORDER[level]
+            ]
+            query |= Q(role_id__in=role_ids, right__scope__in=reachable)
+
+        codes = RoleRight.objects.filter(query).values_list("right__code", flat=True)
         return set(codes)
 
     @staticmethod
