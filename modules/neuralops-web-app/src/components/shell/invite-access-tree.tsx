@@ -27,7 +27,9 @@ export function InviteAccessTree({ selection, onChange, idPrefix }: {
   // Delayed and held: the list is usually cached by the sidebar, and a
   // skeleton that flashes for a few frames reads as a glitch.
   const showLoader = useDelayedLoading(isPending);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Rows that already hold picks start open, so what someone has is visible
+  // without a click (the member access editor loads a selection).
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(Object.keys(selection)));
   const setOpen = (id: string, open: boolean) =>
     setExpanded((cur) => {
       const next = new Set(cur);

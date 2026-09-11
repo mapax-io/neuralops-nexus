@@ -48,6 +48,22 @@ export const inviteMember = (email: string, role: string, grants: Grant[] = [], 
     body: JSON.stringify({ email, role, redirect_to: redirectTo, ...(grants.length ? { grants } : {}) }),
   });
 
+// What a member holds, in the invite's own shape: a server-wide role, or the
+// projects/topics they are scoped to.
+export interface MemberAccess {
+  user_id: string;
+  role: string;
+  server_wide: boolean;
+  grants: Grant[];
+}
+
+export const getMemberAccess = (userId: string) => apiJson<MemberAccess>(`/api/v1/members/${userId}/access/`);
+
+// Full replace, same rule as an invite: no grants = server-wide at `role`;
+// otherwise exactly those, at `role`. Server refuses the owner and yourself.
+export const setMemberAccess = (userId: string, body: { role: string; grants: Grant[] }) =>
+  apiJson<MemberAccess>(`/api/v1/members/${userId}/access/`, { method: "PUT", body: JSON.stringify(body) });
+
 // Server rules: cannot remove the owner or yourself; Admin+ only.
 export const removeMember = (userId: string) =>
   apiJson<{ ok: boolean; message: string }>(`/api/v1/members/${userId}/`, { method: "DELETE" });

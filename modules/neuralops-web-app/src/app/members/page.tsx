@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { BadgeCheck, Search, Trash2, UserPlus, Users, X } from "lucide-react";
+import { BadgeCheck, Search, ShieldCheck, Trash2, UserPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
@@ -19,6 +19,7 @@ import { useMembers } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useInvite } from "@/hooks/use-invite";
 import { InviteFields } from "@/components/shell/invite-fields";
+import { MemberAccessDialog } from "@/components/shell/member-access-dialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import { PermissionsBanner } from "@/components/shell/permissions-banner";
 import { companyScope } from "@/lib/permissions";
@@ -33,6 +34,7 @@ export default function MembersPage() {
   const [query, setQuery] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [accessFor, setAccessFor] = useState<Member | null>(null);
   const { can, loading: permsLoading } = usePermissions();
   // Both are genuinely company-scoped, so this page keeps a company check —
   // just against the right rather than the role string.
@@ -150,6 +152,8 @@ export default function MembersPage() {
                 const avatar = absolutizeMedia(m.avatar);
                 const isSelf = !!selfEmail && m.email.toLowerCase() === selfEmail.toLowerCase();
                 const removable = canRemove && !isSelf && m.role !== "owner"; // server enforces the same
+                // Same gate as inviting; the server refuses the owner and yourself.
+                const editable = canInvite && !isSelf && m.role !== "owner";
                 return (
                   <li key={m.user_id} className="group flex items-center gap-3.5 border-b border-line px-4 py-3 last:border-b-0">
                     <span className="flex size-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-stone-500 to-stone-700 text-[13px] font-bold text-white">
@@ -175,6 +179,11 @@ export default function MembersPage() {
                         {m.invited_by && <span> · invited by {m.invited_by.split("@")[0]}</span>}
                       </p>
                     </div>
+                    {editable && (
+                      <Button size="sm" onClick={() => setAccessFor(m)} aria-label={`Access for ${name}`} className="flex-none">
+                        <ShieldCheck size={14} strokeWidth={2} /> Access
+                      </Button>
+                    )}
                     {removable && (
                       <button
                         aria-label={`Remove ${name} from this server`}
@@ -193,6 +202,7 @@ export default function MembersPage() {
         </div>
       </main>
       <InviteDialog open={inviting} onClose={() => setInviting(false)} onDone={() => refetch()} />
+      <MemberAccessDialog member={accessFor} open={!!accessFor} onClose={() => setAccessFor(null)} onSaved={() => refetch()} />
       <ConfirmDialog
         open={!!removing}
         onClose={() => setRemoving(null)}
