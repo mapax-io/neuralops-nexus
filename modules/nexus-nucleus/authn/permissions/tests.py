@@ -974,3 +974,143 @@ class PayloadQueryCostTests(PayloadMatchesCanExhaustivelyTests):
         # A per-object implementation would add ~2 queries per topic (+80).
         # The batch lookup adds none: same projects, same channels, same cost.
         self.assertEqual(len(large), len(small))
+
+
+class RoleRightsAdministrationTests(TestCase):
+    """
+    Editing what a role GRANTS (the owner's permissions screen). The invariants
+    are enforced in the service, not the UI, because a screen cannot be the
+    thing that keeps an owner from locking themselves out.
+    """
+
+    def setUp(self):
+        from authn.permissions.rights import DEFAULT_ROLE_RIGHTS, REGISTRY
+
+        self.company = Company.objects.create(name="Acme", slug="acme")
+        self.owner = User.objects.create_user(username="o", email="o@acme.test", password="x")
+        self.company.owner = self.owner
+        self.company.save(update_fields=["owner"])
+
+        self.by_code = {
+            code: Right.objects.create(code=code, object_type=ot, scope=sc, description=d)
+            for code, ot, sc, d in REGISTRY
+        }
+        self.roles = {}
+        for name, codes in DEFAULT_ROLE_RIGHTS.items():
+            role = Role.objects.create(company=self.company, name=name, scope="company")
+            for code in codes:
+                RoleRight.objects.create(role=role, right=self.by_code[code])
+            self.roles[name] = role
+
+    def _rights(self, name):
+        return set(
+            RoleRight.objects.filter(role=self.roles[name]).values_list("right__code", flat=True)
+        )
+
+    # ── who may use the screen at all ────────────────────────────────────────
+
+    def test_only_the_owner_role_holds_role_update(self):
+        PermissionChecker.assign_role(self.owner, self.roles["Owner"], self.company)
+        self.assertTrue(PermissionChecker.can(self.owner, "role.update", company=self.company))
+
+        for name in ("Admin", "Member", "Viewer"):
+            other = User.objects.create_user(username=f"u_{name}", email=f"{name}@acme.test", password="x")
+            PermissionChecker.assign_role(other, self.roles[name], self.company)
+            with self.subTest(role=name):
+                self.assertFalse(
+                    PermissionChecker.can(other, "role.update", company=self.company)
+                )
+
+    # ── the invariants ───────────────────────────────────────────────────────
+
+    def test_the_owner_role_cannot_be_edited(self):
+        from authn.services import RoleEditError, set_role_rights
+
+        with self.assertRaises(RoleEditError):
+            set_role_rights(self.company, str(self.roles["Owner"].id), ["project.list"])
+        # Untouched: still the whole registry.
+        self.assertEqual(self._rights("Owner"), set(self.by_code))
+
+    def test_member_management_cannot_be_granted_outside_owner_admin(self):
+        from authn.services import RoleEditError, set_role_rights
+
+        for name in ("Member", "Viewer"):
+            with self.subTest(role=name):
+                with self.assertRaises(RoleEditError):
+                    set_role_rights(
+                        self.company, str(self.roles[name].id),
+                        sorted(self._rights(name) | {"company.invite_member"}),
+                    )
+                self.assertNotIn("company.invite_member", self._rights(name))
+
+    def test_member_management_can_still_be_taken_away_from_admin(self):
+        from authn.services import set_role_rights
+
+        keep = sorted(self._rights("Admin") - {"company.invite_member", "company.remove_member"})
+        set_role_rights(self.company, str(self.roles["Admin"].id), keep)
+        self.assertNotIn("company.invite_member", self._rights("Admin"))
+
+    def test_admin_may_be_given_member_management_back(self):
+        from authn.services import set_role_rights
+
+        set_role_rights(self.company, str(self.roles["Admin"].id), ["project.list"])
+        set_role_rights(self.company, str(self.roles["Admin"].id), ["project.list", "company.invite_member"])
+        self.assertIn("company.invite_member", self._rights("Admin"))
+
+    def test_an_unregistered_right_is_refused(self):
+        from authn.services import RoleEditError, set_role_rights
+
+        with self.assertRaises(RoleEditError):
+            set_role_rights(self.company, str(self.roles["Member"].id), ["not.a.right"])
+
+    def test_a_role_from_another_company_is_refused(self):
+        from authn.services import RoleEditError, set_role_rights
+
+        other = Company.objects.create(name="Other", slug="other")
+        foreign = Role.objects.create(company=other, name="Member", scope="company")
+        with self.assertRaises(RoleEditError):
+            set_role_rights(self.company, str(foreign.id), ["project.list"])
+
+    # ── the edit itself ──────────────────────────────────────────────────────
+
+    def test_it_is_a_full_set_replace_and_reports_the_difference(self):
+        from authn.services import set_role_rights
+
+        before = self._rights("Viewer")
+        result = set_role_rights(self.company, str(self.roles["Viewer"].id), ["project.list", "topic.create"])
+        self.assertEqual(self._rights("Viewer"), {"project.list", "topic.create"})
+        self.assertEqual(set(result["added"]), {"topic.create"} - before)
+        self.assertEqual(set(result["removed"]), before - {"project.list", "topic.create"})
+
+    def test_the_change_takes_effect_for_every_holder_at_once(self):
+        """The point of role-level rights: nothing is copied per user."""
+        from authn.services import set_role_rights
+
+        a = User.objects.create_user(username="a", email="a@acme.test", password="x")
+        b = User.objects.create_user(username="b", email="b@acme.test", password="x")
+        for u in (a, b):
+            PermissionChecker.assign_role(u, self.roles["Viewer"], self.company)
+            self.assertFalse(PermissionChecker.can(u, "project.create", company=self.company))
+
+        set_role_rights(
+            self.company, str(self.roles["Viewer"].id),
+            sorted(self._rights("Viewer") | {"project.create"}),
+        )
+        for u in (a, b):
+            self.assertTrue(PermissionChecker.can(u, "project.create", company=self.company))
+
+    def test_the_listing_marks_owner_read_only_and_names_locked_rights(self):
+        from authn.services import list_roles
+
+        payload = list_roles(self.company)
+        by_name = {r["name"]: r for r in payload["roles"]}
+        self.assertFalse(by_name["Owner"]["editable"])
+        self.assertTrue(by_name["Admin"]["editable"])
+        self.assertEqual(by_name["Admin"]["locked_rights"], [])
+        self.assertEqual(
+            by_name["Viewer"]["locked_rights"],
+            ["company.invite_member", "company.remove_member"],
+        )
+        # The registry travels with it, so the screen needs no copy of its own.
+        self.assertEqual(len(payload["rights"]), len(self.by_code))
+        self.assertTrue(all({"code", "object_type", "scope"} <= set(r) for r in payload["rights"]))

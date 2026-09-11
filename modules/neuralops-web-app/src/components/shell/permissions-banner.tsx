@@ -1,6 +1,6 @@
 "use client";
 
-import { TriangleAlert } from "lucide-react";
+import { RefreshCw, TriangleAlert } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
 
 // Says so when the connected server predates scoped permissions
@@ -13,7 +13,32 @@ import { usePermissions } from "@/hooks/use-permissions";
 // bundles are editable server-side, and a company role can never express the
 // project- or topic-scoped assignment that most of these controls turn on.
 export function PermissionsBanner() {
-  const { serverTooOld } = usePermissions();
+  const { serverTooOld, failed, retry } = usePermissions();
+
+  // Same consequence as an out-of-date server -- nothing can be offered -- but
+  // a different cause and a different remedy, so it says which and offers the
+  // remedy. Silently hiding every control is what this banner exists to avoid.
+  if (failed) {
+    return (
+      <div
+        role="alert"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-warn/30 bg-warn/10 px-4 py-1.5 text-[12.5px] text-warn"
+      >
+        <span className="flex items-center gap-2">
+          <TriangleAlert size={14} strokeWidth={2} className="flex-none" />
+          Couldn&apos;t load what you&apos;re allowed to do, so management controls are hidden.
+        </span>
+        <button
+          type="button"
+          onClick={retry}
+          className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-warn/40 px-2 py-0.5 text-[12px] font-semibold hover:bg-warn/10"
+        >
+          <RefreshCw size={12} strokeWidth={2} /> Try again
+        </button>
+      </div>
+    );
+  }
+
   if (!serverTooOld) return null;
 
   return (

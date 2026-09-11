@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
@@ -39,13 +39,29 @@ describe("PermissionsBanner", () => {
     await waitFor(() => expect(container).toBeEmptyDOMElement());
   });
 
-  // A 500 is transient — blaming the server's version would be wrong, and the
-  // query keeps retrying.
-  it("stays quiet on a transient failure", async () => {
+  // A failure is NOT an out-of-date server -- different cause, different
+  // remedy. But it must still be explained: rendering every control hidden and
+  // saying nothing is the bug this banner exists to prevent.
+  it("explains a failed load and offers a retry, without blaming the server's version", async () => {
     server.use(http.get(`${BASE}/api/v1/me/permissions/`, () => new HttpResponse(null, { status: 500 })));
+    renderBanner();
+    const alert = await screen.findByRole("alert", {}, { timeout: 6000 });
+    expect(alert).toHaveTextContent(/couldn.t load what you.re allowed to do/i);
+    expect(alert).not.toHaveTextContent(/out of date/i);
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+  }, 12_000);
+
+  it("recovers when the retry succeeds", async () => {
+    let fail = true;
+    server.use(http.get(`${BASE}/api/v1/me/permissions/`, () =>
+      fail ? new HttpResponse(null, { status: 500 })
+           : HttpResponse.json({ company: { id: "c1", rights: [] }, projects: {}, topics: {} })));
     const { container } = renderBanner();
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
-  });
+    await screen.findByRole("alert", {}, { timeout: 6000 });
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(container).toBeEmptyDOMElement(), { timeout: 6000 });
+  }, 12_000);
 
   it("stays quiet before a server is connected", async () => {
     useConnectionStore.setState({ serverUrl: null, token: null, connection: null });

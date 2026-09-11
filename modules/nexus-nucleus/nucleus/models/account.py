@@ -65,16 +65,21 @@ class User(AbstractUser):
 
     def get_avatar_url(self) -> str | None:
         """
-        Absolute avatar URL (NEURALOPS_SERVER_URL + MEDIA_URL + path), or
-        None if unset. Absolute (not MEDIA_URL-relative) on purpose -- the
-        frontend renders this directly as an <img src>, with no serverUrl
-        prefixing of its own (see #148).
+        SERVER-RELATIVE avatar path ("/media/..."), or None if unset.
+
+        It used to be absolute, built from NEURALOPS_SERVER_URL. That hard-pins
+        every avatar to one hostname, and it is only ever the right one when
+        the client happened to reach the server by that exact name -- so an app
+        connected over localhost, a LAN address, or a tunnel that is currently
+        down renders broken images even though the file is right there on disk.
+
+        Relative is also what the client already expects: absolutizeMedia() in
+        lib/api/client.ts resolves media against whichever server the app is
+        connected to, and every avatar render site goes through it.
         """
         if not self.avatar:
             return None
-        from django.conf import settings
-        base = (settings.NEURALOPS_SERVER_URL or "").rstrip("/")
-        return f"{base}{self.avatar.url}"
+        return self.avatar.url
 
     def __str__(self):
         return self.get_display_name()

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Check, KeyRound, LogOut, UserRound } from "lucide-react";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { changeUsername, USERNAME_RE } from "@/lib/api/account";
 import { absolutizeMedia } from "@/lib/api/client";
 import { supabase } from "@/lib/supabase";
 import { useMembers } from "@/hooks/use-workspace";
+import { AVATAR_ACCEPT, AVATAR_MAX_BYTES, removeAvatar, uploadAvatar } from "@/lib/api/avatar";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useFormErrors } from "@/hooks/use-form-errors";
 
@@ -22,6 +23,47 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
   const { email, connection } = useConnectionStore();
   const { data: members } = useMembers();
   const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  // The photo lives on the member record, so both the members list and
+  // anything rendering an avatar refresh from one invalidation.
+  const afterPhotoChange = async () => {
+    await qc.invalidateQueries({ queryKey: ["members"] });
+  };
+
+  const onPickPhoto = async (file: File) => {
+    // Checked here too so an obviously-too-big file is refused without the
+    // upload; the server enforces the same limit regardless.
+    if (file.size > AVATAR_MAX_BYTES) {
+      toast.error("That image is over 5 MB. Please pick a smaller one.");
+      return;
+    }
+    setPhotoBusy(true);
+    try {
+      await uploadAvatar(file);
+      await afterPhotoChange();
+      toast.success("Photo updated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't upload that photo.");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const onRemovePhoto = async () => {
+    setPhotoBusy(true);
+    try {
+      await removeAvatar();
+      await afterPhotoChange();
+      toast.success("Back to a default photo");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't remove that photo.");
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
   const self = members?.find((m) => m.user_id === connection?.nucleusUserId);
   const avatar = absolutizeMedia(self?.avatar ?? null);
   // The members API doesn't expose display_name (OPEN-ITEMS) — show the last
@@ -139,7 +181,39 @@ export function ProfileDialog({ open, onClose, onSignOut }: { open: boolean; onC
             )}
           </p>
           <p className="truncate text-[12.5px] text-ink2">{email}</p>
-          <p className="mt-0.5 text-[11.5px] text-ink2/80">Photo is assigned by the server — custom uploads are coming.</p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={photoBusy}
+              className="cursor-pointer text-[11.5px] font-semibold text-accent hover:underline disabled:cursor-default disabled:opacity-60"
+            >
+              {photoBusy ? "Uploading…" : avatar ? "Change photo" : "Upload a photo"}
+            </button>
+            {avatar && (
+              <button
+                type="button"
+                onClick={() => void onRemovePhoto()}
+                disabled={photoBusy}
+                className="cursor-pointer text-[11.5px] text-ink2 hover:text-ink disabled:cursor-default disabled:opacity-60"
+              >
+                Use a default
+              </button>
+            )}
+            <span className="text-[11px] text-ink2/80">PNG or JPEG, up to 5 MB</span>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={AVATAR_ACCEPT}
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              // Reset first: picking the same file twice must still fire.
+              e.target.value = "";
+              if (file) void onPickPhoto(file);
+            }}
+          />
         </div>
       </div>
 

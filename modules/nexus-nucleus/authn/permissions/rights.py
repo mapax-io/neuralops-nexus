@@ -30,6 +30,13 @@ REGISTRY = [
      "Invite a new user to join the company."),
     ("company.remove_member", ObjectType.COMPANY, ScopeType.COMPANY,
      "Remove a user from the company entirely."),
+    # Editing what a ROLE means, which changes what every holder of it can do
+    # at once. Deliberately absent from the Admin/Member/Viewer bundles below,
+    # so only Owner holds it -- Owner's bundle is the whole registry. Gating on
+    # a right rather than a role name keeps this consistent with every other
+    # check in the app; nothing anywhere asks "are you the owner".
+    ("role.update", ObjectType.COMPANY, ScopeType.COMPANY,
+     "Change which rights a role grants. Takes effect for every holder at once."),
 
     # ── Project ─────────────────────────────────────────────────────────────
     # create/list are COMPANY-scope: there's no existing project to "reach up"
