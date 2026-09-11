@@ -29,7 +29,12 @@ export async function primePermissions(qc: QueryClient, serverUrl: string | null
   });
 }
 
-const PERMISSIONS_STALE_MS = 300_000;
+// Short on purpose. The global client sets refetchOnWindowFocus, but a long
+// stale window suppresses it -- and these rights decide what the user can do,
+// so being minutes out of date is worse than an occasional small request.
+// Someone granting or revoking your access elsewhere lands within this window
+// even if nothing in this tab triggers a refetch.
+const PERMISSIONS_STALE_MS = 30_000;
 
 export interface PermissionGate {
   /** The server answered. Until then nothing is offered. */
@@ -67,6 +72,9 @@ export interface PermissionGate {
    * never walks the scope hierarchy itself.
    */
   canAnyProject: (right: Right) => boolean;
+  /** Object ids the payload actually keys — see usePermissionsSync. */
+  keyedProjects: Set<string>;
+  keyedTopics: Set<string>;
 }
 
 /**
@@ -92,6 +100,9 @@ export function usePermissions(): PermissionGate {
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 2,
   });
 
+  const keyedProjects = useMemo(() => new Set(Object.keys(data?.projects ?? {})), [data]);
+  const keyedTopics = useMemo(() => new Set(Object.keys(data?.topics ?? {})), [data]);
+
   const can = useCallback((right: Right, scope: Scope) => canRight(data, right, scope), [data]);
   const canAnyProject = useCallback((right: Right) => canAnyProjectRight(data, right), [data]);
   const serverTooOld = error instanceof ApiError && error.status === 404;
@@ -103,7 +114,7 @@ export function usePermissions(): PermissionGate {
   const loading = enabled && isPending;
 
   return useMemo(
-    () => ({ ready: !!data, loading, serverTooOld, failed, retry, can, canAnyProject }),
-    [data, loading, serverTooOld, failed, retry, can, canAnyProject],
+    () => ({ ready: !!data, loading, serverTooOld, failed, retry, can, canAnyProject, keyedProjects, keyedTopics }),
+    [data, loading, serverTooOld, failed, retry, can, canAnyProject, keyedProjects, keyedTopics],
   );
 }

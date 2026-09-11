@@ -12,12 +12,16 @@ import { WorkspaceTree } from "@/components/shell/workspace-tree";
 import { FullPageLoader } from "@/components/ui/full-page-loader";
 import { useConnectionStore } from "@/stores/connection.store";
 import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionsSync } from "@/hooks/use-permissions-sync";
 import { useSelection } from "@/stores/selection.store";
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { token, serverUrl, hydrated } = useConnectionStore();
   const { loading: permsLoading } = usePermissions();
+  // Safety net for every way the rights payload can fall behind the objects
+  // the app already knows about -- see usePermissionsSync.
+  usePermissionsSync();
   const [about, setAbout] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const { sel } = useSelection();
