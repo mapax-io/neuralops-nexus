@@ -36,7 +36,8 @@ import {
   useTopics,
 } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
-import { isCompanyAdmin } from "@/lib/permissions";
+import { companyScope, projectScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useSelection } from "@/stores/selection.store";
 import type { Channel, Project } from "@/lib/api/workspace";
 
@@ -61,9 +62,9 @@ export function WorkspaceTree() {
   const { data: projects, isLoading, error, refetch } = useProjects();
   // Selection lives in a store, not the URL — ids never reach the address bar.
   const { sel } = useSelection();
-  const role = useConnectionStore((s) => s.connection?.role);
-  // project.create is COMPANY scope -- Company Admin/Owner only.
-  const canManage = isCompanyAdmin(role);
+  const { can } = usePermissions();
+  // project.create is COMPANY scope -- no project exists yet to scope it to.
+  const canCreateProject = can("project.create", companyScope());
   const [creating, setCreating] = useState(false);
   const companyName = useConnectionStore((s) => s.connection?.companyName);
 
@@ -80,7 +81,7 @@ export function WorkspaceTree() {
         <div className="mb-1.5 flex items-center px-1.5">
           <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[.12em] text-ink2">Projects</p>
           <span className="flex-1" />
-          {canManage && (
+          {canCreateProject && (
             <button aria-label="New project" title="New project" onClick={() => setCreating(true)} className="flex size-6 items-center justify-center rounded-md text-ink2 hover:bg-surface hover:text-ink"><Plus size={15} strokeWidth={2} /></button>
           )}
         </div>
@@ -93,11 +94,11 @@ export function WorkspaceTree() {
         {projects?.length === 0 && (
           <EmptyState
             title="No projects yet"
-            hint={canManage ? "Create your first project to start working." : "Ask an admin to add you to a project."}
-            action={canManage ? <Button size="sm" onClick={() => setCreating(true)}>New project</Button> : undefined}
+            hint={canCreateProject ? "Create your first project to start working." : "Ask an admin to add you to a project."}
+            action={canCreateProject ? <Button size="sm" onClick={() => setCreating(true)}>New project</Button> : undefined}
           />
         )}
-        {projects?.map((p) => <ProjectNode key={p.id} project={p} activeChannelId={sel?.cid} role={role} />)}
+        {projects?.map((p) => <ProjectNode key={p.id} project={p} activeChannelId={sel?.cid} />)}
         <DirectMessagesSection />
       </div>
       <CreateProjectDialog open={creating} onClose={() => setCreating(false)} />
@@ -157,10 +158,15 @@ function DirectMessagesSection() {
   );
 }
 
-function ProjectNode({ project, activeChannelId, role }: { project: Project; activeChannelId?: string; role?: string | null }) {
-  // channel.create / project.archive / channel.archive are PROJECT-scope
-  // Admin rights -- a Project Admin reaches them without a company role.
-  const canManage = isCompanyAdmin(role);
+function ProjectNode({ project, activeChannelId }: { project: Project; activeChannelId?: string }) {
+  // PROJECT-scope rights, asked against THIS project -- a Project Admin
+  // reaches them without any company-wide role.
+  const { can } = usePermissions();
+  const canArchive = can("project.archive", projectScope(project.id));
+  const canAddChannel = can("channel.create", projectScope(project.id));
+  // The registry has no team-management right (see docs/OPEN-ITEMS.md), so the
+  // project-admin marker right stands in for "administers this project".
+  const canManageTeam = canArchive;
   const { sel, clearSelection } = useSelection();
   const [open, setOpen] = useState(true);
   const [addingChannel, setAddingChannel] = useState(false);
@@ -180,11 +186,17 @@ function ProjectNode({ project, activeChannelId, role }: { project: Project; act
           {/* Full name, wrapped — never an ellipsis (matches the topics panel). */}
           <span title={project.name} className="min-w-0 break-words leading-tight">{project.name}</span>
         </button>
-        {canManage && (
+        {(canManageTeam || canArchive || canAddChannel) && (
           <>
-            <button aria-label={`Manage team for ${project.name}`} title="Manage team" onClick={() => setManagingTeam(true)} className="flex size-6 items-center justify-center rounded text-ink2 hover:text-ink opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"><Users size={13} strokeWidth={2} /></button>
-            <button aria-label={`Archive project ${project.name}`} title="Archive project" onClick={() => setConfirmingArchive(true)} className="flex size-6 items-center justify-center rounded text-ink2 hover:text-crit opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"><Trash2 size={13} strokeWidth={2} /></button>
-            <button aria-label={`New channel in ${project.name}`} title="New channel" onClick={() => setAddingChannel(true)} className="flex size-6 items-center justify-center rounded text-ink2 hover:text-ink opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"><Plus size={14} strokeWidth={2} /></button>
+            {canManageTeam && (
+              <button aria-label={`Manage team for ${project.name}`} title="Manage team" onClick={() => setManagingTeam(true)} className="flex size-6 items-center justify-center rounded text-ink2 hover:text-ink opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"><Users size={13} strokeWidth={2} /></button>
+            )}
+            {canArchive && (
+              <button aria-label={`Archive project ${project.name}`} title="Archive project" onClick={() => setConfirmingArchive(true)} className="flex size-6 items-center justify-center rounded text-ink2 hover:text-crit opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"><Trash2 size={13} strokeWidth={2} /></button>
+            )}
+            {canAddChannel && (
+              <button aria-label={`New channel in ${project.name}`} title="New channel" onClick={() => setAddingChannel(true)} className="flex size-6 items-center justify-center rounded text-ink2 hover:text-ink opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100"><Plus size={14} strokeWidth={2} /></button>
+            )}
           </>
         )}
       </div>
@@ -206,11 +218,11 @@ function ProjectNode({ project, activeChannelId, role }: { project: Project; act
         confirmIcon={<Archive size={14} strokeWidth={2} />}
         loading={archive.isPending}
       />
-      <TeamDialog pid={project.id} projectName={project.name} open={managingTeam} onClose={() => setManagingTeam(false)} />
+      <TeamDialog pid={project.id} projectName={project.name} canManage={canManageTeam} open={managingTeam} onClose={() => setManagingTeam(false)} />
       {open && (
         <ul className="ml-3 border-l border-line pl-1.5">
           {project.channels.map((c) => (
-            <ChannelNode key={c.id} projectId={project.id} channel={c} isActive={c.id === activeChannelId} canManage={canManage} />
+            <ChannelNode key={c.id} projectId={project.id} channel={c} isActive={c.id === activeChannelId} />
           ))}
           {project.channels.length === 0 && <li className="px-2 py-1 text-[12.5px] text-ink2">No channels yet</li>}
         </ul>
@@ -222,7 +234,11 @@ function ProjectNode({ project, activeChannelId, role }: { project: Project; act
 
 // The tree stops at channels — a channel's chats live in the right-side
 // panel (ChatListPanel), thread-panel style. Clicking a channel opens it.
-function ChannelNode({ projectId, channel, isActive, canManage }: { projectId: string; channel: Channel; isActive: boolean; canManage: boolean }) {
+function ChannelNode({ projectId, channel, isActive }: { projectId: string; channel: Channel; isActive: boolean }) {
+  // channel.archive is PROJECT-scope -- channels are reached through their
+  // parent project, which is why there is no channel scope to ask against.
+  const { can } = usePermissions();
+  const canArchiveChannel = can("channel.archive", projectScope(projectId));
   const { sel, setChannel, clearSelection } = useSelection();
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const archiveChannel = useArchiveChannel(projectId, () => {
@@ -254,7 +270,7 @@ function ChannelNode({ projectId, channel, isActive, canManage }: { projectId: s
             className="ml-1 size-2 flex-none rounded-full bg-accent"
           />
         )}
-        {canManage && (
+        {canArchiveChannel && (
           <button
             aria-label={`Archive channel ${channel.name}`}
             title="Archive channel"

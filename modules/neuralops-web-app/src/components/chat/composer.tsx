@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
@@ -43,8 +43,6 @@ import dynamic from "next/dynamic";
 import { MAX_MESSAGE_LENGTH, sendTyping } from "@/lib/api/chat";
 import { absolutizeMedia } from "@/lib/api/client";
 import { copyText } from "@/lib/browser";
-import { listPersonas } from "@/lib/api/intelligence";
-import { listTeam } from "@/lib/api/team";
 import { changeUsername } from "@/lib/api/account";
 import { attachContextFile } from "@/lib/api/context";
 import { CONTEXT_FILE_ACCEPT } from "@/components/chat/context-panel";
@@ -61,12 +59,14 @@ import {
 import { mentionCount, resolveSubmit, slashTriggerQuery, SLASH_COMMANDS } from "@/lib/composer/slash";
 import { useUiStore } from "@/stores/ui.store";
 import { useComposerMruStore, orderByRecency } from "@/stores/composer-mru.store";
-import { MentionHighlight, mentionHighlightKey, type KnownSets } from "@/components/chat/mention-highlight";
+import { MentionHighlight, mentionHighlightKey } from "@/components/chat/mention-highlight";
 import { fuzzyFilter, fuzzyScore } from "@/lib/composer/fuzzy";
 import { inviteToProject } from "@/lib/api/team";
 import { inviteRedirectTo } from "@/lib/api/members";
 import { notifyInvite } from "@/lib/invite-toast";
-import { isCompanyAdmin } from "@/lib/permissions";
+import { companyScope, projectScope, topicScope } from "@/lib/permissions";
+import { useKnownMentions } from "@/hooks/use-known-mentions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 
 // Lazy: the full emoji dataset (~hundreds of KB) loads on first open only.
@@ -155,32 +155,12 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
     : "Message";
 
   const serverUrl = useConnectionStore((s) => s.serverUrl);
-  const token = useConnectionStore((s) => s.token);
-  const email = useConnectionStore((s) => s.email);
   const qc = useQueryClient();
-  const personasQ = useQuery({
-    queryKey: ["personas", serverUrl, projectId],
-    queryFn: () => listPersonas(projectId),
-    enabled: !!serverUrl && !!token && !!projectId,
-    staleTime: 60_000,
-  });
-  const personas = useMemo(() => personasQ.data ?? [], [personasQ.data]);
-  // Teammates (humans) on this project — mentionable in @ with their own badge.
-  const teamQ = useQuery({
-    queryKey: ["team", serverUrl, projectId],
-    queryFn: () => listTeam(projectId),
-    enabled: !!serverUrl && !!token && !!projectId,
-    staleTime: 60_000,
-  });
-  const humans = useMemo(
-    () => (teamQ.data ?? []).filter((m) => m.member_type === "human" && isMentionableName(m.name)),
-    [teamQ.data],
-  );
-  // The signed-in user's own mentionable name (matched by email) → the "you" pill.
-  const selfName = useMemo(
-    () => (email ? humans.find((m) => m.email.toLowerCase() === email.toLowerCase())?.name ?? null : null),
-    [humans, email],
-  );
+  // Personas, teammates and the pill known-set — shared with the transcript so
+  // a name is judged the same in both (see useKnownMentions).
+  const { personas, humans, selfName, personasLoading, personasError, known } = useKnownMentions(projectId);
+  const { can } = usePermissions();
+  const canMention = can("persona.mention", topicScope(topicId));
 
   // "Recently used" ordering for the @ / popovers — device-scoped MRU, cleared
   // on sign-out (see composer-mru.store.ts).
@@ -197,7 +177,9 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
     // Recency only re-orders the UNFILTERED (bare "@") list. Once the user types a
     // query the fuzzy SCORE order wins — otherwise a recent-but-worse subsequence
     // match could float above (or, past the slice, hide) a better/exact match.
-    const personaItems: PopoverItem[] = (q ? matchedPersonas : orderByRecency(matchedPersonas, (p) => p.name, recentPersonas))
+    // Without persona.mention the picker must not offer personas at all —
+    // disabling the affordance beats letting the send fail.
+    const personaItems: PopoverItem[] = (!canMention ? [] : q ? matchedPersonas : orderByRecency(matchedPersonas, (p) => p.name, recentPersonas))
       .slice(0, 6)
       .map((p) => ({
         id: `p:${p.id}`,
@@ -238,20 +220,21 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
       insert: d.name,
     }));
     return [...personaItems, ...humanItems, ...sessionItems, ...contextItems, ...directiveItems].slice(0, 10);
-  }, [trigger, personas, humans, selfName, recentPersonas]);
+  }, [trigger, personas, humans, selfName, recentPersonas, canMention]);
 
   const slashQuery = slashDismissed ? null : slashTriggerQuery(value);
-  const myRole = useConnectionStore((st) => st.connection?.role);
   const setIntelCreate = useUiStore((u) => u.setIntelCreate);
-  // Display gating by company role — Owner/Admin manage intelligence &
-  // invites; everyone else gets the read/list commands. The server enforces
-  // the real rules on every call.
-  const companyAdmin = isCompanyAdmin(myRole);
-  const availableCommands = SLASH_COMMANDS.filter((c) => {
-    if (c.name === "invite" || c.name === "add-model" || c.name === "add-persona" ||
-        c.name === "edit-persona" || c.name === "add-mcp") return companyAdmin;
-    return true;
-  });
+  // Each managing command is offered only if its own right is held, against
+  // the object it acts on. The server enforces the real rules on every call.
+  const slashRight: Record<string, boolean> = {
+    // /invite adds the person to this server as well as the project.
+    invite: can("company.invite_member", companyScope()),
+    "add-model": can("model_config.create", companyScope()),
+    "add-persona": can("persona.create", projectScope(projectId)),
+    "edit-persona": can("persona.update", projectScope(projectId)),
+    "add-mcp": can("mcp_server.create", projectScope(projectId)),
+  };
+  const availableCommands = SLASH_COMMANDS.filter((c) => slashRight[c.name] ?? true);
   // Same rule as @: recency orders only the bare "/" list; a typed query ranks
   // by fuzzy score (so "/admdl" surfaces add-model by quality, not by recency).
   const slashMatches =
@@ -377,20 +360,8 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
   // repaints, so pills appear on text already typed when the list arrives.
   useEffect(() => {
     if (!editor) return;
-    const selfLower = selfName?.toLowerCase();
-    const known: KnownSets = {
-      mentions: new Set<string>([
-        ...OUTPUT_DIRECTIVES.map((d) => d.name),
-        "session",
-        CONTEXT_DIRECTIVE.name,
-        ...personas.filter((p) => isMentionableName(p.name)).map((p) => p.name.toLowerCase()),
-      ]),
-      self: new Set(selfLower ? [selfLower] : []),
-      humans: new Set(humans.map((m) => m.name.toLowerCase()).filter((n) => n !== selfLower)),
-      commands: new Set(SLASH_COMMANDS.map((c) => c.name)),
-    };
     editor.view.dispatch(editor.state.tr.setMeta(mentionHighlightKey, known));
-  }, [personas, humans, selfName, editor]);
+  }, [known, editor]);
 
   // Presence ping, throttled — driven by content changes (impure work lives
   // in an effect, not in the editor's render-created callbacks). Programmatic
@@ -492,7 +463,7 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
   // loading (not on error, not when genuinely empty), so a failed fetch can't
   // silently let a bogus swarm through.
   const countPersonaMentions = (text: string) => {
-    if (personasQ.isLoading) return mentionCount(text, RESERVED_MENTIONS);
+    if (personasLoading) return mentionCount(text, RESERVED_MENTIONS);
     const known = new Set(personas.map((p) => p.name.toLowerCase()));
     const seen = new Set<string>();
     for (const m of text.matchAll(/@([\w]+)/g)) {
@@ -524,7 +495,7 @@ export function Composer({ projectId, channelId, topicId, channelName, topicTitl
     if (/\/swarm\b/.test(content) && countPersonaMentions(content) < 2) {
       // On a persona-fetch error we can't verify mentions — say so truthfully
       // rather than telling the user to add personas that already exist.
-      toast.info(personasQ.isError
+      toast.info(personasError
         ? "Couldn’t check your personas just now — try again in a moment."
         : "Swarm needs at least two mentioned personas — add another @persona or remove /swarm.");
       return;
