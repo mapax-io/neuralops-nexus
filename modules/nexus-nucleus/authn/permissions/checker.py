@@ -185,58 +185,93 @@ class PermissionChecker:
         return RoleRight.objects.filter(role_id__in=role_ids, right=right).exists()
 
     @staticmethod
+    def _rights_from_chains(user, chains: dict) -> dict:
+        """
+        The one implementation of "which rights does this user hold against
+        each of these objects". Takes {key: scope_chain} and answers
+        {key: set(codes)} in TWO queries, whatever the number of objects.
+
+        Both rights_for() and rights_for_many() go through here, so the reach
+        rule lives in exactly one place -- see the module docstring.
+        """
+        if user is None or not getattr(user, "is_authenticated", False):
+            return {key: set() for key in chains}
+
+        anchors = {(level, str(obj_id)) for chain in chains.values() for level, obj_id in chain}
+        if not anchors:
+            return {key: set() for key in chains}
+
+        rows = RoleAssignment.objects.filter(user=user).filter(
+            Q(*[
+                Q(scope_object_type=level, scope_object_id=obj_id)
+                for level, obj_id in anchors
+            ], _connector=Q.OR)
+        ).values_list("scope_object_type", "scope_object_id", "role_id")
+
+        roles_at = {}
+        role_ids = set()
+        for level, obj_id, role_id in rows:
+            roles_at.setdefault((level, str(obj_id)), set()).add(role_id)
+            role_ids.add(role_id)
+        if not role_ids:
+            return {key: set() for key in chains}
+
+        # (code, scope) per role, so the reach test below is pure Python.
+        rights_of = {}
+        for role_id, code, scope in RoleRight.objects.filter(
+            role_id__in=role_ids
+        ).values_list("role_id", "right__code", "right__scope"):
+            rights_of.setdefault(role_id, []).append((code, scope))
+
+        out = {}
+        for key, chain in chains.items():
+            held = set()
+            for level, obj_id in chain:
+                anchor_order = _SCOPE_ORDER[level]
+                for role_id in roles_at.get((level, str(obj_id)), ()):
+                    for code, scope in rights_of.get(role_id, ()):
+                        # An assignment grants a right only if the right's own
+                        # scope is the same level or narrower. Without this an
+                        # assignment reports every right on its role -- so a
+                        # topic-scoped role claimed company-scoped rights that
+                        # can() denies, and the two disagreed.
+                        if anchor_order <= _SCOPE_ORDER[scope]:
+                            held.add(code)
+            out[key] = held
+        return out
+
+    @staticmethod
     def rights_for(user, obj=None, company=None) -> set:
         """
         Every right code this user holds against `obj` (or `company`),
         across ALL of their applicable role assignments combined (the
-        "union of stacked roles" behaviour). Useful for building a
-        frontend permissions payload in one query instead of calling
-        can() once per right.
+        "union of stacked roles" behaviour).
 
         Agrees with can() by construction: a right appears here if and only
         if can() would return True for it against the same object.
         """
-        if user is None or not getattr(user, "is_authenticated", False):
-            return set()
-
         chain = _scope_chain(obj) if obj is not None else (
             [(ScopeType.COMPANY, company.id)] if company else []
         )
         if not chain:
             return set()
+        return PermissionChecker._rights_from_chains(user, {"_": chain})["_"]
 
-        # Only role_id and the anchor scope are read below, so no join.
-        assignments = RoleAssignment.objects.filter(user=user).filter(
-            Q(*[
-                Q(scope_object_type=level, scope_object_id=obj_id)
-                for level, obj_id in chain
-            ], _connector=Q.OR)
-        ).values_list("scope_object_type", "role_id")
-
-        # Group the roles by the scope each assignment is anchored at, then
-        # keep only rights that anchor can actually reach. Without this an
-        # assignment reports every right on its role regardless of the right's
-        # own scope -- so a topic-scoped role claimed company-scoped rights
-        # that can() denies, and the two disagreed. Grouping (rather than one
-        # flat role_id list) matters when the levels carry different roles:
-        # Viewer at company + Admin on one project must not let the Admin row
-        # hand out company-scoped rights.
-        roles_by_level = {}
-        for level, role_id in assignments:
-            roles_by_level.setdefault(level, set()).add(role_id)
-        if not roles_by_level:
-            return set()
-
-        query = Q()
-        for level, role_ids in roles_by_level.items():
-            reachable = [
-                scope for scope, order in _SCOPE_ORDER.items()
-                if order >= _SCOPE_ORDER[level]
-            ]
-            query |= Q(role_id__in=role_ids, right__scope__in=reachable)
-
-        codes = RoleRight.objects.filter(query).values_list("right__code", flat=True)
-        return set(codes)
+    @staticmethod
+    def rights_for_many(user, objs) -> dict:
+        """
+        rights_for() for a batch, keyed by each object's id, in a fixed two
+        queries rather than two per object. Built for the /me/permissions/
+        payload, which resolves every visible project and topic at once.
+        """
+        chains = {}
+        for obj in objs:
+            chain = _scope_chain(obj)
+            if chain:
+                chains[str(obj.id)] = chain
+        if not chains:
+            return {}
+        return PermissionChecker._rights_from_chains(user, chains)
 
     @staticmethod
     def assign_role(user, role: Role, obj, granted_by=None) -> RoleAssignment:
