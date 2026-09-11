@@ -445,6 +445,36 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
         metadata=metadata,
     )
 
+
+# Readable phrasing for the tool a persona is using, published with
+# tool_activity so the client renders what the server says rather than keeping
+# its own copy of the tool vocabulary. Built-ins get proper wording; anything
+# else (an MCP server's own tool) falls back to its name, de-underscored.
+_TOOL_ACTIVITY_LABELS = {
+    "web_search": "Searching the web",
+    "web_fetch": "Reading a page",
+    "shell": "Running a command",
+    "filesystem": "Reading files",
+    "handoff_task": "Handing over",
+    "delegate_task": "Delegating",
+    "continue_work": "Still working",
+}
+
+
+def _tool_activity(msg_id: str, event: dict) -> dict | None:
+    """The tool_activity payload for a worker tool_call_start, or None."""
+    call = event.get("tool_call") or {}
+    name = (call.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "type": "tool_activity",
+        "id": msg_id,
+        "tool": name,
+        "label": _TOOL_ACTIVITY_LABELS.get(name) or f"Using {name.replace('_', ' ')}",
+    }
+
+
 async def trigger_ai_response_async(
     *,
     company,
@@ -580,7 +610,15 @@ async def trigger_ai_response_async(
                         event = json.loads(raw)
                         event_type = event.get("type")
 
-                        if event_type == "message_delta":
+                        if event_type == "tool_call_start":
+                            # The worker has always emitted this; nucleus used to
+                            # drop it, so a persona reaching for a tool looked
+                            # like a stall. See docs/OPEN-ITEMS.md.
+                            activity = _tool_activity(msg_id, event)
+                            if activity:
+                                await publish_async(channel, activity)
+
+                        elif event_type == "message_delta":
                             delta = event.get("delta") or ""
                             if delta:
                                 streamed_content.append(delta)
@@ -890,6 +928,11 @@ async def trigger_ai_swarm_response_async(
                             
                             # DO NOT BREAK! We must keep the stream open for subsequent swarm agents
 
+                        elif event_type == "tool_call_start":
+                            activity = _tool_activity(active_msg_id, event)
+                            if activity:
+                                await publish_async(channel, activity)
+
                         elif event_type == "swarm_transition":
                             event["id"] = active_msg_id
                             await publish_async(channel, event)
@@ -901,6 +944,15 @@ async def trigger_ai_swarm_response_async(
                                 active_msg_id, ai_error,
                             )
                             await _fail_ai_message(active_msg_id, ai_error)
+                            # The single path publishes this; the swarm path used
+                            # to fail silently, leaving the client to guess from
+                            # stall detection. Same friendly copy, same shape --
+                            # the raw exception stays server-side.
+                            await publish_async(channel, {
+                                "type": "message_error",
+                                "id": active_msg_id,
+                                "content": "Something went wrong generating this response.",
+                            })
                             break
 
                     except (json.JSONDecodeError, KeyError):
