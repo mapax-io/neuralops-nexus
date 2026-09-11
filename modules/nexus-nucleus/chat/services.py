@@ -22,6 +22,7 @@ from asgiref.sync import sync_to_async
 import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
+from .events import tool_activity_event
 
 logger = logging.getLogger(__name__)
 
@@ -446,35 +447,6 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
     )
 
 
-# Readable phrasing for the tool a persona is using, published with
-# tool_activity so the client renders what the server says rather than keeping
-# its own copy of the tool vocabulary. Built-ins get proper wording; anything
-# else (an MCP server's own tool) falls back to its name, de-underscored.
-_TOOL_ACTIVITY_LABELS = {
-    "web_search": "Searching the web",
-    "web_fetch": "Reading a page",
-    "shell": "Running a command",
-    "filesystem": "Reading files",
-    "handoff_task": "Handing over",
-    "delegate_task": "Delegating",
-    "continue_work": "Still working",
-}
-
-
-def _tool_activity(msg_id: str, event: dict) -> dict | None:
-    """The tool_activity payload for a worker tool_call_start, or None."""
-    call = event.get("tool_call") or {}
-    name = (call.get("name") or "").strip()
-    if not name:
-        return None
-    return {
-        "type": "tool_activity",
-        "id": msg_id,
-        "tool": name,
-        "label": _TOOL_ACTIVITY_LABELS.get(name) or f"Using {name.replace('_', ' ')}",
-    }
-
-
 async def trigger_ai_response_async(
     *,
     company,
@@ -614,7 +586,7 @@ async def trigger_ai_response_async(
                             # The worker has always emitted this; nucleus used to
                             # drop it, so a persona reaching for a tool looked
                             # like a stall. See docs/OPEN-ITEMS.md.
-                            activity = _tool_activity(msg_id, event)
+                            activity = tool_activity_event(msg_id, event)
                             if activity:
                                 await publish_async(channel, activity)
 
@@ -929,7 +901,7 @@ async def trigger_ai_swarm_response_async(
                             # DO NOT BREAK! We must keep the stream open for subsequent swarm agents
 
                         elif event_type == "tool_call_start":
-                            activity = _tool_activity(active_msg_id, event)
+                            activity = tool_activity_event(active_msg_id, event)
                             if activity:
                                 await publish_async(channel, activity)
 
