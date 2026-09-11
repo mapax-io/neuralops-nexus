@@ -197,6 +197,15 @@ class InviteToSystemGrantsTests(InviteGrantsFixture):
             invite_to_system(self.company, self.owner, "new@acme.test", grants=[self.only(self.p2, self.t1)])
         self.assertFalse(Invitation.objects.filter(email="new@acme.test").exists())
 
+    def test_a_grant_with_an_unseeded_role_is_refused_not_half_applied(self):
+        Role.objects.filter(company=self.company, name="Viewer").delete()
+        with self.assertRaisesRegex(ValueError, "not set up on this server"):
+            invite_to_system(self.company, self.owner, "sara@acme.test", role="viewer", grants=[self.whole(self.p1)])
+        self.assertFalse(ProjectMember.objects.filter(project=self.p1, user=self.sara).exists())
+        # Without grants there is nothing to refuse -- the plain path is untouched.
+        r = invite_to_system(self.company, self.owner, "sara@acme.test", role="viewer")
+        self.assertTrue(r["ok"])
+
     def test_without_grants_the_outcome_is_unchanged(self):
         r = invite_to_system(self.company, self.owner, "sara@acme.test")
         self.assertEqual(r["message"], "sara@acme.test is already a member of this server.")
@@ -350,6 +359,13 @@ class RemovalTests(InviteGrantsFixture):
         perms = my_permissions(self.sara, self.company)
         self.assertEqual(perms["company"]["rights"], [])
         self.assertEqual(set(perms["projects"]), {str(self.p1.id)})
+
+    def test_removal_drops_the_legacy_group_too(self):
+        from django.contrib.auth.models import Group
+        from workspace.services import remove_user_from_server
+        self.sara.groups.add(Group.objects.create(name="Admin"))
+        remove_user_from_server(self.company, str(self.sara.id), self.owner)
+        self.assertEqual(self.sara.groups.count(), 0)
 
     def test_a_removed_person_re_invited_server_wide_is_a_plain_member_again(self):
         from workspace.services import remove_user_from_server
