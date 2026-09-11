@@ -346,6 +346,151 @@ def my_permissions(user, company) -> dict:
 
 
 # =========================================================
+# Role rights administration (GET/PATCH /api/v1/roles/)
+# =========================================================
+
+# Editing a role changes what every holder of it can do, at once -- that is the
+# point of role-level rights, and why these two invariants are enforced on the
+# server rather than left to the UI.
+#
+# 1. The Owner role is never editable and always holds the whole registry.
+#    Without this an owner can narrow themselves out of their own workspace
+#    with no way back in.
+# 2. Member management stays Owner/Admin-only, always. The two rights below can
+#    be REMOVED from any role, but never GRANTED to one outside that tier.
+OWNER_ROLE_NAME = "Owner"
+ADMIN_ROLE_NAME = "Admin"
+MEMBER_MANAGEMENT_RIGHTS = frozenset({"company.invite_member", "company.remove_member"})
+
+
+class RoleEditError(Exception):
+    """A refused role edit. The API turns this into a 400/403 with the text."""
+
+
+def list_roles(company) -> dict:
+    """
+    The rights registry and what each role currently grants -- the matrix the
+    permissions screen renders.
+
+    Registry entries carry `scope` (the narrowest level the right can be
+    granted at) and `object_type`, which is what groups the table. Both come
+    straight from the Right rows seed_permissions wrote, not from a second copy
+    in the client.
+    """
+    from authn.permissions.models import Right, Role, RoleRight
+
+    rights = list(Right.objects.all().order_by("object_type", "code"))
+    roles = list(Role.objects.filter(company=company).order_by("name"))
+    held = {}
+    for role_id, code in RoleRight.objects.filter(
+        role__company=company
+    ).values_list("role_id", "right__code"):
+        held.setdefault(role_id, set()).add(code)
+
+    return {
+        "rights": [
+            {
+                "code": r.code,
+                "object_type": r.object_type,
+                "scope": r.scope,
+                "description": r.description,
+            }
+            for r in rights
+        ],
+        "roles": [
+            {
+                "id": str(role.id),
+                "name": role.name,
+                "scope": role.scope,
+                "description": role.description,
+                "rights": sorted(held.get(role.id, set())),
+                # The client renders these read-only rather than deciding the
+                # rule itself -- see the invariants above.
+                "editable": role.name != OWNER_ROLE_NAME,
+                "locked_rights": (
+                    [] if role.name in (OWNER_ROLE_NAME, ADMIN_ROLE_NAME)
+                    else sorted(MEMBER_MANAGEMENT_RIGHTS)
+                ),
+            }
+            for role in roles
+        ],
+    }
+
+
+@transaction.atomic
+def set_role_rights(company, role_id: str, codes: list) -> dict:
+    """
+    Replace the full right set of one role. Full-set replace, not a delta: the
+    screen sends what the role should grant, and the difference is applied.
+
+    Refuses, with the reason:
+      - an unknown role, or one belonging to another company
+      - the Owner role, which always holds everything
+      - granting a member-management right to a role outside the Owner/Admin
+        tier (removing one is always allowed)
+      - an unregistered right code, which would otherwise create a row that
+        can() then raises on
+    """
+    from authn.permissions.models import Right, Role, RoleRight
+
+    role = Role.objects.filter(company=company, id=role_id).first()
+    if role is None:
+        raise RoleEditError("That role doesn't exist on this server.")
+    if role.name == OWNER_ROLE_NAME:
+        raise RoleEditError(
+            "The Owner role always holds every right and can't be edited."
+        )
+
+    wanted = set(codes)
+    known = {r.code: r for r in Right.objects.all()}
+    unknown = sorted(wanted - set(known))
+    if unknown:
+        raise RoleEditError(
+            f"Unknown right code(s): {', '.join(unknown)}. "
+            "Run manage.py seed_permissions if the registry changed."
+        )
+
+    if role.name != ADMIN_ROLE_NAME:
+        current = set(
+            RoleRight.objects.filter(role=role).values_list("right__code", flat=True)
+        )
+        # Only newly GRANTED ones are refused -- a role that somehow already
+        # holds one can still have it taken away.
+        added = (wanted & MEMBER_MANAGEMENT_RIGHTS) - current
+        if added:
+            raise RoleEditError(
+                f"{role.name} can't be given {', '.join(sorted(added))} — "
+                "managing members stays with Owner and Admin."
+            )
+
+    current_rows = {
+        code: rid
+        for rid, code in RoleRight.objects.filter(role=role).values_list("id", "right__code")
+    }
+    to_add = wanted - set(current_rows)
+    to_remove = set(current_rows) - wanted
+
+    if to_remove:
+        RoleRight.objects.filter(id__in=[current_rows[c] for c in to_remove]).delete()
+    if to_add:
+        RoleRight.objects.bulk_create(
+            [RoleRight(role=role, right=known[c]) for c in sorted(to_add)]
+        )
+
+    logger.info(
+        "[roles] %s rights updated: +%d -%d (now %d)",
+        role.name, len(to_add), len(to_remove), len(wanted),
+    )
+    return {
+        "id": str(role.id),
+        "name": role.name,
+        "rights": sorted(wanted),
+        "added": sorted(to_add),
+        "removed": sorted(to_remove),
+    }
+
+
+# =========================================================
 # Invitation helper
 # =========================================================
 
