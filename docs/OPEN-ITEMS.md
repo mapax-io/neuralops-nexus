@@ -563,3 +563,25 @@ search-and-replace.
 **Decision needed:** update the command to `ModelConfig` and re-verify what it
 asserts, or retire it if `test_persona_flow` + `test_agent_flow` already cover
 the same ground.
+
+
+---
+
+## Scoped invites — three follow-ups left open on purpose
+
+**Where:** `modules/nexus-nucleus/workspace/services.py` (`invite_to_system`), `workspace/api.py`
+(`invite_member`).
+
+Landed with the `grants` work (an invite can name projects/topics, and a scoped invite now grants the
+role at those scopes only — no company-scope role alongside). Three adjacent things were noticed and
+deliberately not folded in:
+
+1. **Changing a pending invitation's grants.** Inviting an address that already has a *pending*
+   invitation is refused ("An active invitation has already been sent"). With a multi-select tree it is
+   easy to want a second pass; the natural behaviour would be to update the stored grants/role of the
+   pending row rather than refuse. Product call.
+2. **`invite_member` still gates on the legacy Django permission** `has_perm("nucleus.add_invitation")`
+   (via the role-named Group) instead of the `company.invite_member` right. A scoped invitee never gets
+   the group now, which is correct, but the two gates can disagree for anyone whose group and rights drift.
+3. **`valid_roles` accepts `"owner"` on an invite.** The web app never offers it, but the API does not
+   refuse it; granting Owner at a project scope hands out the whole registry there.
