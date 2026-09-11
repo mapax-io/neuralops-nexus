@@ -1,6 +1,7 @@
 import logging
 import random
 import re
+import secrets
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -488,6 +489,121 @@ def set_role_rights(company, role_id: str, codes: list) -> dict:
         "added": sorted(to_add),
         "removed": sorted(to_remove),
     }
+
+
+# =========================================================
+# Profile photo (POST/DELETE /api/v1/me/avatar/)
+# =========================================================
+
+# Uploads are user-supplied bytes, so nothing about the request is trusted:
+# not the filename, not the content type, not the extension. The file is
+# decoded with Pillow, re-encoded, and written under a name the server picks.
+AVATAR_MAX_BYTES = 5 * 1024 * 1024   # 5 MB, checked before decoding
+AVATAR_MAX_EDGE = 512                # px; larger is pointless for a 40px circle
+AVATAR_DIR = "avatars/custom"
+
+
+class AvatarError(Exception):
+    """A refused upload. The API turns this into a 400 with the text."""
+
+
+def set_profile_photo(user, upload) -> str:
+    """
+    Replace `user`'s photo with an uploaded image and return its path.
+
+    Re-encoding rather than storing the bytes as sent is the point: it proves
+    the file really is an image, drops EXIF (which carries GPS among other
+    things), and means a polyglot -- something that is a valid image AND a
+    valid script -- cannot survive the round trip. The stored name is derived
+    from the user id, never from the upload, so a crafted filename cannot
+    traverse or collide.
+    """
+    from io import BytesIO
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+    from PIL import Image, UnidentifiedImageError
+
+    size = getattr(upload, "size", None)
+    if size is not None and size > AVATAR_MAX_BYTES:
+        raise AvatarError(
+            f"That image is {size // (1024 * 1024)} MB. Please use one under "
+            f"{AVATAR_MAX_BYTES // (1024 * 1024)} MB."
+        )
+
+    try:
+        upload.seek(0)
+        image = Image.open(upload)
+        image.load()  # force a real decode; verify() alone leaves it unusable
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise AvatarError("That file isn't an image we can read. Try a PNG or JPEG.")
+
+    # Flatten to RGB on white: a transparent PNG would otherwise go black once
+    # saved as JPEG, and RGBA/P modes cannot be saved as JPEG at all.
+    if image.mode in ("RGBA", "LA", "P"):
+        flattened = Image.new("RGB", image.size, (255, 255, 255))
+        rgba = image.convert("RGBA")
+        flattened.paste(rgba, mask=rgba.split()[-1])
+        image = flattened
+    elif image.mode != "RGB":
+        image = image.convert("RGB")
+
+    image.thumbnail((AVATAR_MAX_EDGE, AVATAR_MAX_EDGE))
+
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=88, optimize=True)
+
+    # A fresh name each time, so a cached old photo is never served for a new
+    # one and the previous file can be deleted without racing the new write.
+    #
+    # Written through storage directly rather than user.avatar.save(), which
+    # would prepend the field's upload_to ("avatars/%Y/%m/") and bury the file
+    # somewhere clear_profile_photo cannot recognise. assign_avatar() sets
+    # .name the same way for the same reason.
+    name = f"{AVATAR_DIR}/{user.id}-{secrets.token_hex(4)}.jpg"
+    previous = user.avatar.name if user.avatar else None
+    stored = default_storage.save(name, ContentFile(buffer.getvalue()))
+    user.avatar.name = stored
+    user.save(update_fields=["avatar"])
+
+    if previous and previous.startswith(f"{AVATAR_DIR}/"):
+        _delete_stored_avatar(previous)
+
+    logger.info("[avatar] %s set a profile photo", user.email)
+    return stored
+
+
+def clear_profile_photo(user) -> str | None:
+    """
+    Drop a custom photo and fall back to a server-assigned one.
+
+    Returns the path now in use, or None when no pool has been seeded -- the UI
+    renders initials for an empty avatar either way.
+    """
+    previous = user.avatar.name if user.avatar else None
+    user.avatar = ""
+    user.save(update_fields=["avatar"])
+
+    if previous and previous.startswith(f"{AVATAR_DIR}/"):
+        _delete_stored_avatar(previous)
+
+    # Straight back to a default rather than leaving them blank until their
+    # next sign-in, which is when assign_avatar() would otherwise run.
+    return assign_avatar(user)
+
+
+def _delete_stored_avatar(path: str) -> None:
+    """Best effort -- a leftover file is untidy, not a failure worth raising."""
+    from pathlib import Path
+    from django.conf import settings
+
+    try:
+        target = (Path(settings.MEDIA_ROOT) / path).resolve()
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        # Never follow a path that escapes MEDIA_ROOT, whatever produced it.
+        if media_root in target.parents and target.is_file():
+            target.unlink()
+    except OSError as exc:
+        logger.warning("[avatar] could not remove %s: %s", path, exc)
 
 
 # =========================================================
