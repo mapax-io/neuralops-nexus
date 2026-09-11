@@ -7,14 +7,18 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
-from .schema import AuthVerifyResponse, SignInRequest, SignInResponse
-from .services import SignInError, auth_verify, signin_with_supabase_token
+from .schema import AuthVerifyResponse, MyPermissionsOut, SignInRequest, SignInResponse
+from .services import SignInError, auth_verify, my_permissions, signin_with_supabase_token
 from .supabase import SupabaseTokenError
 from .versions import read_module_versions
 from authn.auth import SupabaseBearer
 
 
 router = Router(tags=["Authentication"])
+
+# Mounted at /api/v1/me/ (see core/urls.py) -- "things about the caller",
+# separate from /auth/ which is about establishing the connection.
+me_router = Router(tags=["Me"], auth=SupabaseBearer())
 
 
 # ── Server config (public) ───────────────────────────────────────────────────
@@ -167,3 +171,20 @@ def change_username(request, payload: ChangeUsernameIn):
         pass
 
     return {"ok": True, "display_name": name}
+
+
+# ── Effective permissions ────────────────────────────────────────────────────
+
+@me_router.get("/permissions/", response=MyPermissionsOut)
+def my_permissions_view(request):
+    """
+    Every right the caller holds, resolved for reach and keyed by object.
+    The frontend gates each control on this instead of the company role.
+    """
+    from nucleus.models import Company
+
+    company = Company.objects.filter(is_active=True).first()
+    if not company:
+        raise HttpError(503, "Server not initialised. Run 'python manage.py create_owner' first.")
+
+    return my_permissions(request.auth, company)

@@ -436,3 +436,130 @@ pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-0
 capability template from nucleus instead of copying it; restore the compose commands;
 decide whether to backfill existing projects.
 
+
+---
+
+## Scoped permissions: three registry decisions, deliberately not changed
+
+**Where:** `modules/nexus-nucleus/authn/permissions/rights.py`,
+`authn/permissions/models.py`.
+
+Surfaced while wiring the web app's gating to real rights
+(`GET /api/v1/me/permissions/`). Each is a design decision, not a typo, and
+each changes what existing users can see — so none was touched.
+
+1. **Member holds the company-scoped `*.list` rights.** `DEFAULT_ROLE_RIGHTS`
+   gives Member `project.list`, `channel.list`, `topic.list` (and
+   `persona.list` / `mcp_server.list` / `model_config.list`). Every one is a
+   COMPANY-scope right, so a company-scope Member assignment flips each
+   `visible_*()` in `row_rules.py` from its narrow path onto its broad one —
+   this is why a Member sees everything. Removing them would make Member mean
+   "member of what you were added to" and make the system fail closed. Needs a
+   data migration and a `seed_permissions` re-run on every deployment.
+2. **Owner and Admin hold identical rights.** Admin's explicit list in
+   `DEFAULT_ROLE_RIGHTS` covers all 33 registry codes, so the two roles differ
+   in name only. Worth deciding before anything relies on the distinction.
+3. **There is no channel scope.** `ScopeType` has only company / project /
+   topic, so "member of one channel" cannot be expressed — the nearest options
+   are every topic in it (which misses topics created later) or the whole
+   project.
+
+**Decision needed:** owner's call on each, separately from the UI work.
+
+---
+
+## Scoped permissions: rights the UI needs that the registry does not have
+
+**Where:** `modules/nexus-nucleus/authn/permissions/rights.py`,
+`modules/neuralops-web-app/src/components/**`.
+
+Wiring every control to a right turned up three actions with no right to bind
+to. The web app currently uses a documented proxy for each; each proxy is
+marked with a comment at its call site.
+
+1. **Team management has no right.** `POST /projects/{id}/team/`,
+   `POST /projects/{id}/team/invite/` and `DELETE /projects/{id}/team/{user}/`
+   (`workspace/api.py`) run no `PermissionChecker.can()` check at all. The UI
+   gates "Manage team" on `project.archive` — the only PROJECT-scope
+   admin-tier right — as a stand-in for "administers this project".
+2. **Posting a message has no right.** There is no `message.send` in the
+   registry, so `TopicView` uses `session.create` (TOPIC-scope, held by every
+   participating tier, never by Viewer) as the read/write marker.
+3. **`company.invite_member` / `company.remove_member` are enforced nowhere.**
+   The live members endpoints (`workspace/api.py:294`, `:309`) check Django
+   group permissions — `user.has_perm("nucleus.add_invitation")` /
+   `"nucleus.remove_invitation"` — not `PermissionChecker`. The UI gates
+   Invite/Remove on the two registry rights, per the rights table, so the two
+   sides agree only once the endpoints move to `PermissionChecker.can()`.
+   (Owner chose to move them; still to do — the scoped-permissions work item
+   was limited to the missing `/me/permissions/` endpoint.)
+
+**Decision needed:** add the missing rights, or confirm the proxies.
+
+---
+
+## Scoped permissions: invite still over-grants company scope (two sites)
+
+**Where:** `modules/nexus-nucleus/authn/services.py`,
+`modules/nexus-nucleus/workspace/services.py`.
+
+Accepting an invitation grants Member at **company** scope regardless of what
+the invite was for — at TWO sites, not one:
+
+1. `authn/services.py` `auth_verify()` — the invitation-accept path grants
+   company scope unconditionally, *before* the correctly scoped grant that
+   follows in `_add_user_to_invited_project()`.
+2. `workspace/services.py` `invite_to_system()` — the already-a-platform-user
+   path does the same, and `invite_to_project()` calls it first. So
+   `invite_to_project(scope="topic")` on an existing user also produces the
+   company+topic pair, reached by a different path.
+
+A topic or project invite therefore leaves two assignments, and the
+company-wide one wins every visibility check. Fixing only `auth_verify()`
+leaves the second live.
+
+Not fixed here: the scoped-permissions work item was limited to the missing
+endpoint. This one changes who can see what for people already invited, so it
+wants its own change and its own verification pass.
+
+---
+
+## DECISIONS.md §6 names a file that does not exist
+
+**Where:** `docs/DECISIONS.md` §6 "API Routing — Active Routers Only".
+
+It states the mounted routers are listed in `authn/urls.py` and calls that file
+"source of truth for what is mounted". There is no `authn/urls.py`; mounting is
+`core/urls.py`. The same section should also name `workspace/members_api.py`
+and `workspace/members_services.py` as not-mounted reference files — `core/urls.py`
+imports `members_router` from `workspace/api.py`, so `members_api.py` is dead in
+exactly the way `team_api.py` already is. (The `# TODO: send email` at
+`members_services.py:76` is likewise dead: the live path sends invitation email
+via `_send_invite_email()` since PR #110.)
+
+
+---
+
+## `manage.py test_chat_flow` cannot run — stale import after the AIModel rename
+
+**Where:** `modules/nexus-nucleus/chat/management/commands/test_chat_flow.py:24`.
+
+```
+from nucleus.models import AIModel, ChatMessage, Company, Persona
+ImportError: cannot import name 'AIModel' from 'nucleus.models'
+```
+
+`AIModel` was renamed to `ModelConfig` in migration 0014 (noted in
+`nucleus/models/__init__.py:72`); this command was never updated, so it dies at
+import before running a single check. It is the one flow test that covers the
+chat hot path, and `readme.md` / `CLAUDE.md` both still list it as a gate.
+
+Pre-existing — last touched in `0d6ab07`, long before the scoped-permissions
+work. Noticed while running the backend gates for the `tool_activity` relay; not
+fixed there because the rename's blast radius inside that command (fixtures,
+persona wiring, assertions) deserves its own pass rather than a rushed
+search-and-replace.
+
+**Decision needed:** update the command to `ModelConfig` and re-verify what it
+asserts, or retire it if `test_persona_flow` + `test_agent_flow` already cover
+the same ground.
