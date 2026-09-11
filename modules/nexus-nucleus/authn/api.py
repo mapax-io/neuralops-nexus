@@ -7,11 +7,18 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
-from .schema import AuthVerifyResponse, MyPermissionsOut, SignInRequest, SignInResponse
-from .services import SignInError, auth_verify, my_permissions, signin_with_supabase_token
+from .schema import (
+    AuthVerifyResponse, MyPermissionsOut, RolesOut, SetRoleRightsIn,
+    SetRoleRightsOut, SignInRequest, SignInResponse,
+)
+from .services import (
+    RoleEditError, SignInError, auth_verify, list_roles, my_permissions,
+    set_role_rights, signin_with_supabase_token,
+)
 from .supabase import SupabaseTokenError
 from .versions import read_module_versions
 from authn.auth import SupabaseBearer
+from authn.permissions.checker import PermissionChecker
 
 
 router = Router(tags=["Authentication"])
@@ -19,6 +26,9 @@ router = Router(tags=["Authentication"])
 # Mounted at /api/v1/me/ (see core/urls.py) -- "things about the caller",
 # separate from /auth/ which is about establishing the connection.
 me_router = Router(tags=["Me"], auth=SupabaseBearer())
+# Mounted at /api/v1/roles/ -- editing what a role GRANTS, which is different
+# from assigning a role to someone (workspace/members).
+roles_router = Router(tags=["Roles"], auth=SupabaseBearer())
 
 
 # ── Server config (public) ───────────────────────────────────────────────────
@@ -188,3 +198,55 @@ def my_permissions_view(request):
         raise HttpError(503, "Server not initialised. Run 'python manage.py create_owner' first.")
 
     return my_permissions(request.auth, company)
+
+
+# ── Role rights administration ───────────────────────────────────────────────
+
+def _require_role_editor(request):
+    """
+    The company, and the caller's permission to edit what a role grants.
+
+    Gated on the `role.update` right rather than a role name, like every other
+    check in the app. Only Owner holds it: Owner's bundle is the whole registry
+    and it is deliberately absent from the Admin/Member/Viewer bundles.
+
+    can() raises on an unregistered code, which is what a server that has not
+    re-run seed_permissions since this right was added would hit. That is a
+    deployment step, not a permission failure, so it is reported as one.
+    """
+    from nucleus.models import Company
+
+    company = Company.objects.filter(is_active=True).first()
+    if not company:
+        raise HttpError(503, "Server not initialised. Run 'python manage.py create_owner' first.")
+    try:
+        allowed = PermissionChecker.can(request.auth, "role.update", company=company)
+    except ValueError:
+        raise HttpError(
+            503,
+            "This server hasn't registered the role.update right yet. "
+            "Run 'python manage.py seed_permissions'.",
+        )
+    if not allowed:
+        raise HttpError(403, "Only the workspace owner can change what a role grants.")
+    return company
+
+
+@roles_router.get("/", response=RolesOut)
+def roles(request):
+    """The rights registry and what each role currently grants."""
+    return list_roles(_require_role_editor(request))
+
+
+@roles_router.patch("/{role_id}/rights/", response=SetRoleRightsOut)
+def update_role_rights(request, role_id: str, payload: SetRoleRightsIn):
+    """
+    Replace the full right set of one role. Takes effect for every holder
+    immediately -- RoleRight rows are what PermissionChecker reads, and nothing
+    is copied per user.
+    """
+    company = _require_role_editor(request)
+    try:
+        return set_role_rights(company, role_id, payload.rights)
+    except RoleEditError as exc:
+        raise HttpError(400, str(exc))
