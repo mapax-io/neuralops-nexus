@@ -180,7 +180,7 @@ function ProjectNode({ project, activeChannelId }: { project: Project; activeCha
   return (
     <div className="mb-2">
       <div className="group flex items-center rounded-lg px-1.5 py-1 hover:bg-surface">
-        <button aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13.5px] font-semibold">
+        <button aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13.5px] font-semibold transition-colors hover:text-accent">
           <ChevronRight aria-hidden size={12} strokeWidth={2.25} className={`flex-none text-ink2 transition-transform ${open ? "rotate-90" : ""}`} />
           <Mark aria-hidden size={14} strokeWidth={2} className={`flex-none ${tint}`} />
           {/* Full name, wrapped — never an ellipsis (matches the topics panel). */}

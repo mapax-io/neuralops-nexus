@@ -118,7 +118,7 @@ export function ListState({ loading, error, onRetry, empty, emptyTitle, emptyHin
   if (error) {
     return (
       <p className="text-[13.5px] text-crit">
-        Couldn&apos;t load this list. <Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>
+        Couldn&apos;t load this list. <Button size="sm" variant="link" onClick={onRetry}>Retry</Button>
       </p>
     );
   }

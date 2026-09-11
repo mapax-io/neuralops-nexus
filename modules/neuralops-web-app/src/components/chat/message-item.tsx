@@ -72,7 +72,7 @@ function CodeBlock({ content, terminal }: { content: string; terminal?: boolean 
         <span className="font-mono text-[11px] text-ink2">{terminal ? "terminal" : "code"}</span>
         <button
           aria-label="Copy to clipboard"
-          className="flex items-center gap-1.5 text-[11.5px] text-ink2 hover:text-ink"
+          className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11.5px] text-ink2 transition-colors hover:bg-surface hover:text-ink"
           onClick={() => void copyText(content).then((ok) => (ok ? toast.success("Copied") : toast.error("Copy failed — check clipboard permissions")))}
         >
           <Copy size={12} strokeWidth={2} /> Copy
@@ -111,7 +111,7 @@ function FencedCode({ lang, code, children }: { lang: string | null; code: strin
           aria-label="Copy code"
           title="Copy code"
           onClick={() => void copyText(code).then((ok) => (ok ? toast.success("Copied") : toast.error("Copy failed — check clipboard permissions")))}
-          className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-ink2 hover:text-ink"
+          className="flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11.5px] text-ink2 transition-colors hover:bg-surface hover:text-ink"
         >
           <Copy size={12} strokeWidth={2} /> Copy
         </button>

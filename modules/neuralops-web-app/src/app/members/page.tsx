@@ -121,7 +121,7 @@ export default function MembersPage() {
           )}
           {!!error && (
             <p className="text-[13.5px] text-crit">
-              Couldn&apos;t load members. <Button size="sm" variant="ghost" onClick={() => refetch()}>Retry</Button>
+              Couldn&apos;t load members. <Button size="sm" variant="link" onClick={() => refetch()}>Retry</Button>
             </p>
           )}
           {!isLoading && !error && visible.length === 0 && (

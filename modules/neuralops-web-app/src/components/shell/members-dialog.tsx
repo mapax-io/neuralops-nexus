@@ -55,7 +55,7 @@ export function MembersDialog({ open, onClose }: { open: boolean; onClose: () =>
           ) : (
             <span />
           )}
-          <Button size="sm" variant="ghost" onClick={() => { close(); router.push("/members"); }}>
+          <Button size="sm" variant="link" onClick={() => { close(); router.push("/members"); }}>
             View all members →
           </Button>
         </div>

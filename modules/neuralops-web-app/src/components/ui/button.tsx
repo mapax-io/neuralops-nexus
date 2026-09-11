@@ -11,6 +11,8 @@ const button = cva(
         secondary: "bg-surface text-ink border border-line hover:border-accent hover:shadow-[0_8px_20px_-14px_var(--accent-soft)] active:brightness-95",
         ghost: "text-ink2 hover:text-ink hover:bg-surface2",
         danger: "bg-crit/10 text-crit border border-crit/30 hover:bg-crit/15",
+        // A text action that must read as one at rest: accent, underlined on hover, no chrome.
+        link: "text-accent hover:underline underline-offset-4 decoration-accent/50 active:brightness-90",
       },
       size: {
         sm: "h-8 px-3 text-[13px]",
