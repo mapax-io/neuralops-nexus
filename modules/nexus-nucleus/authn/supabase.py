@@ -100,3 +100,35 @@ def invite_user_by_email(email: str, redirect_to: str = "", metadata: dict = Non
         raise SupabaseAdminError(f"Supabase invite failed: {detail}", code=code) from exc
     except Exception as exc:
         raise SupabaseAdminError(f"Supabase invite error: {exc}") from exc
+
+
+def send_recovery_email(email: str, redirect_to: str = "") -> None:
+    """
+    Ask Supabase to email a password-reset (sign-in) link. The public
+    /recover endpoint sends it for any existing account -- including one that
+    was merely invited before and never claimed -- so it is the way in for an
+    address the invite endpoint refuses as "already registered".
+    Raises SupabaseAdminError on failure.
+    """
+    import urllib.parse
+
+    api_key = settings.SUPABASE_ANON_KEY or settings.SUPABASE_SERVICE_KEY
+    if not api_key:
+        raise SupabaseAdminError("No Supabase key is configured for the recovery email.")
+    url = f"{settings.SUPABASE_URL}/auth/v1/recover"
+    if redirect_to:
+        url += "?" + urllib.parse.urlencode({"redirect_to": redirect_to})
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"email": email}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json", "apikey": api_key, "Authorization": f"Bearer {api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode(errors="replace")
+        raise SupabaseAdminError(f"Supabase recovery email failed: {raw[:200]}") from exc
+    except Exception as exc:
+        raise SupabaseAdminError(f"Supabase recovery email error: {exc}") from exc

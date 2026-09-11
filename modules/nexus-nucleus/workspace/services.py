@@ -212,6 +212,95 @@ def remove_user_from_server(company, user_id: str, requesting_user) -> dict:
     return {"ok": True, "message": f"{email} removed from server."}
 
 
+def get_member(company, user_id: str):
+    """The User behind an active membership, or None."""
+    # CompanyAccess — imported at top of file.
+    access = CompanyAccess.objects.filter(company=company, user_id=user_id, is_active=True).select_related("user").first()
+    return access.user if access else None
+
+
+def member_access(company, user) -> dict:
+    """
+    What `user` holds on this server, in the shape an invite sends: a
+    server-wide role (a company-scope assignment), or the projects/topics
+    they were scoped to. Read from RoleAssignment -- the rows the checker
+    reads -- not from the legacy CompanyAccess flag, which cannot say which.
+    """
+    # RoleAssignment, Project, ChatTopic, CompanyAccess — imported at top of file.
+
+    rows = list(RoleAssignment.objects.filter(user=user).select_related("role"))
+    company_row = next((a for a in rows if a.scope_object_type == "company" and a.scope_object_id == company.id), None)
+    project_rows = {a.scope_object_id: a for a in rows if a.scope_object_type == "project"}
+    topic_rows = {a.scope_object_id: a for a in rows if a.scope_object_type == "topic"}
+
+    grants = {}
+    for p in Project.objects.filter(company=company, id__in=project_rows, is_active=True).order_by("name"):
+        grants[p.id] = {"project_id": str(p.id), "topic_ids": []}
+    for t in ChatTopic.objects.filter(company=company, id__in=topic_rows, is_active=True).order_by("created_at"):
+        if t.project_id in project_rows:
+            continue  # the whole project already covers it
+        grants.setdefault(t.project_id, {"project_id": str(t.project_id), "topic_ids": []})["topic_ids"].append(str(t.id))
+
+    names = {p.id: p.name for p in Project.objects.filter(company=company, id__in=list(grants))}
+    first = company_row or next(iter(project_rows.values()), None) or next(iter(topic_rows.values()), None)
+    access = CompanyAccess.objects.filter(company=company, user=user, is_active=True).first()
+    role = first.role.name.lower() if first else (access.role if access else CompanyAccess.Role.MEMBER)
+    return {
+        "user_id": str(user.id), "role": role, "server_wide": company_row is not None,
+        "grants": [grants[pid] for pid in sorted(grants, key=lambda pid: names.get(pid, "").lower())],
+    }
+
+
+def set_member_access(company, actor, target_user_id: str, role: str, grants: list) -> dict:
+    """
+    Replace what a member holds: everything they had goes, then either the
+    server-wide role (no grants) or exactly these grants, at `role` -- the same
+    rule an invite follows. The legacy CompanyAccess.role and Django group
+    follow, so the members list and the old has_perm() checks agree.
+
+    Refuses the owner (nothing on this server outranks them), the caller's own
+    row (locking yourself out is not something the UI should offer), and
+    handing out ownership. Validated before anything is written.
+    """
+    from django.contrib.auth.models import Group
+    # CompanyAccess, ProjectMember, TopicParticipant, Role, PermissionChecker — imported at top of file.
+
+    valid_roles = [r.value for r in CompanyAccess.Role]
+    if role not in valid_roles:
+        raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+    if role == CompanyAccess.Role.OWNER:
+        raise ValueError("Ownership cannot be granted here.")
+    if str(actor.id) == str(target_user_id):
+        raise ValueError("You cannot change your own access.")
+    access = CompanyAccess.objects.filter(company=company, user_id=target_user_id, is_active=True).select_related("user").first()
+    if not access:
+        raise ValueError("User is not a member of this server.")
+    if access.role == CompanyAccess.Role.OWNER or str(company.owner_id) == str(target_user_id):
+        raise ValueError("The owner's access cannot be changed.")
+    role_row = Role.objects.filter(company=company, name=role.capitalize()).first()
+    if role_row is None:
+        raise ValueError(f"Role '{role}' is not set up on this server. Run manage.py seed_permissions.")
+    resolved = _resolve_grants(company, grants)
+    user = access.user
+
+    revoke_all_roles(company, user)
+    access.role = role
+    access.save(update_fields=["role", "updated_at"])
+    if resolved:
+        # Scoped: the legacy roster rows are re-derived from the grants, and the
+        # company-wide group goes with the company-wide role.
+        ProjectMember.objects.filter(company=company, user=user, is_active=True).update(is_active=False)
+        TopicParticipant.objects.filter(company=company, user=user, is_active=True).update(is_active=False)
+        user.groups.clear()
+        apply_grants(company, user, [_grant_dict(p, t) for p, t in resolved], role, actor)
+    else:
+        PermissionChecker.assign_role(user, role_row, company, granted_by=actor)
+        group = Group.objects.filter(name=role.capitalize()).first()
+        user.groups.set([group] if group else [])
+    logger.info("[access] %s set %s to %s (%s)", actor.email, user.email, role, "scoped" if resolved else "server-wide")
+    return member_access(company, user)
+
+
 def revoke_all_roles(company, user) -> int:
     """Delete every RoleAssignment `user` holds in `company`, at any scope."""
     # RoleAssignment, Project, ChatTopic, Q — imported at top of file.
@@ -349,7 +438,7 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
     the new account with this server (nx_servers), which the web app shows
     on the invitee's launcher.
     """
-    from authn.supabase import SupabaseAdminError, invite_user_by_email
+    from authn.supabase import SupabaseAdminError, invite_user_by_email, send_recovery_email
 
     if not settings.SUPABASE_SERVICE_KEY:
         return False, None
@@ -368,7 +457,16 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
     except SupabaseAdminError as exc:
         logger.warning("[invite] email to %s not sent: %s", email, exc)
         if exc.code == "exists":
-            return False, "They already have a NeuralOps account, so no email was sent -- they can add this server and connect."
+            # Supabase says "registered" for any address it knows -- one merely
+            # invited before and never claimed, or a member removed here. The
+            # account exists either way, so a sign-in (password reset) email is
+            # what gets them in; it lands on the same page the invite would.
+            try:
+                send_recovery_email(email, redirect_to=redirect_to or "")
+                return True, "They already had a NeuralOps account, so a sign-in email was sent instead."
+            except SupabaseAdminError as exc2:
+                logger.warning("[invite] recovery email to %s not sent: %s", email, exc2)
+                return False, "They already have a NeuralOps account, but no email could be sent -- they can sign in and add this server."
         return False, "The invitation email could not be sent; pass the steps on instead."
 
 

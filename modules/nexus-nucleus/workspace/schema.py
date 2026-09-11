@@ -89,6 +89,21 @@ class InviteResponse(Schema):
     grants: List[GrantIn] = []
 
 
+class MemberAccessOut(Schema):
+    user_id: str
+    role: str
+    # True: a server-wide role, which reaches every project. False: scoped to
+    # `grants` only -- the same rule an invite follows.
+    server_wide: bool
+    grants: List[GrantIn] = []
+
+
+class SetMemberAccessIn(Schema):
+    """Full replace: no grants = server-wide at `role`; otherwise exactly these, at `role`."""
+    role: str = "member"
+    grants: List[GrantIn] = []
+
+
 class MemberOut(Schema):
     user_id: str
     email: str

@@ -28,6 +28,7 @@ class Command(BaseCommand):
         Invitation.objects.filter(email__endswith="@example.test").delete()
         calls = []
         real = sb.invite_user_by_email
+        real_recover = sb.send_recovery_email
 
         def stub_ok(email, redirect_to="", metadata=None):
             calls.append({"email": email, "redirect_to": redirect_to, "metadata": metadata})
@@ -51,12 +52,14 @@ class Command(BaseCommand):
                 wsvc.invite_to_system(company, company.owner, f"badurl-{uuid.uuid4().hex[:6]}@example.test", redirect_to="javascript:alert(1)")
             self._check("non-http redirect_to is dropped", calls[-1]["redirect_to"], "")
             sb.invite_user_by_email = stub_exists
+            sb.send_recovery_email = lambda email, redirect_to="": None
             with override_settings(SUPABASE_SERVICE_KEY="service-key", **env):
                 r = wsvc.invite_to_system(company, company.owner, f"exists-{uuid.uuid4().hex[:6]}@example.test")
-            self._check("already registered -> not sent, explained", (r["email_sent"], "already" in (r["email_note"] or "")), (False, True))
+            self._check("already registered -> sign-in email instead, explained", (r["email_sent"], "sign-in email" in (r["email_note"] or "")), (True, True))
             self._check("pending Invitation still created", Invitation.objects.filter(email=r["email"], status=Invitation.Status.PENDING).exists(), True)
         finally:
             sb.invite_user_by_email = real
+            sb.send_recovery_email = real_recover
             Invitation.objects.filter(email__endswith="@example.test").delete()
         self.stdout.write("Done.")
 
