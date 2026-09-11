@@ -19,6 +19,7 @@ import { MessageList } from "@/components/chat/message-list";
 import { SchedulesPanel } from "@/components/chat/schedules-panel";
 import { TypingBar } from "@/components/chat/typing-bar";
 import { useChat } from "@/hooks/use-chat";
+import { useKnownMentions } from "@/hooks/use-known-mentions";
 import { useMarkTopicRead, useProjects, useTopics } from "@/hooks/use-workspace";
 import { useSearchShortcut } from "@/lib/platform";
 import { useSelection } from "@/stores/selection.store";
@@ -38,6 +39,9 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
   // No team-management right exists either -- the project-admin marker stands
   // in, matching WorkspaceTree.
   const canManageTeam = can("project.archive", projectScope(pid));
+  // Same set the composer pills against, so a name reads identically in the
+  // box you type it in and the message it becomes.
+  const { known } = useKnownMentions(pid);
   const { data: projects } = useProjects();
   const { data: topics } = useTopics(pid, cid);
   const markRead = useMarkTopicRead();
@@ -201,6 +205,7 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
               jumpToId={jumpTo}
               onJumped={() => setJumpTo(null)}
               totalLoaded={chat.totalLoaded}
+              known={known}
             />
               <TypingBar actors={chat.typing} />
             </div>
