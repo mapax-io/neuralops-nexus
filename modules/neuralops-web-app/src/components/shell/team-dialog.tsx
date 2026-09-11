@@ -166,7 +166,7 @@ export function TeamDialog({ pid, projectName, open, onClose, canManage = true }
                         <p className="truncate text-[13.5px] font-semibold">{u.name || u.email}</p>
                         {u.email && u.name && <p className="truncate text-[12px] text-ink2">{u.email}</p>}
                       </div>
-                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => add.mutate(u.user_id)}>
+                      <Button size="sm" disabled={busy} onClick={() => add.mutate(u.user_id)}>
                         <Plus size={14} strokeWidth={2} /> Add
                       </Button>
                     </li>
@@ -186,7 +186,7 @@ export function TeamDialog({ pid, projectName, open, onClose, canManage = true }
                       <p className="truncate text-[13.5px] font-semibold">@{p.name}</p>
                       {personaDetail(p.persona_id) && <p className="truncate text-[12px] text-ink2">{personaDetail(p.persona_id)}</p>}
                     </div>
-                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => add.mutate(p.user_id)}>
+                    <Button size="sm" disabled={busy} onClick={() => add.mutate(p.user_id)}>
                       <Plus size={14} strokeWidth={2} /> Add
                     </Button>
                   </li>

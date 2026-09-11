@@ -133,6 +133,90 @@ describe("WorkspaceTree — create dialogs follow every rule", () => {
     expect(create).toBeEnabled();
   });
 
+  // The live regression: the project list refetches the moment the server has
+  // the new project -- while the dialog is still open waiting for rights -- and
+  // the name just sent read as a duplicate of itself for a split second.
+  it("New project: the name never reads as a duplicate of the project it just created", async () => {
+    type Channel = { id: string; name: string; slug: string; description: null };
+    let projects: { id: string; name: string; slug: string; description: null; channels: Channel[] }[] =
+      [{ id: "p1", name: "demo-project", slug: "demo", description: null, channels: [] }];
+    let releaseRights: (() => void) | null = null;
+    const rights = new Promise<void>((r) => { releaseRights = r; });
+    let permissionHits = 0;
+    server.use(
+      http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json(projects)),
+      http.post(`${BASE}/api/v1/projects/`, async ({ request }) => {
+        const body = (await request.json()) as { name: string };
+        const created = { id: "p2", name: body.name, slug: body.name, description: null, channels: [{ id: "c9", name: "general", slug: "general", description: null }] };
+        projects = [...projects, created];
+        return HttpResponse.json(created);
+      }),
+      // The first rights fetch answers; the refetch after creation is held so
+      // the dialog stays open with the new project already in the list.
+      http.get(`${BASE}/api/v1/me/permissions/`, async () => {
+        permissionHits += 1;
+        if (permissionHits > 1) await rights;
+        return HttpResponse.json({ company: { id: "c1", rights: ["project.create", "project.list"] }, projects: { p1: ["project.view"], p2: ["project.view"] }, topics: {} });
+      }),
+      http.get(`${BASE}/api/v1/projects/:pid/channels/:cid/topics/`, () => HttpResponse.json([])),
+    );
+    connectAs("owner");
+    renderTree();
+    await screen.findByText("demo-project");
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    const dialog = screen.getByRole("dialog");
+    const name = within(dialog).getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "launch" } });
+    fireEvent.blur(name);
+    fireEvent.click(within(dialog).getByRole("button", { name: /create project/i }));
+    // The list now contains "launch" and the dialog is still open.
+    await screen.findByText("launch");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    releaseRights!();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // A real duplicate is still caught on the next use.
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    const again = within(screen.getByRole("dialog")).getByLabelText("Name");
+    fireEvent.change(again, { target: { value: "launch" } });
+    fireEvent.blur(again);
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(/already exists/);
+  });
+
+  it("New channel: the name never reads as a duplicate of the channel it just created", async () => {
+    let channels = [{ id: "c1", name: "general", slug: "g", description: null }];
+    let releaseRights: (() => void) | null = null;
+    const rights = new Promise<void>((r) => { releaseRights = r; });
+    let permissionHits = 0;
+    server.use(
+      http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([{ id: "p1", name: "Demo Project", slug: "demo", description: null, channels }])),
+      http.post(`${BASE}/api/v1/projects/p1/channels/`, async ({ request }) => {
+        const body = (await request.json()) as { name: string };
+        const created = { id: "c2", name: body.name, slug: body.name, description: null };
+        channels = [...channels, created];
+        return HttpResponse.json(created);
+      }),
+      http.get(`${BASE}/api/v1/me/permissions/`, async () => {
+        permissionHits += 1;
+        if (permissionHits > 1) await rights;
+        return HttpResponse.json({ company: { id: "c1", rights: [] }, projects: { p1: ["project.view", "channel.create"] }, topics: {} });
+      }),
+      http.get(`${BASE}/api/v1/projects/p1/channels/:cid/topics/`, () => HttpResponse.json([])),
+    );
+    connectAs("owner");
+    renderTree();
+    await screen.findByText("Demo Project");
+    fireEvent.click(screen.getByRole("button", { name: "New channel in Demo Project" }));
+    const dialog = screen.getByRole("dialog");
+    const name = within(dialog).getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "backend" } });
+    fireEvent.blur(name);
+    fireEvent.click(within(dialog).getByRole("button", { name: /create channel/i }));
+    await screen.findByText("backend");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    releaseRights!();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
   it("New channel: disabled until a valid name that is not already in the project", async () => {
     connectAs("owner");
     renderTree();

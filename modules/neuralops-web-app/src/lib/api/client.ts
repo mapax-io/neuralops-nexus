@@ -32,18 +32,33 @@ function extractMessage(status: number, body: string): string {
   return body.slice(0, 200) || `Server returned ${status}.`;
 }
 
+// A request that never answers -- a server mid-restart during a deploy -- must
+// not hold a loader forever. Reads are what gates wait on, so they get the
+// short cap; writes (uploads, verifications) get room. Callers may override.
+const READ_TIMEOUT_MS = 20_000;
+const WRITE_TIMEOUT_MS = 90_000;
+
+function withTimeout(signal: AbortSignal | null | undefined, ms: number): AbortSignal | undefined {
+  if (typeof AbortSignal.timeout !== "function") return signal ?? undefined;
+  const cap = AbortSignal.timeout(ms);
+  if (!signal) return cap;
+  return typeof AbortSignal.any === "function" ? AbortSignal.any([signal, cap]) : signal;
+}
+
 // One client for every nucleus call: active-server base URL, bearer auth,
 // 204 → undefined, error envelope normalization, status 0 on network failure.
-export async function apiJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function apiJson<T>(path: string, options: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
   const { serverUrl, token } = useConnectionStore.getState();
   if (!serverUrl) throw new ApiError(0, "No server connected.");
-  const headers = new Headers(options.headers);
-  if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  const { timeoutMs, ...init } = options;
+  const headers = new Headers(init.headers);
+  if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  const ms = timeoutMs ?? ((init.method ?? "GET").toUpperCase() === "GET" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS);
 
   let res: Response;
   try {
-    res = await fetch(`${serverUrl}${path}`, { ...options, headers });
+    res = await fetch(`${serverUrl}${path}`, { ...init, headers, signal: withTimeout(init.signal, ms) });
   } catch {
     // Every call reports here so the connectivity banner learns about a
     // server that went away without any screen having to watch for it.

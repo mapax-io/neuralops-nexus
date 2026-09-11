@@ -27,7 +27,9 @@ export function InviteAccessTree({ selection, onChange, idPrefix }: {
   // Delayed and held: the list is usually cached by the sidebar, and a
   // skeleton that flashes for a few frames reads as a glitch.
   const showLoader = useDelayedLoading(isPending);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Rows that already hold picks start open, so what someone has is visible
+  // without a click (the member access editor loads a selection).
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(Object.keys(selection)));
   const setOpen = (id: string, open: boolean) =>
     setExpanded((cur) => {
       const next = new Set(cur);
@@ -118,7 +120,7 @@ function ProjectRow({ id, project, selection, expanded, onExpand, onChange }: {
           aria-expanded={expanded}
           aria-controls={panelId}
           onClick={() => onExpand(!expanded)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13.5px] font-medium text-ink"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13.5px] font-medium text-ink transition-colors hover:text-accent"
         >
           <ChevronRight size={14} strokeWidth={2} className={`flex-none text-ink2 transition-transform ${expanded ? "rotate-90" : ""}`} />
           <span className="truncate">{project.name}</span>

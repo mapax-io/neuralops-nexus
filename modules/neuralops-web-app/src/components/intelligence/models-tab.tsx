@@ -30,7 +30,6 @@ const PROVIDERS = [
 ] as const;
 
 const providerOf = (value: string) => PROVIDERS.find((p) => p.value === value);
-const providerLabel = (value: string) => providerOf(value)?.label ?? value;
 
 const validateModelId = (v: string) => {
   const t = v.trim();

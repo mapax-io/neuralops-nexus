@@ -197,6 +197,15 @@ describe("InviteAccessTree — picking", () => {
     expect(await screen.findByRole("checkbox", { name: "Add to chat#3" })).toHaveAttribute("aria-checked", "true");
   });
 
+  // The member access editor mounts the tree with what they already hold.
+  it("rows that already hold picks start open, showing them", async () => {
+    renderTree({ p1: ["t3"] });
+    expect(await screen.findByRole("checkbox", { name: "Add to Alpha" })).toHaveAttribute("aria-checked", "mixed");
+    expect(screen.getByRole("button", { name: /^Alpha/ })).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByRole("checkbox", { name: "Add to chat#3" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: "Beta" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("projects are independent", async () => {
     renderTree();
     fireEvent.click(await screen.findByRole("checkbox", { name: "Add to Beta" }));

@@ -80,7 +80,7 @@ export function SchedulesPanel({ pid, cid, tid }: { pid: string; cid: string; ti
         )}
         {!!error && (
           <p className="mt-5 text-[13.5px] text-crit">
-            Couldn&apos;t load schedules. <Button size="sm" variant="ghost" onClick={() => refetch()}>Retry</Button>
+            Couldn&apos;t load schedules. <Button size="sm" variant="link" onClick={() => refetch()}>Retry</Button>
           </p>
         )}
 
