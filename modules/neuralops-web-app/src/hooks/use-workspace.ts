@@ -32,16 +32,29 @@ export function useMembers() {
 
 function useInvalidate() {
   const qc = useQueryClient();
-  return { projects: () => qc.invalidateQueries({ queryKey: ["projects"] }), topics: () => qc.invalidateQueries({ queryKey: ["topics"] }) };
+  return {
+    projects: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+    topics: () => qc.invalidateQueries({ queryKey: ["topics"] }),
+    // The rights payload is KEYED BY OBJECT ID, so creating a project or a
+    // topic makes it stale in a way no other query is: the new id simply is
+    // not in it, and every control scoped to that object reads as denied until
+    // it is refetched. Awaited by the callers below so the object is never
+    // handed to the UI before the rights that govern it.
+    permissions: () => qc.invalidateQueries({ queryKey: ["permissions"] }),
+  };
 }
 
 export function useCreateProject(onDone?: (p: ws.Project) => void) {
   const inv = useInvalidate();
   return useMutation({
     mutationFn: ({ name, description }: { name: string; description?: string }) => ws.createProject(name, description),
-    onSuccess: (p) => {
+    onSuccess: async (p) => {
       toast.success(`Project "${p.name}" created`);
       inv.projects();
+      // Rights first: the new project's id is not in the cached payload, so
+      // navigating before this lands shows the project with every control
+      // denied. Awaited, not fired and forgotten.
+      await inv.permissions();
       onDone?.(p);
     },
     onError: (e) => toast.error(e.message),
@@ -52,9 +65,10 @@ export function useCreateChannel(projectId: string, onDone?: (c: ws.Channel) => 
   const inv = useInvalidate();
   return useMutation({
     mutationFn: ({ name, description }: { name: string; description?: string }) => ws.createChannel(projectId, name, description),
-    onSuccess: (c) => {
+    onSuccess: async (c) => {
       toast.success(`Channel "${c.name}" created`);
       inv.projects();
+      await inv.permissions();
       onDone?.(c);
     },
     onError: (e) => toast.error(e.message),
@@ -65,8 +79,12 @@ export function useCreateTopic(projectId?: string, channelId?: string, onDone?: 
   const inv = useInvalidate();
   return useMutation({
     mutationFn: (existingTitles: string[]) => ws.createTopic(projectId!, channelId!, ws.nextTopicTitle(existingTitles)),
-    onSuccess: (t) => {
+    onSuccess: async (t) => {
       inv.topics();
+      // The new topic's id keys the rights payload too, so without this every
+      // topic-scoped control (rename, archive, @mention, session, schedule)
+      // reads as denied in the chat we are about to open.
+      await inv.permissions();
       onDone?.(t);
     },
     onError: (e) => toast.error(e.message),

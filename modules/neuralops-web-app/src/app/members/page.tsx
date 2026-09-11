@@ -35,7 +35,7 @@ export default function MembersPage() {
   const [query, setQuery] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
-  const { can } = usePermissions();
+  const { can, loading: permsLoading } = usePermissions();
   // Both are genuinely company-scoped, so this page keeps a company check —
   // just against the right rather than the role string.
   const canInvite = can("company.invite_member", companyScope());
@@ -63,7 +63,9 @@ export default function MembersPage() {
   );
   const admins = members?.filter((m) => m.role === "owner" || m.role === "admin").length ?? 0;
 
-  if (!hydrated || !token || !serverUrl) {
+  // Rights decide which controls exist, so hold rather than paint a
+  // screen with every gated control resolved to hidden.
+  if (!hydrated || !token || !serverUrl || permsLoading) {
     return (
       <FullPageLoader />
     );

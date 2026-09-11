@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, User } from "lucide-react";
+import { ShieldCheck, LogOut, User } from "lucide-react";
 import { ProfileDialog } from "@/components/shell/profile-dialog";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { absolutizeMedia } from "@/lib/api/client";
@@ -10,6 +10,8 @@ import { useMembers } from "@/hooks/use-workspace";
 import { clearAccountScopedState } from "@/lib/auth/session-cleanup";
 import { supabase } from "@/lib/supabase";
 import { useConnectionStore } from "@/stores/connection.store";
+import { usePermissions } from "@/hooks/use-permissions";
+import { companyScope } from "@/lib/permissions";
 
 // The avatar button + account menu (Profile / Sign out) + profile dialog +
 // sign-out confirmation, used in the workspace top bar. Clicking the avatar
@@ -25,6 +27,9 @@ export function ProfileButton({ size = 9 }: { size?: 8 | 9 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { can } = usePermissions();
+  const canEditRoles = can("role.update", companyScope());
+
 
   const signOut = async () => {
     clearAccountScopedState(); // one shared cleanup — stores, drafts, query cache, realtime
@@ -104,6 +109,13 @@ export function ProfileButton({ size = 9 }: { size?: 8 | 9 }) {
           <button role="menuitem" className={`${item} text-ink`} onClick={() => { setMenuOpen(false); setProfileOpen(true); }}>
             <User size={15} strokeWidth={2} className="flex-none text-ink2" /> Profile
           </button>
+          {/* Owner only, by right rather than by role name — the server gates
+              the same way, so this never offers a page that would refuse. */}
+          {canEditRoles && (
+            <button role="menuitem" className={`${item} text-ink`} onClick={() => { setMenuOpen(false); router.push("/permissions"); }}>
+              <ShieldCheck size={15} strokeWidth={2} className="flex-none text-ink2" /> Rights and roles
+            </button>
+          )}
           <button role="menuitem" className={`${item} text-crit`} onClick={() => { setMenuOpen(false); setConfirmingSignOut(true); }}>
             <LogOut size={15} strokeWidth={2} className="flex-none" /> Sign out
           </button>
