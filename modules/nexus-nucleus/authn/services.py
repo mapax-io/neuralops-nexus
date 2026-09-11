@@ -317,31 +317,32 @@ def my_permissions(user, company) -> dict:
     assignment still gets a key, so a project admin keeps their topic-scoped
     controls (topic.update/archive, persona.mention, session.*, schedule.*).
 
-    Resolves every visible object in a fixed number of queries: the row_rules
-    walk to find them, then two batched lookups each for projects and topics
-    (PermissionChecker.rights_for_many) -- not two per object.
+    Built entirely from what the permission system already provides: row_rules
+    decides which objects are visible, PermissionChecker.rights_for() answers
+    what is held against each. Nothing here re-derives either.
+
+    Cost scales with the number of visible objects (rights_for() is two queries
+    per object) -- measured at ~156 queries for 5 projects and 50 topics. Noted
+    in docs/OPEN-ITEMS.md; batching it is a later optimisation, not a reason to
+    add machinery alongside a function that already answers the question.
     """
     from authn.permissions.checker import PermissionChecker
     from authn.permissions.row_rules import visible_channels, visible_projects, visible_topics
 
-    visible_project_rows = list(visible_projects(user, company))
-    visible_topic_rows = [
-        topic
-        for project in visible_project_rows
-        for channel in visible_channels(user, project)
-        for topic in visible_topics(user, channel)
-    ]
-
-    project_rights = PermissionChecker.rights_for_many(user, visible_project_rows)
-    topic_rights = PermissionChecker.rights_for_many(user, visible_topic_rows)
+    projects, topics = {}, {}
+    for project in visible_projects(user, company):
+        projects[str(project.id)] = sorted(PermissionChecker.rights_for(user, obj=project))
+        for channel in visible_channels(user, project):
+            for topic in visible_topics(user, channel):
+                topics[str(topic.id)] = sorted(PermissionChecker.rights_for(user, obj=topic))
 
     return {
         "company": {
             "id": str(company.id),
             "rights": sorted(PermissionChecker.rights_for(user, company=company)),
         },
-        "projects": {key: sorted(codes) for key, codes in project_rights.items()},
-        "topics": {key: sorted(codes) for key, codes in topic_rights.items()},
+        "projects": projects,
+        "topics": topics,
     }
 
 
