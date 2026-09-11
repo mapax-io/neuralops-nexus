@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api/client";
 import { getMyPermissions } from "@/lib/api/permissions";
 import {
@@ -12,9 +12,35 @@ import {
 } from "@/lib/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 
+/** Shared so priming, reading and invalidation cannot drift apart. */
+export const permissionsQueryKey = (serverUrl: string | null) => ["permissions", serverUrl];
+
+/**
+ * Fetch the caller's rights into the cache before the workspace renders.
+ * Called during connect so the shell never paints a screen whose controls are
+ * gated on an answer that has not arrived -- see the loading gate below.
+ */
+export async function primePermissions(qc: QueryClient, serverUrl: string | null) {
+  if (!serverUrl) return;
+  await qc.prefetchQuery({
+    queryKey: permissionsQueryKey(serverUrl),
+    queryFn: getMyPermissions,
+    staleTime: PERMISSIONS_STALE_MS,
+  });
+}
+
+const PERMISSIONS_STALE_MS = 300_000;
+
 export interface PermissionGate {
   /** The server answered. Until then nothing is offered. */
   ready: boolean;
+  /**
+   * The answer is still in flight. Callers that draw gated controls must hold
+   * rather than render: with no rights yet every control resolves to hidden,
+   * which reads as "you cannot do this" instead of "not loaded". That window
+   * is exactly how an owner saw no New topic button straight after signing in.
+   */
+  loading: boolean;
   /**
    * The server has no /me/permissions/ route — it predates scoped permissions.
    * Distinct from "you hold nothing": the app cannot gate anything against
@@ -43,12 +69,13 @@ export function usePermissions(): PermissionGate {
   const serverUrl = useConnectionStore((s) => s.serverUrl);
   const token = useConnectionStore((s) => s.token);
 
-  const { data, error } = useQuery({
-    queryKey: ["permissions", serverUrl],
+  const enabled = !!serverUrl && !!token;
+  const { data, error, isPending } = useQuery({
+    queryKey: permissionsQueryKey(serverUrl),
     queryFn: getMyPermissions,
     // Prerequisites must exist or the call 401s on a reload.
-    enabled: !!serverUrl && !!token,
-    staleTime: 300_000,
+    enabled,
+    staleTime: PERMISSIONS_STALE_MS,
     // A server without the route answers 404 every time; retrying is noise.
     // Anything else is transient and stays retryable.
     retry: (count, err) => !(err instanceof ApiError && err.status === 404) && count < 2,
@@ -57,9 +84,13 @@ export function usePermissions(): PermissionGate {
   const can = useCallback((right: Right, scope: Scope) => canRight(data, right, scope), [data]);
   const canAnyProject = useCallback((right: Right) => canAnyProjectRight(data, right), [data]);
   const serverTooOld = error instanceof ApiError && error.status === 404;
+  // A disabled query sits at "pending" forever, so only count it as loading
+  // once it can actually run. Settled-with-an-error is NOT loading: the app
+  // must move on and say so rather than hold the screen indefinitely.
+  const loading = enabled && isPending;
 
   return useMemo(
-    () => ({ ready: !!data, serverTooOld, can, canAnyProject }),
-    [data, serverTooOld, can, canAnyProject],
+    () => ({ ready: !!data, loading, serverTooOld, can, canAnyProject }),
+    [data, loading, serverTooOld, can, canAnyProject],
   );
 }

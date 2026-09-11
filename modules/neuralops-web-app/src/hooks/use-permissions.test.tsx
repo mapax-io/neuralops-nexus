@@ -130,6 +130,55 @@ describe("transient failure", () => {
   });
 });
 
+// The live regression: an owner signed in, the shell rendered before the
+// rights arrived, and every gated control resolved to hidden -- so "New topic"
+// was missing until a refresh. `loading` is what lets a screen hold instead of
+// painting an answer it does not have yet.
+describe("loading is distinguishable from holding nothing", () => {
+  it("reports loading while the request is in flight, and not after", async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((r) => { release = r; });
+    server.use(http.get(`${BASE}/api/v1/me/permissions/`, async () => {
+      await gate;
+      return HttpResponse.json(PAYLOAD);
+    }));
+    connect("owner");
+    const { result } = renderGate();
+    await waitFor(() => expect(result.current.loading).toBe(true));
+    // Mid-flight the answer is genuinely unknown -- not "you hold nothing".
+    expect(result.current.ready).toBe(false);
+    expect(result.current.can("persona.create", projectScope("p1"))).toBe(false);
+    release!();
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("stops loading once the server answers 404, so the screen is not held forever", async () => {
+    server.use(http.get(`${BASE}/api/v1/me/permissions/`, () => new HttpResponse(null, { status: 404 })));
+    connect("owner");
+    const { result } = renderGate();
+    await waitFor(() => expect(result.current.serverTooOld).toBe(true));
+    expect(result.current.loading).toBe(false);
+  });
+
+  // A 500 is retried (the hook's own retry policy overrides the test client's),
+  // so loading stays true across attempts -- correct, the answer really is
+  // still unknown -- and only clears once the attempts are exhausted.
+  it("stops loading once a transient failure has exhausted its retries", async () => {
+    server.use(http.get(`${BASE}/api/v1/me/permissions/`, () => new HttpResponse(null, { status: 500 })));
+    connect("owner");
+    const { result } = renderGate();
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 10_000 });
+    expect(result.current.ready).toBe(false);
+    expect(result.current.serverTooOld).toBe(false);
+  }, 15_000);
+
+  it("is not loading before a server is connected — a disabled query must not hold the app", async () => {
+    const { result } = renderGate();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
+});
+
 describe("before the connection exists", () => {
   it("does not fire the query, and does not blame the server", async () => {
     // enabled:false plus apiJson's own "No server connected." guard — nothing
