@@ -321,6 +321,45 @@ class AcceptanceTests(InviteGrantsFixture):
         self.assertTrue(RoleAssignment.objects.filter(user=self.sara, role=admin, scope_object_id=self.p1.id).exists())
 
 
+class RemovalTests(InviteGrantsFixture):
+    """Removal takes every right with it, so a later invite starts from nothing."""
+
+    def test_removing_a_member_revokes_every_assignment_and_participation(self):
+        from workspace.services import remove_user_from_server
+        apply_grants(self.company, self.sara, [self.only(self.p1, self.t1), self.whole(self.p2)], "member", self.owner)
+        self.assertEqual(len(self.scopes(self.sara)), 3)  # company + topic + project
+        remove_user_from_server(self.company, str(self.sara.id), self.owner)
+        self.assertEqual(self.scopes(self.sara), set())
+        self.assertFalse(TopicParticipant.objects.filter(user=self.sara, is_active=True).exists())
+        self.assertFalse(ProjectMember.objects.filter(user=self.sara, is_active=True).exists())
+
+    def test_a_re_invited_person_holds_only_the_new_grants(self):
+        from workspace.services import remove_user_from_server
+        admin = Role.objects.get(company=self.company, name="Admin")
+        PermissionChecker.assign_role(self.sara, admin, self.company, granted_by=self.owner)
+        apply_grants(self.company, self.sara, [self.only(self.p1, self.t1)], "member", self.owner)
+        remove_user_from_server(self.company, str(self.sara.id), self.owner)
+        r = invite_to_system(self.company, self.owner, "sara@acme.test", role="member", grants=[self.only(self.p1, self.t1)])
+        self.assertFalse(r["is_new_user"])
+        self.assertEqual(self.scopes(self.sara), {("topic", str(self.t1.id))})
+        # Membership and participation come back active, not duplicated.
+        self.assertEqual(CompanyAccess.objects.filter(company=self.company, user=self.sara).count(), 1)
+        self.assertTrue(CompanyAccess.objects.get(company=self.company, user=self.sara).is_active)
+        self.assertTrue(TopicParticipant.objects.get(topic=self.t1, user=self.sara).is_active)
+        self.assertTrue(ProjectMember.objects.get(project=self.p1, user=self.sara).is_active)
+        perms = my_permissions(self.sara, self.company)
+        self.assertEqual(perms["company"]["rights"], [])
+        self.assertEqual(set(perms["projects"]), {str(self.p1.id)})
+
+    def test_a_removed_person_re_invited_server_wide_is_a_plain_member_again(self):
+        from workspace.services import remove_user_from_server
+        remove_user_from_server(self.company, str(self.sara.id), self.owner)
+        r = invite_to_system(self.company, self.owner, "sara@acme.test", role="viewer")
+        self.assertFalse(r["is_new_user"])
+        self.assertEqual(self.scopes(self.sara), {("company", str(self.company.id))})
+        self.assertEqual(CompanyAccess.objects.get(company=self.company, user=self.sara).role, "viewer")
+
+
 class InviteApiTests(InviteGrantsFixture):
     """The HTTP layer: the request schema takes grants and the response echoes them."""
 

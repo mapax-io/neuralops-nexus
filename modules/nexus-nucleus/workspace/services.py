@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from authn.permissions.checker import PermissionChecker
-from authn.permissions.models import Role
+from authn.permissions.models import Role, RoleAssignment
 from authn.permissions.row_rules import (
     _reachable_project_ids, visible_channels, visible_projects, visible_topics,
 )
@@ -200,7 +200,28 @@ def remove_user_from_server(company, user_id: str, requesting_user) -> dict:
     ProjectMember.objects.filter(
         company=company, user_id=user_id, is_active=True
     ).update(is_active=False)
+    TopicParticipant.objects.filter(
+        company=company, user_id=user_id, is_active=True
+    ).update(is_active=False)
+    # The rights themselves. Left in place, they outlive the membership and
+    # come back with the next invite -- a removed company Admin re-invited
+    # into one topic would still be a company Admin.
+    revoke_all_roles(company, access.user)
     return {"ok": True, "message": f"{email} removed from server."}
+
+
+def revoke_all_roles(company, user) -> int:
+    """Delete every RoleAssignment `user` holds in `company`, at any scope."""
+    # RoleAssignment, Project, ChatTopic, Q — imported at top of file.
+
+    project_ids = Project.objects.filter(company=company).values_list("id", flat=True)
+    topic_ids = ChatTopic.objects.filter(company=company).values_list("id", flat=True)
+    deleted, _ = RoleAssignment.objects.filter(user=user).filter(
+        Q(scope_object_type="company", scope_object_id=company.id)
+        | Q(scope_object_type="project", scope_object_id__in=project_ids)
+        | Q(scope_object_type="topic", scope_object_id__in=topic_ids)
+    ).delete()
+    return deleted
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
@@ -398,7 +419,12 @@ def invite_to_system(company, inviter, email: str, role: str = "member", grants:
 
     user = User.objects.filter(email=email, is_active=True).first()
     if user:
-        CompanyAccess.objects.create(company=company, user=user, role=role, invited_by=inviter)
+        # A removed member leaves a deactivated row behind (one per company
+        # and user) -- bring it back rather than tripping the constraint.
+        CompanyAccess.objects.update_or_create(
+            company=company, user=user,
+            defaults={"role": role, "invited_by": inviter, "is_active": True},
+        )
         if grants:
             # Scoped on purpose: the role lands on the named projects/topics
             # only. A company-scope role reaches every project (project.list,
@@ -626,10 +652,14 @@ def _add_to_topic(company, project, topic_id: str, user, role: str = "participan
     ).first()
     if not topic:
         return
-    TopicParticipant.objects.get_or_create(
+    participant, _ = TopicParticipant.objects.get_or_create(
         company=company, project=project, topic=topic, user=user,
         defaults={"role": TopicParticipant.Role.PARTICIPANT},
     )
+    # Removal deactivates participations; an invite back must revive them.
+    if not participant.is_active:
+        participant.is_active = True
+        participant.save(update_fields=["is_active"])
 
 
 def apply_grants(company, user, grants: list, role: str, granted_by, strict: bool = True) -> list:
