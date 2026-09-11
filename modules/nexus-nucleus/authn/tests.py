@@ -128,3 +128,33 @@ class AssignDisplayNameTests(TestCase):
         User.objects.create_user(username="u3", email="omar@a.test", password="x", display_name="omar")
         other = User.objects.create_user(username="u4", email="omar@b.test", password="x")
         self.assertTrue(assign_display_name(other).startswith("omar_"))
+
+
+class AvatarUrlTests(TestCase):
+    """
+    Avatar paths must be server-relative. An absolute URL built from
+    NEURALOPS_SERVER_URL pins every image to one hostname, which is only
+    correct when the client reached the server by that exact name -- so
+    localhost, a LAN address, or a tunnel that is down all render broken
+    images while the file sits on disk.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="p", email="p@acme.test", password="x")
+
+    def test_none_when_there_is_no_avatar(self):
+        self.assertIsNone(self.user.get_avatar_url())
+
+    def test_it_is_relative_and_carries_no_hostname(self):
+        self.user.avatar.name = "avatars/pool/human/021.png"
+        url = self.user.get_avatar_url()
+        self.assertTrue(url.startswith("/"), url)
+        self.assertNotIn("://", url)
+        self.assertIn("avatars/pool/human/021.png", url)
+
+    @override_settings(NEURALOPS_SERVER_URL="https://somewhere-else.example")
+    def test_it_ignores_the_configured_server_url(self):
+        # The whole point: how the server is addressed elsewhere must not
+        # decide where a browser looks for the image.
+        self.user.avatar.name = "avatars/pool/human/021.png"
+        self.assertNotIn("somewhere-else", self.user.get_avatar_url())
