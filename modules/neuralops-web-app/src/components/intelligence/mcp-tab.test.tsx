@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grant, grantAll } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import type { MCPServer } from "@/lib/api/intelligence";
 import { McpTab } from "./mcp-tab";
@@ -76,6 +77,7 @@ beforeEach(() => {
     connection: { serverUrl: BASE, role: "owner", isOwner: true, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
   });
   server.use(
+    grantAll(BASE, { projects: ["p1", "p2"], topics: [] }),
     http.get(SERVERS_URL, () => HttpResponse.json([S1])),
     http.get(PROJECTS_URL, () => HttpResponse.json(PROJECTS)),
     http.post(SERVERS_URL, async ({ request }) => {
@@ -514,5 +516,59 @@ describe("McpTab — the OAuth redirect URI comes from the server's public addre
     fireEvent.change(within(dialog).getByLabelText("Authentication"), { target: { value: "oauth2" } });
     expect(await within(dialog).findAllByText(`${BASE}/api/v1/mcp-servers/oauth/callback/`)).not.toHaveLength(0);
     expect(within(dialog).queryByText(/this server calls itself/i)).not.toBeInTheDocument();
+  });
+});
+
+// mcp_server.* are PROJECT-scope rights, so each card is asked about its own
+// owning project — and Connect writes credentials, so it rides update.
+describe("McpTab — gating is per action, per owning project", () => {
+  const only = (projectRights: Record<string, string[]>) =>
+    grant(BASE, { company: { id: "c1", rights: ["mcp_server.list"] }, projects: projectRights, topics: {} });
+
+  it("hides every action when no mcp right is held on the server's project", async () => {
+    server.use(only({ p1: ["project.view"] }));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    expect(screen.queryByRole("button", { name: "Edit MCP server Warehouse tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove MCP server Warehouse tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add server/i })).not.toBeInTheDocument();
+  });
+
+  it("does not let rights on another project unlock this server's actions", async () => {
+    server.use(only({ p2: ["mcp_server.update", "mcp_server.delete"] }));
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    expect(screen.queryByRole("button", { name: "Edit MCP server Warehouse tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove MCP server Warehouse tools" })).not.toBeInTheDocument();
+  });
+
+  it("separates update from delete on the same card", async () => {
+    server.use(only({ p1: ["mcp_server.update"] }));
+    renderTab();
+    expect(await screen.findByRole("button", { name: "Edit MCP server Warehouse tools" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove MCP server Warehouse tools" })).not.toBeInTheDocument();
+  });
+
+  // Add server has no server yet: the page-level dialog picks the project, so
+  // the question is whether the right is held on ANY reachable project.
+  it("offers Add server when the create right is held on any project", async () => {
+    server.use(only({ p2: ["mcp_server.create"] }));
+    renderTab();
+    expect(await screen.findByRole("button", { name: /add server/i })).toBeInTheDocument();
+  });
+
+  it("offers the OAuth Connect control on mcp_server.update", async () => {
+    const oauth = { ...S1, id: "s5", name: "Jira", auth_type: "oauth2" as const, oauth_connected: false };
+    server.use(http.get(SERVERS_URL, () => HttpResponse.json([oauth])), only({ p1: ["mcp_server.update"] }));
+    renderTab();
+    expect(await screen.findByRole("button", { name: /connect/i })).toBeInTheDocument();
+  });
+
+  it("withholds the OAuth Connect control without mcp_server.update", async () => {
+    const oauth = { ...S1, id: "s5", name: "Jira", auth_type: "oauth2" as const, oauth_connected: false };
+    server.use(http.get(SERVERS_URL, () => HttpResponse.json([oauth])), only({ p1: ["mcp_server.delete"] }));
+    renderTab();
+    await screen.findByText("Jira");
+    expect(screen.queryByRole("button", { name: /connect/i })).not.toBeInTheDocument();
   });
 });

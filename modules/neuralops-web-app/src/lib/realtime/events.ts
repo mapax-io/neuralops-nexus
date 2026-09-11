@@ -27,7 +27,10 @@ export type ChatEvent =
   | { kind: "delta"; id: string; delta: string }
   | { kind: "done"; id: string; content?: string; outputType?: string; renderAs?: string }
   | { kind: "error"; id: string; content?: string }
-  | { kind: "transition"; streamId: string; content: string; transitionType?: string; fromPersona?: string; toPersona?: string };
+  | { kind: "transition"; streamId: string; content: string; transitionType?: string; fromPersona?: string; toPersona?: string }
+  // What the persona is doing right now (a tool call). `label` is the server's
+  // wording — the client renders it verbatim and keeps no tool vocabulary.
+  | { kind: "activity"; id: string; tool: string; label: string };
 
 type Raw = Record<string, unknown>;
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
@@ -57,6 +60,10 @@ export function parseEvent(raw: unknown): ChatEvent | null {
         sequence: num(r.sequence),
         createdAt: str(r.created_at),
       };
+    case "tool_activity": {
+      const label = str(r.label);
+      return label ? { kind: "activity", id, tool: str(r.tool) ?? "", label } : null;
+    }
     case "message_delta":
       return { kind: "delta", id, delta: typeof r.delta === "string" ? r.delta : "" };
     case "message_done":

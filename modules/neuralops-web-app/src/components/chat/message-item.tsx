@@ -11,6 +11,8 @@ import { toast } from "sonner";
 import { absolutizeMedia } from "@/lib/api/client";
 import { copyText } from "@/lib/browser";
 import { RICH_OUTPUT_TYPES, stripLeakedMarkers } from "@/lib/composer/directives";
+import type { KnownSets } from "@/lib/composer/mention-ranges";
+import { rehypeMentions } from "@/lib/chat/rehype-mentions";
 import type { UiMessage } from "@/lib/realtime/message-store";
 import { HtmlFrame } from "./html-frame";
 import { MermaidBlock } from "./mermaid-block";
@@ -44,13 +46,16 @@ export const SystemSeparator = memo(function SystemSeparator({
   );
 });
 
-// In-bubble "Thinking …" cue for a persona whose stream hasn't produced a token
-// yet — mirrors the human typing style (bouncing dots), but lives in the message
-// so it can't overlap anything.
-function ThinkingDots() {
+// In-bubble cue for a persona whose stream hasn't produced a token yet —
+// mirrors the human typing style (bouncing dots), but lives in the message so
+// it can't overlap anything. The wording comes from the server's tool_activity
+// event when there is one ("Searching the web"); "Thinking" is only what we say
+// when the server has told us nothing more specific.
+function ThinkingDots({ label }: { label?: string | null }) {
+  const text = label?.trim() || "Thinking";
   return (
-    <span className="mt-1 inline-flex items-center gap-1.5 text-[13px] italic text-ink2" role="status" aria-label="Thinking">
-      Thinking
+    <span className="mt-1 inline-flex items-center gap-1.5 text-[13px] italic text-ink2" role="status" aria-label={text}>
+      {text}
       <span className="flex gap-0.5" aria-hidden>
         {[0, 1, 2].map((i) => (
           <span key={i} className="size-1 animate-bounce rounded-full bg-live" style={{ animationDelay: `${i * 150}ms` }} />
@@ -129,7 +134,7 @@ function ComposingPlaceholder({ outputType }: { outputType: string }) {
   );
 }
 
-function Body({ message }: { message: UiMessage }) {
+function Body({ message, known }: { message: UiMessage; known?: KnownSets }) {
   // Rich outputs stream raw markers/HTML — show a composing placeholder
   // until message_done delivers the parsed result (streaming display policy).
   if (message.isStreaming && RICH_OUTPUT_TYPES.has(message.outputType)) {
@@ -169,6 +174,9 @@ function Body({ message }: { message: UiMessage }) {
     <div className="max-w-none break-words text-[14px] leading-relaxed [overflow-wrap:anywhere] [&_a]:break-all [&_a]:text-accent [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_blockquote]:text-ink2 [&_code]:rounded [&_code]:bg-surface2 [&_code]:px-1 [&_code]:py-px [&_code]:font-mono [&_code]:text-[12.5px] [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-surface2 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:px-0 [&_pre_code]:py-0 [&_table]:my-2 [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:bg-surface2 [&_th]:px-2 [&_th]:py-1 [&_ul]:list-disc [&_ul]:pl-5">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // Same validity rule as the composer: a known @name becomes a pill,
+        // an unknown one stays plain text.
+        rehypePlugins={known ? [rehypeMentions(known)] : []}
         components={{
           a(props) {
             const { href, children } = props as { href?: string; children?: React.ReactNode };
@@ -204,7 +212,7 @@ function Body({ message }: { message: UiMessage }) {
   );
 }
 
-export const MessageItem = memo(function MessageItem({ message }: { message: UiMessage }) {
+export const MessageItem = memo(function MessageItem({ message, known }: { message: UiMessage; known?: KnownSets }) {
   if (message.isSystem) return <SystemSeparator content={message.content} createdAt={message.createdAt} />;
   const isPersona = message.senderType !== "human";
   const avatar = absolutizeMedia(message.senderAvatar);
@@ -240,15 +248,15 @@ export const MessageItem = memo(function MessageItem({ message }: { message: UiM
         {message.isError ? (
           <ErrorBubble content={message.content} />
         ) : (
-          <Body message={message} />
+          <Body message={message} known={known} />
         )}
         {message.isStreaming && !message.isStalled && (
-          // Before the first token lands (plain path), show a "Thinking …" cue
-          // like the human typing style — in-bubble, so nothing overlaps. Once
-          // content streams (or for rich outputs with their own placeholder),
-          // fall back to the caret.
-          !message.content.trim() && !RICH_OUTPUT_TYPES.has(message.outputType) ? (
-            <ThinkingDots />
+          // Shows whenever the server has said what the persona is doing (a
+          // tool call, which an agentic loop can start mid-answer), and
+          // otherwise before the first token lands. With tokens flowing and
+          // nothing else to report, the caret takes over.
+          message.activity || (!message.content.trim() && !RICH_OUTPUT_TYPES.has(message.outputType)) ? (
+            <ThinkingDots label={message.activity} />
           ) : (
             <span aria-label="generating" className="mt-1 inline-block h-[15px] w-[7px] animate-pulse bg-accent align-middle" />
           )

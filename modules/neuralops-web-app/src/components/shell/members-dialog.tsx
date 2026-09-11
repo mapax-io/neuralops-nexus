@@ -18,15 +18,17 @@ import { listPersonas } from "@/lib/api/intelligence";
 import { useConnectionStore } from "@/stores/connection.store";
 import { validateEmail } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
+import { usePermissions } from "@/hooks/use-permissions";
+import { companyScope } from "@/lib/permissions";
 
 
 // Slack-style member list for the chat header's avatar stack: everyone on
 // this server, plus invites for those allowed to send them.
 export function MembersDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { data: members, isLoading, error, refetch } = useMembers();
-  const role = useConnectionStore((s) => s.connection?.role);
   const selfEmail = useConnectionStore((s) => s.email);
-  const canInvite = role === "owner" || role === "admin";
+  const { can } = usePermissions();
+  const canInvite = can("company.invite_member", companyScope());
   const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");

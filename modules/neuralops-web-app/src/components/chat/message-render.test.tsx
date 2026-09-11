@@ -25,3 +25,49 @@ describe("MessageItem — renderer follows render_as", () => {
     expect(container.querySelector("iframe")).toBeNull();
   });
 });
+
+// The @name a user typed as a pill in the composer must read as a pill in the
+// message it became — and an unknown name must stay plain, exactly as the
+// composer leaves it.
+describe("MessageItem — @mentions render as chips", () => {
+  const known = {
+    mentions: new Set(["pv12"]),
+    self: new Set(["project1_pv"]),
+    humans: new Set(["tahayabali2"]),
+    commands: new Set(["swarm"]),
+  };
+
+  const say = (content: string, withKnown = true) =>
+    render(<MessageItem message={{ ...base, content }} known={withKnown ? known : undefined} />);
+
+  it("chips a known persona", () => {
+    const { container } = say("@pv12 hi");
+    const pill = container.querySelector(".nx-mention-pill");
+    expect(pill).toHaveTextContent("@pv12");
+    expect(container).toHaveTextContent("@pv12 hi"); // text is unchanged
+  });
+
+  it("leaves an unknown name as plain text", () => {
+    const { container } = say("@nobody hi");
+    expect(container.querySelector(".nx-mention-pill")).toBeNull();
+    expect(container).toHaveTextContent("@nobody hi");
+  });
+
+  it("distinguishes you from a teammate", () => {
+    const { container } = say("@project1_pv and @tahayabali2");
+    expect(container.querySelector(".nx-self-pill")).toHaveTextContent("@project1_pv");
+    expect(container.querySelector(".nx-human-pill")).toHaveTextContent("@tahayabali2");
+  });
+
+  it("stays plain until the known-set has loaded", () => {
+    const { container } = say("@pv12 hi", false);
+    expect(container.querySelector(".nx-mention-pill")).toBeNull();
+    expect(container).toHaveTextContent("@pv12 hi");
+  });
+
+  it("does not chip a mention inside code", () => {
+    const { container } = say("`@pv12`");
+    expect(container.querySelector(".nx-mention-pill")).toBeNull();
+    expect(container.querySelector("code")).toHaveTextContent("@pv12");
+  });
+});

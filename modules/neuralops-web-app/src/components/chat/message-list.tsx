@@ -10,6 +10,7 @@ import { sortKey } from "@/lib/realtime/message-store";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { useConnectionStore } from "@/stores/connection.store";
 import { MessageItem, SystemSeparator } from "./message-item";
+import type { KnownSets } from "@/lib/composer/mention-ranges";
 
 // How close to the bottom counts as "following the stream".
 const NEAR_BOTTOM_PX = 160;
@@ -33,7 +34,7 @@ function dayLabel(iso: string | null): string | null {
   });
 }
 
-export function MessageList({ messages, transitions, loading, loadError, onRetry, onLoadOlder, jumpToId, onJumped, totalLoaded }: {
+export function MessageList({ messages, transitions, loading, loadError, onRetry, onLoadOlder, jumpToId, onJumped, totalLoaded, known }: {
   messages: UiMessage[];
   transitions: TransitionItem[];
   loading: boolean;
@@ -43,6 +44,7 @@ export function MessageList({ messages, transitions, loading, loadError, onRetry
   jumpToId?: string | null;
   onJumped?: () => void;
   totalLoaded?: number; // raw loaded count — pagination gate
+  known?: KnownSets; // what counts as a real @name here — pills, like the composer
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -186,7 +188,7 @@ export function MessageList({ messages, transitions, loading, loadError, onRetry
   // Interleave transitions after their anchor position.
   const items: Array<{ key: string; node: React.ReactNode; sort: number }> = messages.map((m) => ({
     key: m.id,
-    node: <MessageItem message={m} />,
+    node: <MessageItem message={m} known={known} />,
     sort: sortKey(m),
   }));
   for (const t of transitions) {

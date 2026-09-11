@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grant, grantAll } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useUiStore } from "@/stores/ui.store";
 import type { MCPServer, ModelConfig, Persona } from "@/lib/api/intelligence";
@@ -65,7 +66,7 @@ function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <PersonasTab canManage />
+      <PersonasTab />
     </QueryClientProvider>,
   );
 }
@@ -96,6 +97,7 @@ beforeEach(() => {
     connection: { serverUrl: BASE, role: "owner", isOwner: true, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
   });
   server.use(
+    grantAll(BASE, { projects: ["p1", "p2"], topics: [] }),
     http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json(PROJECTS)),
     http.get(`${BASE}/api/v1/personas/`, () => HttpResponse.json(personas)),
     http.get(`${BASE}/api/v1/model-configs/`, () => HttpResponse.json(modelList)),
@@ -577,5 +579,96 @@ describe("PersonaCard — the preview reads as prose", () => {
     expect(screen.queryByText(/persona_name/)).not.toBeInTheDocument();
     expect(screen.queryByText(/ROLE & IDENTITY/)).not.toBeInTheDocument();
     expect(card).toBeTruthy();
+  });
+});
+
+// The subtlety the rights table calls out: create is asked against the project
+// the PICKER is on, but edit and delete are asked against the persona's OWN
+// project — and they are three separate rights, not one "canManage".
+describe("PersonasTab — gating is per action, per object", () => {
+  const only = (projectRights: Record<string, string[]>) =>
+    grant(BASE, { company: { id: "c1", rights: ["persona.list"] }, projects: projectRights, topics: {} });
+
+  it("hides every action when no persona right is held on the persona's project", async () => {
+    personas = [LAYLA]; // LAYLA.project_id === "p1"
+    server.use(only({ p1: ["project.view"] }));
+    renderTab();
+    await screen.findByText("@Layla");
+    expect(screen.queryByRole("button", { name: "Edit persona Layla" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove persona Layla" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new persona/i })).not.toBeInTheDocument();
+  });
+
+  it("offers edit but not delete when only persona.update is held", async () => {
+    personas = [LAYLA];
+    server.use(only({ p1: ["persona.update"] }));
+    renderTab();
+    expect(await screen.findByRole("button", { name: "Edit persona Layla" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove persona Layla" })).not.toBeInTheDocument();
+  });
+
+  it("offers delete but not edit when only persona.delete is held", async () => {
+    personas = [LAYLA];
+    server.use(only({ p1: ["persona.delete"] }));
+    renderTab();
+    expect(await screen.findByRole("button", { name: "Remove persona Layla" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit persona Layla" })).not.toBeInTheDocument();
+  });
+
+  // A right held on a DIFFERENT project must not reach this persona.
+  it("does not let rights on another project unlock this persona's actions", async () => {
+    personas = [LAYLA];
+    server.use(only({ p2: ["persona.update", "persona.delete", "persona.create"] }));
+    renderTab();
+    await screen.findByText("@Layla");
+    expect(screen.queryByRole("button", { name: "Edit persona Layla" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove persona Layla" })).not.toBeInTheDocument();
+  });
+
+  // The whole point of the change: a project admin whose company role is
+  // "member" gets their own project's controls.
+  it("gives a company member their own project's create control", async () => {
+    personas = [LAYLA];
+    useConnectionStore.setState({
+      serverUrl: BASE, token: "jwt",
+      connection: { serverUrl: BASE, role: "member", isOwner: false, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
+    });
+    server.use(only({ p1: ["persona.create"] }));
+    renderTab();
+    expect(await screen.findByRole("button", { name: /new persona/i })).toBeInTheDocument();
+  });
+});
+
+// A server that predates GET /api/v1/me/permissions/ answers 404. The client
+// has no rule of its own to fall back on, so nothing is offered to anyone --
+// PermissionsBanner is what tells the user why.
+describe("PersonasTab — a server without the permissions endpoint", () => {
+  const noEndpoint = () => http.get(`${BASE}/api/v1/me/permissions/`, () => new HttpResponse(null, { status: 404 }));
+
+  const connectAs = (role: string) =>
+    useConnectionStore.setState({
+      serverUrl: BASE, token: "jwt",
+      connection: { serverUrl: BASE, role, isOwner: role === "owner", companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
+    });
+
+  it.each(["owner", "admin", "member", "viewer"])("offers nothing to a %s", async (role) => {
+    personas = [LAYLA];
+    server.use(noEndpoint());
+    connectAs(role);
+    renderTab();
+    await screen.findByText("@Layla");
+    expect(screen.queryByRole("button", { name: /new persona/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit persona Layla" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove persona Layla" })).not.toBeInTheDocument();
+  });
+
+  // The list itself is not gated -- the API already filters it, and hiding the
+  // content as well as the controls would read as a broken page.
+  it("still renders the personas the API returned", async () => {
+    personas = [LAYLA];
+    server.use(noEndpoint());
+    connectAs("owner");
+    renderTab();
+    expect(await screen.findByText("@Layla")).toBeInTheDocument();
   });
 });

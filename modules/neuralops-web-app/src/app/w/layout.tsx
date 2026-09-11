@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { ConnectivityBanner } from "@/components/shell/connectivity-banner";
+import { PermissionsBanner } from "@/components/shell/permissions-banner";
 import { TopBar } from "@/components/shell/top-bar";
 import { WorkspaceTree } from "@/components/shell/workspace-tree";
 import { FullPageLoader } from "@/components/ui/full-page-loader";
@@ -77,6 +78,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     <div className="flex h-screen flex-col overflow-hidden bg-bg">
       <TopBar onAbout={() => setAbout(true)} />
       <ConnectivityBanner />
+      <PermissionsBanner />
       <div className="flex min-h-0 flex-1">
       {/* Workspace tree: inline ≥lg, drawer below */}
       <div className="hidden lg:flex">

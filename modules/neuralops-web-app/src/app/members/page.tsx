@@ -21,6 +21,9 @@ import { useMembers } from "@/hooks/use-workspace";
 import { useConnectionStore } from "@/stores/connection.store";
 import { validateEmail } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
+import { usePermissions } from "@/hooks/use-permissions";
+import { PermissionsBanner } from "@/components/shell/permissions-banner";
+import { companyScope } from "@/lib/permissions";
 
 
 // The team, at its own URL — no ids in the address bar.
@@ -32,7 +35,11 @@ export default function MembersPage() {
   const [query, setQuery] = useState("");
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
-  const canManage = connection?.role === "owner" || connection?.role === "admin";
+  const { can } = usePermissions();
+  // Both are genuinely company-scoped, so this page keeps a company check —
+  // just against the right rather than the role string.
+  const canInvite = can("company.invite_member", companyScope());
+  const canRemove = can("company.remove_member", companyScope());
 
   useEffect(() => {
     if (!hydrated) return;
@@ -65,12 +72,13 @@ export default function MembersPage() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-bg">
       <TopBar onAbout={() => setAbout(true)} />
+      <PermissionsBanner />
       <main className="nx-ambient min-h-0 min-w-0 flex-1 overflow-y-auto p-4 lg:px-6 lg:py-5">
         <div className="mx-auto w-full max-w-[1680px]">
           <SectionHeader
             title="Members"
             blurb={`Everyone on ${connection?.companyName ?? "this server"} — roles decide what they can manage.`}
-            actions={canManage && (
+            actions={canInvite && (
               <Button size="sm" variant="primary" onClick={() => setInviting(true)}>
                 <UserPlus size={14} strokeWidth={2} /> Invite teammate
               </Button>
@@ -125,7 +133,7 @@ export default function MembersPage() {
                 action={
                   q ? (
                     <Button size="sm" onClick={() => setQuery("")}>Clear filter</Button>
-                  ) : canManage ? (
+                  ) : canInvite ? (
                     <Button size="sm" variant="primary" onClick={() => setInviting(true)}>
                       <UserPlus size={14} strokeWidth={2} /> Invite teammate
                     </Button>
@@ -141,7 +149,7 @@ export default function MembersPage() {
                 const name = m.email.split("@")[0];
                 const avatar = absolutizeMedia(m.avatar);
                 const isSelf = !!selfEmail && m.email.toLowerCase() === selfEmail.toLowerCase();
-                const removable = canManage && !isSelf && m.role !== "owner"; // server enforces the same
+                const removable = canRemove && !isSelf && m.role !== "owner"; // server enforces the same
                 return (
                   <li key={m.user_id} className="group flex items-center gap-3.5 border-b border-line px-4 py-3 last:border-b-0">
                     <span className="flex size-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-stone-500 to-stone-700 text-[13px] font-bold text-white">
