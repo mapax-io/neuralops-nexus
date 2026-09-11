@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from authn.permissions.checker import PermissionChecker
 from authn.permissions.models import Role, RoleAssignment
@@ -455,3 +455,41 @@ class InviteToProjectTests(InviteGrantsFixture):
             Invitation.objects.get(email="new@acme.test").access_payload,
             {"grants": [self.only(self.p1, self.t1)]},
         )
+
+
+class InviteEmailNoteTests(InviteGrantsFixture):
+    """What the inviter is told when Supabase already knows the address."""
+
+    def exists(self, *a, **k):
+        from authn.supabase import SupabaseAdminError
+        raise SupabaseAdminError("Supabase invite failed: A user with this email address has already been registered", code="exists")
+
+    @override_settings(SUPABASE_SERVICE_KEY="service-key")
+    def test_an_address_supabase_already_knows_gets_a_sign_in_email_instead(self):
+        with patch("authn.supabase.invite_user_by_email", side_effect=self.exists), \
+             patch("authn.supabase.send_recovery_email") as recover:
+            r = invite_to_system(self.company, self.owner, "known@acme.test", redirect_to="https://app.example.test/reset-password")
+        recover.assert_called_once_with("known@acme.test", redirect_to="https://app.example.test/reset-password")
+        self.assertTrue(r["is_new_user"])
+        self.assertTrue(r["email_sent"])
+        self.assertIn("sign-in email was sent instead", r["email_note"])
+
+    @override_settings(SUPABASE_SERVICE_KEY="service-key")
+    def test_when_even_the_sign_in_email_fails_the_note_says_so_honestly(self):
+        from authn.supabase import SupabaseAdminError
+        with patch("authn.supabase.invite_user_by_email", side_effect=self.exists), \
+             patch("authn.supabase.send_recovery_email", side_effect=SupabaseAdminError("rate limited")):
+            r = invite_to_system(self.company, self.owner, "known@acme.test")
+        self.assertFalse(r["email_sent"])
+        self.assertIn("no email could be sent", r["email_note"])
+        self.assertNotIn("so no email was sent", r["email_note"])
+
+    @override_settings(SUPABASE_SERVICE_KEY="service-key")
+    def test_a_brand_new_address_is_emailed_the_invite(self):
+        with patch("authn.supabase.invite_user_by_email", return_value={"id": "x"}) as invite, \
+             patch("authn.supabase.send_recovery_email") as recover:
+            r = invite_to_system(self.company, self.owner, "fresh@acme.test")
+        invite.assert_called_once()
+        recover.assert_not_called()
+        self.assertTrue(r["email_sent"])
+        self.assertIsNone(r["email_note"])

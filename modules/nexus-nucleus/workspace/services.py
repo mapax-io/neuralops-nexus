@@ -349,7 +349,7 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
     the new account with this server (nx_servers), which the web app shows
     on the invitee's launcher.
     """
-    from authn.supabase import SupabaseAdminError, invite_user_by_email
+    from authn.supabase import SupabaseAdminError, invite_user_by_email, send_recovery_email
 
     if not settings.SUPABASE_SERVICE_KEY:
         return False, None
@@ -368,7 +368,16 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
     except SupabaseAdminError as exc:
         logger.warning("[invite] email to %s not sent: %s", email, exc)
         if exc.code == "exists":
-            return False, "They already have a NeuralOps account, so no email was sent -- they can add this server and connect."
+            # Supabase says "registered" for any address it knows -- one merely
+            # invited before and never claimed, or a member removed here. The
+            # account exists either way, so a sign-in (password reset) email is
+            # what gets them in; it lands on the same page the invite would.
+            try:
+                send_recovery_email(email, redirect_to=redirect_to or "")
+                return True, "They already had a NeuralOps account, so a sign-in email was sent instead."
+            except SupabaseAdminError as exc2:
+                logger.warning("[invite] recovery email to %s not sent: %s", email, exc2)
+                return False, "They already have a NeuralOps account, but no email could be sent -- they can sign in and add this server."
         return False, "The invitation email could not be sent; pass the steps on instead."
 
 
