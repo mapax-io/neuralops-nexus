@@ -71,3 +71,43 @@ class MyPermissionsOut(Schema):
     company: CompanyPermissionsOut
     projects: Dict[str, List[str]]
     topics: Dict[str, List[str]]
+
+
+# ── Role rights administration ───────────────────────────────────────────────
+
+class RightOut(Schema):
+    """One entry of the registry, as seeded from authn/permissions/rights.py."""
+    code: str
+    object_type: str   # groups the table
+    scope: str         # the NARROWEST level this right can be granted at
+    description: str
+
+
+class RoleOut(Schema):
+    id: str
+    name: str
+    scope: str
+    description: str
+    rights: List[str]
+    # The server decides these, not the screen: Owner always holds everything,
+    # and member-management stays with Owner/Admin. See authn/services.py.
+    editable: bool
+    locked_rights: List[str]
+
+
+class RolesOut(Schema):
+    rights: List[RightOut]
+    roles: List[RoleOut]
+
+
+class SetRoleRightsIn(Schema):
+    """Full-set replace: what the role should grant, not a delta."""
+    rights: List[str]
+
+
+class SetRoleRightsOut(Schema):
+    id: str
+    name: str
+    rights: List[str]
+    added: List[str]
+    removed: List[str]
