@@ -5,6 +5,8 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
 import { grantAll } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
+import { useSelectionStore } from "@/stores/selection.store";
+import { useConnectivity } from "@/lib/connectivity";
 import WorkspaceLayout from "./layout";
 
 vi.mock("next/navigation", () => ({
@@ -37,6 +39,11 @@ function shellHandlers() {
     })),
     http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([])),
     http.get(`${BASE}/api/v1/members/`, () => HttpResponse.json([])),
+    // usePermissionsSync reads the topic list for the selected channel. Without
+    // a handler this goes unhandled, apiJson reports a server failure, and
+    // ConnectivityBanner starts its backoff probe -- which is what made this
+    // file take 18s and fail intermittently.
+    http.get(`${BASE}/api/v1/projects/:pid/channels/:cid/topics/`, () => HttpResponse.json([])),
   );
 }
 
@@ -49,6 +56,13 @@ const connected = () =>
   });
 
 beforeEach(() => {
+  // Zustand stores are module-level and survive cleanup(), so state left by an
+  // earlier test leaks into the next. A previous case that saw a request fail
+  // leaves serverDown set, and ConnectivityBanner then runs its backoff probe
+  // for the rest of the file -- which is what made this take 17s instead of
+  // 150ms and fail intermittently.
+  useConnectivity.setState({ browserOnline: true, serverDown: false, serverDownSince: null });
+  useSelectionStore.setState({ byServer: {} });
   useConnectionStore.setState({ hydrated: false, token: null, serverUrl: null, connection: null });
 });
 
@@ -100,6 +114,6 @@ describe("WorkspaceLayout — before rights are known", () => {
     shellHandlers();
     connected();
     renderLayout();
-    await waitFor(() => expect(screen.getByText("workspace content")).toBeInTheDocument(), { timeout: 6000 });
-  }, 12_000);
+    await waitFor(() => expect(screen.getByText("workspace content")).toBeInTheDocument());
+  });
 });
