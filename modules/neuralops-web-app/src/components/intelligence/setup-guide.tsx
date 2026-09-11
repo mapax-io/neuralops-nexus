@@ -4,8 +4,8 @@ import { ArrowRight, Circle, CircleCheck } from "lucide-react";
 import { useMcpServers, useModelConfigs, usePersonas } from "@/hooks/use-intelligence";
 import { useProjects } from "@/hooks/use-workspace";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
-import { isCompanyAdmin } from "@/lib/permissions";
-import { useConnectionStore } from "@/stores/connection.store";
+import { companyScope, projectScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useUiStore } from "@/stores/ui.store";
 import type { IntelSection } from "./nav";
 
@@ -13,8 +13,7 @@ import type { IntelSection } from "./nav";
 // needs, with the next action one click away — instead of a paragraph
 // explaining the model. Reads the same project the personas tab shows.
 export function SetupGuide({ onSection }: { onSection: (s: IntelSection) => void }) {
-  const role = useConnectionStore((s) => s.connection?.role);
-  const canManage = isCompanyAdmin(role);
+  const { can } = usePermissions();
   const { data: projects } = useProjects();
   const intelProject = useUiStore((u) => u.intelProject);
   const setIntelCreate = useUiStore((u) => u.setIntelCreate);
@@ -45,10 +44,14 @@ export function SetupGuide({ onSection }: { onSection: (s: IntelSection) => void
   const hasModel = models.length > 0;
   const projectTools = mcp.filter((s) => s.project_id === activeProject).length;
   const personaCount = personas?.length ?? 0;
-  const steps: { key: IntelSection; label: string; done: boolean; action: string; blocked?: string }[] = [
-    { key: "models", label: "A model with a key", done: hasModel, action: "Register a model" },
-    { key: "mcp", label: "Tools for the project", done: projectTools > 0, action: "Add tools" },
-    { key: "personas", label: "A persona with a role", done: personaCount > 0, action: "New persona", blocked: hasModel ? undefined : "needs a model first" },
+  const steps: { key: IntelSection; label: string; done: boolean; action: string; allowed: boolean; blocked?: string }[] = [
+    { key: "models", label: "A model with a key", done: hasModel, action: "Register a model",
+      allowed: can("model_config.create", companyScope()) },
+    { key: "mcp", label: "Tools for the project", done: projectTools > 0, action: "Add tools",
+      allowed: can("mcp_server.create", projectScope(activeProject)) },
+    { key: "personas", label: "A persona with a role", done: personaCount > 0, action: "New persona",
+      allowed: can("persona.create", projectScope(activeProject)),
+      blocked: hasModel ? undefined : "needs a model first" },
   ];
   const doneCount = steps.filter((s) => s.done).length;
   // Switch to the section and open its create dialog in one click.
@@ -70,7 +73,7 @@ export function SetupGuide({ onSection }: { onSection: (s: IntelSection) => void
               ? <CircleCheck size={14} strokeWidth={2.2} className="flex-none text-ok" aria-label="done" />
               : <Circle size={14} strokeWidth={2} className="flex-none text-ink2/50" aria-label="to do" />}
             <span className={`min-w-0 flex-1 truncate ${s.done ? "text-ink2" : "text-ink"}`}>{s.label}</span>
-            {!s.done && canManage && (s.blocked
+            {!s.done && s.allowed && (s.blocked
               ? <span className="flex-none text-[11px] text-ink2">{s.blocked}</span>
               : (
                 <button type="button" onClick={() => go(s.key)} className="inline-flex flex-none items-center gap-0.5 text-[11.5px] font-semibold text-accent hover:underline">

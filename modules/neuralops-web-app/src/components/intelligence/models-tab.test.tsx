@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grantAll } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import type { ModelConfig } from "@/lib/api/intelligence";
 import { ModelsTab } from "./models-tab";
@@ -24,7 +25,7 @@ function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ModelsTab canManage />
+      <ModelsTab />
     </QueryClientProvider>,
   );
 }
@@ -43,6 +44,7 @@ beforeEach(() => {
     connection: { serverUrl: BASE, role: "owner", isOwner: true, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
   });
   server.use(
+    grantAll(BASE, { projects: ["p1", "p2"], topics: [] }),
     http.get(URL, () => HttpResponse.json([HOUSE])),
     http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([{ id: "p1", name: "Apollo", slug: "apollo", description: null, channels: [] }])),
     http.post(URL, async ({ request }) => {

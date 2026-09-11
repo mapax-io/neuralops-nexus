@@ -23,6 +23,8 @@ import {
   useSetModelConfigProject,
 } from "@/hooks/use-intelligence";
 import { useProjects } from "@/hooks/use-workspace";
+import { usePermissions } from "@/hooks/use-permissions";
+import { projectScope } from "@/lib/permissions";
 import {
   fetchPromptTemplate,
   type ModelConfig,
@@ -36,8 +38,9 @@ import { CardGrid, Chip, EntityCard, ListState, ModelPicker, ProjectSelect, TabS
 import { CreateMcpDialog } from "./mcp-tab";
 import { CreateModelDialog } from "./models-tab";
 
-export function PersonasTab({ canManage, embedded, defaultProjectId }: { canManage: boolean; embedded?: boolean; defaultProjectId?: string }) {
+export function PersonasTab({ embedded, defaultProjectId }: { embedded?: boolean; defaultProjectId?: string }) {
   const { data: projects } = useProjects();
+  const { can } = usePermissions();
   // Page mode shares the pick with the nav's setup guide (ui store); embedded
   // mode (a chat's slash dialog) keeps a local pick so THAT chat's project is
   // the default and switching there never leaks into the Intelligence page.
@@ -48,6 +51,8 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
   const setProjectId = defaultProjectId ? setLocalPick : setStorePick;
   const activeProject = projectId ?? defaultProjectId ?? projects?.[0]?.id;
   const { data: personas, isLoading, error, refetch } = usePersonas(activeProject);
+  // Re-evaluated whenever the picker changes project, per the rights table.
+  const canCreate = can("persona.create", projectScope(activeProject));
   const [creating, setCreating] = useState(false);
   // One-shot intent from /add-* slash commands (ui.store.intelCreate).
   const intelCreate = useUiStore((u) => u.intelCreate);
@@ -57,10 +62,10 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
     setIntelCreate(false);
     // Deferred: setState directly inside an effect cascades renders (house rule).
     const raf = requestAnimationFrame(() => {
-      if (canManage) setCreating(true);
+      if (canCreate) setCreating(true);
     });
     return () => cancelAnimationFrame(raf);
-  }, [intelCreate, setIntelCreate, canManage]);
+  }, [intelCreate, setIntelCreate, canCreate]);
   const [editing, setEditing] = useState<Persona | null>(null);
   const [removing, setRemoving] = useState<Persona | null>(null);
   const del = useDeletePersona();
@@ -98,7 +103,7 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
               ))}
             </select>
           </div>
-          {!!personas?.length && canManage && activeProject && (
+          {!!personas?.length && canCreate && activeProject && (
             <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
               <Plus size={14} strokeWidth={2} /> New persona
             </Button>
@@ -122,8 +127,8 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
         empty={!showLoading && !!projects && (personas?.length === 0 || !activeProject)}
         emptyTitle="No personas in this project"
         emptyIcon={<UserRound size={24} strokeWidth={1.8} />}
-        emptyHint={canManage ? "Create one, give it a role, and @mention it in any of this project's chats." : "An admin can add AI teammates to this project."}
-        emptyAction={canManage && activeProject ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> New persona</Button> : undefined}
+        emptyHint={canCreate ? "Create one, give it a role, and @mention it in any of this project's chats." : "An admin can add AI teammates to this project."}
+        emptyAction={canCreate && activeProject ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> New persona</Button> : undefined}
       />
       {!showLoading && !!personas?.length && (
         <CardGrid>
@@ -132,6 +137,8 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
             // A mounted OAuth server whose sign-in lapsed silently breaks the
             // persona's tools — say so on the card, next to the tool count.
             const needsReconnect = p.mcp_servers.some((s) => s.auth_type === "oauth2" && !s.oauth_connected);
+            const canEdit = can("persona.update", projectScope(p.project_id));
+            const canRemove = can("persona.delete", projectScope(p.project_id));
             return (
               <EntityCard
                 key={p.id}
@@ -161,24 +168,28 @@ export function PersonasTab({ canManage, embedded, defaultProjectId }: { canMana
                     <span>@mention to bring in</span>
                   </>
                 }
-                actions={canManage && (
+                actions={(canEdit || canRemove) && (
                   <>
-                    <button
-                      aria-label={`Edit persona ${p.name}`}
-                      title="Edit persona"
-                      onClick={() => setEditing(p)}
-                      className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
-                    >
-                      <Pencil size={14} strokeWidth={2} />
-                    </button>
-                    <button
-                      aria-label={`Remove persona ${p.name}`}
-                      title="Remove persona"
-                      onClick={() => setRemoving(p)}
-                      className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
-                    >
-                      <Trash2 size={14} strokeWidth={2} />
-                    </button>
+                    {canEdit && (
+                      <button
+                        aria-label={`Edit persona ${p.name}`}
+                        title="Edit persona"
+                        onClick={() => setEditing(p)}
+                        className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
+                      >
+                        <Pencil size={14} strokeWidth={2} />
+                      </button>
+                    )}
+                    {canRemove && (
+                      <button
+                        aria-label={`Remove persona ${p.name}`}
+                        title="Remove persona"
+                        onClick={() => setRemoving(p)}
+                        className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
+                      >
+                        <Trash2 size={14} strokeWidth={2} />
+                      </button>
+                    )}
                   </>
                 )}
               />

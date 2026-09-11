@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grantAll, grantNone } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useUiStore } from "@/stores/ui.store";
 import { IntelNav } from "./nav";
@@ -36,6 +37,7 @@ beforeEach(() => {
     connection: { serverUrl: BASE, role: "owner", isOwner: true, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
   });
   server.use(
+    grantAll(BASE, { projects: ["p1", "p2"], topics: [] }),
     http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json(PROJECTS)),
     http.get(`${BASE}/api/v1/model-configs/`, () => HttpResponse.json(models)),
     http.get(`${BASE}/api/v1/mcp-servers/`, () => HttpResponse.json(mcp)),
@@ -99,7 +101,8 @@ describe("SetupGuide — the nav footer says where you stand and what to do next
     expect(within(items[2]).getByRole("button", { name: /new persona/i })).toBeInTheDocument();
   });
 
-  it("offers no actions to a member — status only", async () => {
+  it("offers no actions when none of the create rights are held — status only", async () => {
+    server.use(grantNone(BASE));
     useConnectionStore.setState({ connection: { serverUrl: BASE, role: "member", isOwner: false, companyName: "Acme", serverVersion: "dev", moduleVersions: {} } });
     renderNav();
     const items = await steps();

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AboutDialog } from "@/components/shell/about-dialog";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { TopBar } from "@/components/shell/top-bar";
+import { PermissionsBanner } from "@/components/shell/permissions-banner";
 import { McpTab } from "@/components/intelligence/mcp-tab";
 import { ModelsTab } from "@/components/intelligence/models-tab";
 import { IntelNav, type IntelSection } from "@/components/intelligence/nav";
@@ -17,7 +18,7 @@ import { useUiStore } from "@/stores/ui.store";
 // no ids ever reach the address bar.
 export default function IntelligencePage() {
   const router = useRouter();
-  const { token, serverUrl, hydrated, connection } = useConnectionStore();
+  const { token, serverUrl, hydrated } = useConnectionStore();
   const [about, setAbout] = useState(false);
   // Section state lives in the ui store — the top bar reads it for its
   // active states and writes it from the quick-launch icons.
@@ -26,8 +27,6 @@ export default function IntelligencePage() {
   const section: IntelSection = (["personas", "models", "mcp"] as const).includes(rawSection as IntelSection)
     ? (rawSection as IntelSection)
     : "personas";
-  const canManage = connection?.role === "owner" || connection?.role === "admin";
-
   useEffect(() => {
     if (!hydrated) return;
     if (!token) router.replace("/login");
@@ -43,11 +42,12 @@ export default function IntelligencePage() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-bg">
       <TopBar onAbout={() => setAbout(true)} />
+      <PermissionsBanner />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
         <IntelNav section={section} onSection={setSection} />
         <main className="nx-ambient min-w-0 flex-1 overflow-y-auto p-4 lg:px-6 lg:py-5">
-          {section === "personas" && <PersonasTab canManage={canManage} />}
-          {section === "models" && <ModelsTab canManage={canManage} />}
+          {section === "personas" && <PersonasTab />}
+          {section === "models" && <ModelsTab />}
           {section === "mcp" && <McpTab />}
         </main>
       </div>
