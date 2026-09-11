@@ -9,6 +9,7 @@ Usage:
 """
 
 import getpass
+import os
 import sys
 
 import httpx
@@ -23,7 +24,9 @@ from authn.supabase import verify_supabase_token, SupabaseTokenError
 
 User = get_user_model()
 
-NEURALOPS_APP_URL = "https://neuralops-nexus.mapax.io"
+# The public app users sign in at. Env-overridable so a self-hosted or local
+# deployment can point people at its own address instead of ours.
+NEURALOPS_APP_URL = os.getenv("NEURALOPS_APP_URL", "https://neuralopsnexus.ai")
 DIVIDER = "━" * 50
 
 
@@ -74,20 +77,35 @@ class Command(BaseCommand):
             print_divider()
             sys.exit(0)
 
-        # ── Get credentials ────────────────────────────────────────────────
+        # ── Choose how to prove identity ───────────────────────────────────
+        # An account created through GitHub -- or any other OAuth provider --
+        # has NO password, so grant_type=password can never succeed for it.
+        # That used to make such a user unable to own their own server.
         print()
-        email = input("  Enter your email: ").strip()
-        password = getpass.getpass("  Enter your password: ")
+        print("  How do you sign in?")
+        print("    1) Email and password")
+        print("    2) GitHub, or another provider (paste an access token)")
+        choice = input("  Choose [1/2]: ").strip() or "1"
 
-        if not email or not password:
-            self.stderr.write("\n  ✗ Email and password are required.\n")
-            sys.exit(1)
+        email = password = ""
+        if choice == "2":
+            token = self._prompt_access_token()
+        else:
+            print()
+            email = input("  Enter your email: ").strip()
+            password = getpass.getpass("  Enter your password: ")
+
+            if not email or not password:
+                self.stderr.write("\n  ✗ Email and password are required.\n")
+                sys.exit(1)
+            token = None  # exchanged below, inside the error handling
 
         # ── Verify with Supabase ───────────────────────────────────────────
         self.stdout.write("\n  Verifying with Supabase...")
 
         try:
-            token = self._signin_supabase(email, password)
+            if token is None:
+                token = self._signin_supabase(email, password)
             claims = verify_supabase_token(token)
         except SupabaseTokenError as exc:
             self.stderr.write(f"\n  ✗ Verification failed: {exc}\n")
@@ -225,6 +243,41 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             "  ✓ Default groups created: Owner, Admin, Member, Viewer"
         ))
+
+    def _prompt_access_token(self) -> str:
+        """
+        Take a Supabase access token instead of a password.
+
+        Proves exactly what the password proved -- this person controls this
+        account, right now -- but works for every sign-in method rather than
+        only for accounts that happen to have a password.
+
+        It also costs this server nothing to check. verify_supabase_token()
+        is pure signature verification against the project's published JWKS,
+        so validating what is pasted here needs no anon key, no service key
+        and no secret of any kind. The token is short-lived (about an hour)
+        and is used once, here.
+
+        Read with getpass so a long-lived-looking credential does not end up
+        in terminal scrollback or shell history -- input stays hidden while
+        pasting, which is expected.
+        """
+        print()
+        print("  Get your access token:")
+        print(f"    1. Sign in at {NEURALOPS_APP_URL}")
+        print("    2. Open your browser's developer console (F12)")
+        print("    3. Run this, and copy the string it prints:")
+        print()
+        print("       JSON.parse(Object.entries(localStorage).find(([k]) => "
+              "k.startsWith('sb-') && k.endsWith('-auth-token'))[1]).access_token")
+        print()
+        print("  (Input is hidden while you paste.)")
+        token = getpass.getpass("  Paste your access token: ").strip()
+
+        if not token:
+            self.stderr.write("\n  ✗ An access token is required.\n")
+            sys.exit(1)
+        return token
 
     def _signin_supabase(self, email: str, password: str) -> str:
         """

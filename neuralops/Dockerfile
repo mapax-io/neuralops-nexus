@@ -70,7 +70,7 @@ RUN go build -ldflags="-s -w -X 'github.com/centrifugal/centrifugo/v6/internal/b
 FROM python:3.11-slim AS final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  ca-certificates libpq-dev curl nodejs npm && \
+  ca-certificates libpq-dev curl nodejs npm git openssh-client && \
   rm -rf /var/lib/apt/lists/*
 
 # Filesystem MCP — installed globally at build time (not left to `npx` to
@@ -78,6 +78,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # offline, starts instantly. This is the one MCP server baked into the
 # image; the rest of nexus-mcp (SerpAPI, Odoo ERP) stays out, per plan.
 RUN npm install -g @modelcontextprotocol/server-filesystem
+RUN pip install --no-cache-dir uv
+# UV_TOOL_DIR as well as UV_TOOL_BIN_DIR: the BIN dir only relocates the
+# launcher, while the tool's own venv defaults to $HOME/.local/share/uv/tools
+# -- which, since this runs as root, is /root (mode 0700). The launcher would
+# resolve into a directory USER nexus cannot traverse, and every call fails
+# with "Permission denied".
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+RUN uv tool install mcp-server-git && chmod -R a+rX /opt/uv-tools
 
 ARG UID=1000
 ARG GID=1000

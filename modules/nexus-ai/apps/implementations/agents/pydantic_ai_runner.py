@@ -210,9 +210,18 @@ class PydanticAIRunner(AgentRunner):
         for mcp_server in mcp_servers:
             if mcp_server.url:
                 # Route A: HTTP/SSE
+                #
+                # The bearer goes out as an explicit header rather than via
+                # the `authorization_token` convenience field. Both exist on
+                # MCP(), but only this one is unambiguous about what reaches
+                # the wire -- and a server that answered 401 for a token it
+                # had just issued itself (verified by hand with curl) is the
+                # reason to stop trusting the convenience path.
                 mcp_kwargs = {"url": mcp_server.url}
                 if mcp_server.authorization_token:
-                    mcp_kwargs["authorization_token"] = mcp_server.authorization_token
+                    mcp_kwargs["headers"] = {
+                        "Authorization": f"Bearer {mcp_server.authorization_token}"
+                    }
                 resolved.append(MCP(**mcp_kwargs))
                 
             elif mcp_server.command:

@@ -61,8 +61,17 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
     else:
         capabilities = PersonaCapabilities()
 
-    log.info(data['capabilities'])
-    log.info(data["mcp_servers"])
+    # NB: never log data["mcp_servers"] verbatim -- it carries DECRYPTED
+    # secrets (OAuth access/refresh tokens, client secrets, PATs). Log the
+    # identifying fields only.
+    log.info("capabilities: %s", [c.get("name") for c in data.get("capabilities") or []])
+    log.info(
+        "mcp_servers: %s",
+        [
+            {k: s.get(k) for k in ("name", "transport", "auth_type", "needs_reauth")}
+            for s in data.get("mcp_servers") or []
+        ],
+    )
     _mcp_servers = data.get('mcp_servers')
     mcp_servers = []
     if _mcp_servers:
@@ -72,10 +81,27 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
             secrets = _mcp_server.get('secrets') or {}
             
             if network_url:
-                # Route A: HTTP Server
+                # Route A: HTTP Server -- the token goes out as an
+                # Authorization: Bearer header.
+                #
+                # Which secret is the bearer depends on how the server
+                # authenticates, and they are NOT the same value:
+                #   oauth2         -> the USER access token, stored by nucleus
+                #                     under the key it names in token_env_var
+                #                     (default OAUTH_ACCESS_TOKEN).
+                #   static_secrets -> the token the user pasted, folded into
+                #                     secrets as client_secret.
+                # Sending client_secret for an oauth2 server hands the provider
+                # the OAuth *app* credential instead of the user's token, which
+                # every provider answers with 401.
+                if _mcp_server.get('auth_type') == 'oauth2':
+                    token_key = _mcp_server.get('token_env_var') or 'OAUTH_ACCESS_TOKEN'
+                    token = secrets.get(token_key)
+                else:
+                    token = secrets.get('client_secret')
                 mcp_servers.append(MCPArgs(
                     url=network_url,
-                    authorization_token=secrets.get('client_secret')
+                    authorization_token=token,
                 ))
             elif local_cmd:
                 # Route B: Local Server

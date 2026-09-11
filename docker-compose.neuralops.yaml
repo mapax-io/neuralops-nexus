@@ -302,8 +302,8 @@ services:
     image: neuralops:dev-local
     profiles: ["dev"]
     container_name: neuralops-nucleus-dev
-    # command: ["nucleus-env", "uvicorn", "core.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-    command: ["nucleus-env", "tail", "-f", "/dev/null"]
+    command: ["nucleus-env", "uvicorn", "core.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # command: ["nucleus-env", "tail", "-f", "/dev/null"]
     volumes:
       - ./modules/nexus-nucleus:/nexus/nucleus
       # Bind mount, not a named volume -- same ./projects folder production
@@ -312,6 +312,7 @@ services:
       # internal volume storage. Must match nexus-ai-dev's mount below
       # exactly -- see PROJECTS_ROOT's comment in core/settings.py.
       - ./projects:/nexus/projects
+      - /data/mcp-keys:/nexus/keys:ro
     env_file:
       - ./neuralops/secrets.env
     environment:
@@ -415,6 +416,7 @@ services:
       - neuralops_fastembed_cache_dev:/home/nexus/.cache/fastembed
       # Bind mount, not a named volume -- see nucleus-dev's comment above.
       - ./projects:/nexus/projects
+      - /data/mcp-keys:/nexus/keys:ro
     env_file:
       - ./neuralops/secrets.env
     environment:
