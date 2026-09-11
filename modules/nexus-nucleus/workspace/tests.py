@@ -18,7 +18,7 @@ from authn.services import auth_verify, my_permissions
 from nucleus.models import (
     ChatTopic, Channel, Company, CompanyAccess, Invitation, Project, ProjectMember, TopicParticipant,
 )
-from workspace.services import apply_grants, invite_to_project, invite_to_system
+from workspace.services import apply_grants, invite_to_project, invite_to_system, member_access, set_member_access
 
 User = get_user_model()
 
@@ -40,6 +40,7 @@ class InviteGrantsFixture(TestCase):
         # row rules, which check rights by code and refuse unknown ones.
         call_command("seed_permissions", stdout=StringIO(), stderr=StringIO())
         self.member_role = Role.objects.get(company=self.company, name="Member")
+        PermissionChecker.assign_role(self.owner, Role.objects.get(company=self.company, name="Owner"), self.company, granted_by=self.owner)
 
         self.p1 = Project.objects.create(company=self.company, name="Alpha", slug="alpha")
         self.c1 = Channel.objects.create(company=self.company, project=self.p1, name="general", slug="general")
@@ -493,3 +494,95 @@ class InviteEmailNoteTests(InviteGrantsFixture):
         recover.assert_not_called()
         self.assertTrue(r["email_sent"])
         self.assertIsNone(r["email_note"])
+
+
+class MemberAccessTests(InviteGrantsFixture):
+    """Reading and replacing what a member holds, from the Members page."""
+
+    def scoped_bob(self, *grants):
+        bob = User.objects.create_user(username="bob", email="bob@acme.test", password="x")
+        invite_to_system(self.company, self.owner, "bob@acme.test", role="member", grants=list(grants))
+        return bob
+
+    def test_reads_a_server_wide_member(self):
+        a = member_access(self.company, self.sara)
+        self.assertEqual(a, {"user_id": str(self.sara.id), "role": "member", "server_wide": True, "grants": []})
+
+    def test_reads_a_scoped_member_with_projects_by_name_and_whole_over_topics(self):
+        bob = self.scoped_bob(self.only(self.p1, self.t1, self.t3), self.whole(self.p2))
+        a = member_access(self.company, bob)
+        self.assertFalse(a["server_wide"])
+        self.assertEqual(a["role"], "member")
+        self.assertEqual(a["grants"], [self.only(self.p1, self.t1, self.t3), self.whole(self.p2)])
+        apply_grants(self.company, bob, [self.whole(self.p1)], "member", self.owner)
+        self.assertEqual(member_access(self.company, bob)["grants"], [self.whole(self.p1), self.whole(self.p2)])
+
+    def test_scoped_to_server_wide(self):
+        bob = self.scoped_bob(self.only(self.p1, self.t1))
+        a = set_member_access(self.company, self.owner, str(bob.id), "admin", [])
+        self.assertEqual(a, {"user_id": str(bob.id), "role": "admin", "server_wide": True, "grants": []})
+        self.assertEqual(self.scopes(bob), {("company", str(self.company.id))})
+        self.assertEqual(CompanyAccess.objects.get(company=self.company, user=bob).role, "admin")
+        self.assertIn(str(self.p3.id), my_permissions(bob, self.company)["projects"])
+
+    def test_server_wide_to_scoped(self):
+        a = set_member_access(self.company, self.owner, str(self.sara.id), "member", [self.whole(self.p2)])
+        self.assertEqual(a["server_wide"], False)
+        self.assertEqual(a["grants"], [self.whole(self.p2)])
+        self.assertEqual(self.scopes(self.sara), {("project", str(self.p2.id))})
+        perms = my_permissions(self.sara, self.company)
+        self.assertEqual(set(perms["projects"]), {str(self.p2.id)})
+        self.assertEqual(perms["company"]["rights"], [])
+
+    def test_narrowing_revives_only_the_kept_roster_rows(self):
+        bob = self.scoped_bob(self.only(self.p1, self.t1, self.t3))
+        set_member_access(self.company, self.owner, str(bob.id), "member", [self.only(self.p1, self.t1)])
+        self.assertEqual(self.scopes(bob), {("topic", str(self.t1.id))})
+        self.assertTrue(TopicParticipant.objects.get(topic=self.t1, user=bob).is_active)
+        self.assertFalse(TopicParticipant.objects.get(topic=self.t3, user=bob).is_active)
+        self.assertEqual(set(my_permissions(bob, self.company)["topics"]), {str(self.t1.id)})
+
+    def test_refuses_the_owner_yourself_and_handing_out_ownership(self):
+        with self.assertRaisesRegex(ValueError, "owner's access"):
+            set_member_access(self.company, self.sara, str(self.owner.id), "member", [])
+        with self.assertRaisesRegex(ValueError, "your own access"):
+            set_member_access(self.company, self.sara, str(self.sara.id), "member", [])
+        with self.assertRaisesRegex(ValueError, "Ownership"):
+            set_member_access(self.company, self.owner, str(self.sara.id), "owner", [])
+
+    def test_a_bad_grant_changes_nothing(self):
+        bob = self.scoped_bob(self.only(self.p1, self.t1))
+        before = self.scopes(bob)
+        with self.assertRaises(ValueError):
+            set_member_access(self.company, self.owner, str(bob.id), "member", [self.only(self.p2, self.t1)])
+        self.assertEqual(self.scopes(bob), before)
+        self.assertEqual(CompanyAccess.objects.get(company=self.company, user=bob).role, "member")
+
+
+class MemberAccessApiTests(InviteGrantsFixture):
+    def call(self, as_user, method: str, path: str, body: dict | None = None):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": as_user.email}):
+            fn = getattr(Client(), method)
+            kwargs = {"content_type": "application/json", "HTTP_AUTHORIZATION": "Bearer t"}
+            return fn(path, data=body, **kwargs) if body is not None else fn(path, **kwargs)
+
+    def test_read_and_replace_through_the_endpoints(self):
+        bob = User.objects.create_user(username="bob", email="bob@acme.test", password="x")
+        invite_to_system(self.company, self.owner, "bob@acme.test", role="member", grants=[self.only(self.p1, self.t1)])
+        r = self.call(self.owner, "get", f"/api/v1/members/{bob.id}/access/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {"user_id": str(bob.id), "role": "member", "server_wide": False, "grants": [self.only(self.p1, self.t1)]})
+        r = self.call(self.owner, "put", f"/api/v1/members/{bob.id}/access/", {"role": "viewer", "grants": [self.whole(self.p2)]})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["grants"], [self.whole(self.p2)])
+        self.assertEqual(self.scopes(bob), {("project", str(self.p2.id))})
+
+    def test_a_member_without_the_right_is_refused(self):
+        r = self.call(self.sara, "get", f"/api/v1/members/{self.owner.id}/access/")
+        self.assertEqual(r.status_code, 403)
+
+    def test_refusals_come_back_as_400_with_the_reason(self):
+        r = self.call(self.owner, "put", f"/api/v1/members/{self.owner.id}/access/", {"role": "member", "grants": []})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("own access", r.json()["detail"])

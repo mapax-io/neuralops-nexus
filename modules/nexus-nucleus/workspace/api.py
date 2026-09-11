@@ -12,6 +12,7 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from .schema import (
+    MemberAccessOut, SetMemberAccessIn,
     ProjectCreateRequest, ProjectOut, ChannelOut, ChannelCreateRequest,
     TopicCreateRequest, TopicUpdateRequest, TopicOut,
     InviteRequest, InviteResponse, MemberOut, RemoveMemberResponse,
@@ -307,6 +308,33 @@ def invite_member(request, payload: InviteRequest):
 def list_members(request):
     company, _, __ = _require_company(request)
     return svc.list_members(company)
+
+
+def _require_member_manager(user, company):
+    # The right, not the legacy group -- the same gate the Members page draws
+    # its controls from.
+    if not PermissionChecker.can(user, "company.invite_member", company=company):
+        raise HttpError(403, "You don't have permission to manage members.")
+
+
+@members_router.get("/{user_id}/access/", response=MemberAccessOut)
+def member_access(request, user_id: str):
+    company, user, _ = _require_company(request)
+    _require_member_manager(user, company)
+    target = svc.get_member(company, user_id)
+    if not target:
+        raise HttpError(404, "Member not found.")
+    return svc.member_access(company, target)
+
+
+@members_router.put("/{user_id}/access/", response=MemberAccessOut)
+def set_member_access(request, user_id: str, payload: SetMemberAccessIn):
+    company, user, _ = _require_company(request)
+    _require_member_manager(user, company)
+    try:
+        return svc.set_member_access(company, user, user_id, payload.role, [dict(g) for g in payload.grants])
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
 
 
 @members_router.delete("/{user_id}/", response=RemoveMemberResponse)
