@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.urls import path
 from ninja import NinjaAPI
 
-from authn.api import router as authn_router
+from authn.api import me_router, router as authn_router
 from workspace.api import router as workspace_router, members_router
 from chat.api import router as chat_router
 from intelligence.api import router as intelligence_router
@@ -18,6 +18,7 @@ api = NinjaAPI(
 )
 
 api.add_router("/auth/", authn_router)
+api.add_router("/me/", me_router)
 api.add_router("/members/", members_router)
 api.add_router("/projects/", workspace_router)
 api.add_router("/projects/", chat_router)
