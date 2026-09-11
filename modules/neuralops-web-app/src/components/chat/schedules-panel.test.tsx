@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grantAll } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import { SchedulesPanel } from "./schedules-panel";
 
@@ -28,6 +29,7 @@ beforeEach(() => {
     connection: { serverUrl: BASE, role: "owner", isOwner: true, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
   });
   server.use(
+    grantAll(BASE, { projects: ["p1"], topics: ["t1"] }),
     http.get(SCHEDULES, () => HttpResponse.json([])),
     http.get(`${BASE}/api/v1/personas/`, () =>
       HttpResponse.json([{
@@ -56,7 +58,7 @@ const EXISTING = {
 describe("CreateScheduleDialog — weekly and monthly", () => {
   it("weekly posts the ticked days as a crontab day_of_week", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule|schedule the first run/i }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Persona"), { target: { value: "pe1" } });
     fireEvent.change(within(dialog).getByLabelText(/what should they do/i), { target: { value: "Weekly report." } });
@@ -72,7 +74,7 @@ describe("CreateScheduleDialog — weekly and monthly", () => {
 
   it("weekly refuses to submit with no day ticked", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule|schedule the first run/i }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Persona"), { target: { value: "pe1" } });
     fireEvent.change(within(dialog).getByLabelText(/what should they do/i), { target: { value: "x" } });
@@ -84,7 +86,7 @@ describe("CreateScheduleDialog — weekly and monthly", () => {
 
   it("monthly posts the day of month", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule|schedule the first run/i }));
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Persona"), { target: { value: "pe1" } });
     fireEvent.change(within(dialog).getByLabelText(/what should they do/i), { target: { value: "Monthly report." } });
@@ -122,7 +124,7 @@ describe("EditScheduleDialog", () => {
 describe("CreateScheduleDialog — run flags", () => {
   it("sends both server flags, defaulting on, and honours an unticked one", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule|schedule the first run/i }));
     const dialog = screen.getByRole("dialog");
     const announce = within(dialog).getByRole("checkbox", { name: /post a visible/i }) as HTMLInputElement;
     const catchUp = within(dialog).getByRole("checkbox", { name: /run it once on restart/i }) as HTMLInputElement;
@@ -138,7 +140,7 @@ describe("CreateScheduleDialog — run flags", () => {
 
   it("marks the persona and instruction as required", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule|schedule the first run/i }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("Persona")).toBeRequired();
     expect(within(dialog).getByLabelText(/what should they do/i)).toBeRequired();
@@ -149,7 +151,7 @@ describe("CreateScheduleDialog — run flags", () => {
 describe("CreateScheduleDialog — the button follows every rule", () => {
   it("stays disabled until persona and instruction are given; the active clock's rule gates and explains too", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByRole("button", { name: /new schedule/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /new schedule|schedule the first run/i }));
     const dialog = screen.getByRole("dialog");
     const create = within(dialog).getByRole("button", { name: /create schedule/i });
     expect(create).toBeDisabled();

@@ -259,6 +259,53 @@ class UC12_RightsForTests(PermissionCheckerTestCase):
         rights = PermissionChecker.rights_for(self.ali, obj=self.topic_a)
         self.assertEqual(rights, set())
 
+    def test_rights_for_narrows_by_right_scope_like_can_does(self):
+        """
+        A company-scoped right must NOT be reported for a topic-scoped
+        assignment. rights_for() used to return every right on every matching
+        role, so it claimed rights can() denies -- and that payload is what
+        the frontend draws its buttons from.
+        """
+        # Give the topic-scoped role a company-scoped right it can never reach.
+        RoleRight.objects.create(role=self.role_topic_member, right=self.r_persona_create)
+        PermissionChecker.assign_role(self.ali, self.role_topic_member, self.topic_a)
+
+        rights = PermissionChecker.rights_for(self.ali, obj=self.topic_a)
+        self.assertNotIn("persona.create", rights)
+        self.assertEqual(rights, {"topic.mark_read", "persona.mention"})
+        # ... and it now agrees with can(), which is the point.
+        self.assertFalse(PermissionChecker.can(self.ali, "persona.create", obj=self.topic_a))
+
+    def test_rights_for_keeps_levels_separate_when_roles_differ(self):
+        """
+        Viewer at company + Admin on one project: the project row must not
+        hand out company-scoped rights, and the company row must still grant
+        the ones it legitimately holds.
+        """
+        viewer = Role.objects.create(
+            company=self.company, name="Viewer", scope="company", description="Read-only.",
+        )
+        RoleRight.objects.create(role=viewer, right=self.r_topic_mark_read)
+
+        PermissionChecker.assign_role(self.ali, viewer, self.company)
+        PermissionChecker.assign_role(self.ali, self.role_project_admin, self.project)
+
+        rights = PermissionChecker.rights_for(self.ali, obj=self.project)
+        # From the project-scoped Admin row (project/topic-scoped rights).
+        self.assertIn("channel.create", rights)
+        # persona.create is COMPANY-scoped and only the Viewer row is anchored
+        # there -- the Admin row must not reach up to grant it.
+        self.assertNotIn("persona.create", rights)
+        self.assertFalse(PermissionChecker.can(self.ali, "persona.create", obj=self.project))
+
+    def test_rights_for_company_scope_is_unchanged(self):
+        """A company-scoped assignment still reports every right on its role."""
+        PermissionChecker.assign_role(self.ali, self.role_company_admin, self.company)
+        rights = PermissionChecker.rights_for(self.ali, company=self.company)
+        self.assertIn("project.create", rights)
+        self.assertIn("persona.create", rights)
+        self.assertIn("topic.mark_read", rights)
+
 
 class EdgeCaseTests(PermissionCheckerTestCase):
     """Things that don't map to a single use case above, but matter for correctness."""
@@ -688,50 +735,242 @@ class UC16_UC17_McpServerProjectScopeTests(AIResourceTestCase):
         self.assertTrue(PermissionChecker.can(self.sara, "mcp_server.delete", obj=unsaved))
 
 
-class UC19_RightsForRespectsScopeReachTests(PermissionCheckerTestCase):
+class MyPermissionsPayloadTests(PermissionCheckerTestCase):
     """
-    rights_for() must apply the SAME reach rule can() does.
-
-    can() narrows the scope chain before matching assignments:
-
-        eligible = [(level, obj_id) for level, obj_id in chain
-                    if _SCOPE_ORDER[level] <= _SCOPE_ORDER[right_scope]]
-
-    so a TOPIC-anchored assignment can never grant a COMPANY-scoped right.
-    rights_for() gathers assignments from the same chain but has no such
-    filter -- it returns every right on every matching role.
-
-    This is not a theoretical disagreement. rights_for() exists to build
-    the frontend's permission payload (see its docstring), so it decides
-    which buttons get drawn, while can() decides which requests succeed.
-    Where they disagree, the user sees a control that 403s when clicked.
-
-    The fixture below is the realistic shape, not a contrived one: the
-    seeded "Member" role holds model_config.list / persona.list / 
-    mcp_server.list -- all COMPANY scope -- and UC4 already establishes
-    that Member is assigned at TOPIC scope in normal use.
+    The payload behind GET /api/v1/me/permissions/ -- what the web app draws
+    every management control from.
     """
 
     def setUp(self):
         super().setUp()
-        # persona.create is COMPANY scope (see the fixture above), granted
-        # here to a TOPIC-scoped role.
-        RoleRight.objects.create(role=self.role_topic_member, right=self.r_persona_create)
+        # row_rules asks can() for these three, and can() raises on an
+        # unregistered code -- the base fixture only seeds what IT exercises.
+        self.r_project_list = Right.objects.create(code="project.list", object_type="project", scope="company")
+        self.r_channel_list = Right.objects.create(code="channel.list", object_type="channel", scope="project")
+        self.r_topic_list = Right.objects.create(code="topic.list", object_type="topic", scope="project")
+
+    def _payload(self, user):
+        from authn.services import my_permissions
+        return my_permissions(user, self.company)
+
+    def test_project_scoped_admin_gets_their_project_despite_no_company_role(self):
+        """
+        The bug this endpoint exists to fix: CompanyAccess.role is 'member',
+        so the old UI hid every control, while the server would have accepted
+        the request.
+        """
+        PermissionChecker.assign_role(self.sara, self.role_project_admin, self.project)
+        payload = self._payload(self.sara)
+
+        self.assertEqual(payload["company"]["rights"], [])
+        self.assertIn(str(self.project.id), payload["projects"])
+        self.assertIn("channel.create", payload["projects"][str(self.project.id)])
+
+    def test_a_topic_reached_only_through_the_project_still_gets_a_key(self):
+        """
+        The client does a flat lookup and never walks the hierarchy, so an
+        unemitted topic silently hides every TOPIC-scoped control from exactly
+        the project admin this endpoint is for.
+        """
+        # channel.list / topic.list are what row_rules uses to widen the view.
+        RoleRight.objects.create(role=self.role_project_admin, right=self.r_channel_list)
+        RoleRight.objects.create(role=self.role_project_admin, right=self.r_topic_list)
+
+        PermissionChecker.assign_role(self.sara, self.role_project_admin, self.project)
+        payload = self._payload(self.sara)
+
+        # Both topics live under the project, and she holds no topic-scoped
+        # assignment at all -- they must still be keyed, with their rights.
+        self.assertIn(str(self.topic_a.id), payload["topics"])
+        self.assertIn(str(self.topic_b.id), payload["topics"])
+        self.assertIn("persona.mention", payload["topics"][str(self.topic_a.id)])
+        self.assertIn("topic.mark_read", payload["topics"][str(self.topic_a.id)])
+
+    def test_topic_scoped_member_gets_only_their_own_topic(self):
         PermissionChecker.assign_role(self.ali, self.role_topic_member, self.topic_a)
+        payload = self._payload(self.ali)
 
-    def test_can_denies_the_out_of_reach_company_right(self):
-        """The existing, correct behaviour -- included so the pair reads together."""
-        self.assertFalse(
-            PermissionChecker.can(self.ali, "persona.create", obj=self.topic_a)
-        )
+        self.assertIn(str(self.topic_a.id), payload["topics"])
+        self.assertNotIn(str(self.topic_b.id), payload["topics"])
+        # The project surfaces as a navigation waypoint, carrying no rights.
+        self.assertEqual(payload["projects"].get(str(self.project.id)), [])
 
-    def test_rights_for_does_not_report_the_out_of_reach_right(self):
-        held = PermissionChecker.rights_for(self.ali, obj=self.topic_a)
-        # Genuinely held: a TOPIC right from a TOPIC assignment.
-        self.assertIn("topic.mark_read", held)
-        # Out of reach: a COMPANY right from a TOPIC assignment.
-        self.assertNotIn(
-            "persona.create", held,
-            "rights_for() reported a right that can() denies -- the frontend "
-            "would draw a control the API refuses.",
-        )
+    def test_a_user_with_nothing_gets_empty_everything(self):
+        payload = self._payload(self.ali)
+        self.assertEqual(payload["company"]["rights"], [])
+        self.assertEqual(payload["projects"], {})
+        self.assertEqual(payload["topics"], {})
+
+    def test_payload_never_reports_a_right_can_would_deny(self):
+        """The invariant the whole design rests on."""
+        PermissionChecker.assign_role(self.ali, self.role_topic_member, self.topic_a)
+        payload = self._payload(self.ali)
+        for code in payload["topics"].get(str(self.topic_a.id), []):
+            self.assertTrue(
+                PermissionChecker.can(self.ali, code, obj=self.topic_a),
+                f"payload claims {code} but can() denies it",
+            )
+
+
+class PayloadMatchesCanExhaustivelyTests(TestCase):
+    """
+    The invariant the endpoint rests on, checked by brute force against the
+    REAL registry and the REAL seeded roles: for every user, every object and
+    every right, the payload contains the right if and only if can() grants it.
+
+    Both directions matter. A right the payload claims but can() denies draws a
+    button that 403s. A right can() grants but the payload omits hides a
+    control the user is entitled to -- the exact bug class this work exists to
+    fix, just moved one layer along.
+    """
+
+    def setUp(self):
+        from authn.permissions.rights import DEFAULT_ROLE_RIGHTS, REGISTRY
+
+        self.company = Company.objects.create(name="Acme", slug="acme")
+        self.owner_user = User.objects.create_user(username="o", email="o@acme.test", password="x")
+        self.company.owner = self.owner_user
+        self.company.save(update_fields=["owner"])
+
+        self.project_a = Project.objects.create(company=self.company, name="A", slug="a")
+        self.project_b = Project.objects.create(company=self.company, name="B", slug="b")
+        self.channel_a = Channel.objects.create(company=self.company, project=self.project_a, name="g", slug="g")
+        self.channel_b = Channel.objects.create(company=self.company, project=self.project_b, name="g", slug="g-b")
+        self.topic_a1 = ChatTopic.objects.create(company=self.company, project=self.project_a, channel=self.channel_a, title="A1", slug="a1")
+        self.topic_a2 = ChatTopic.objects.create(company=self.company, project=self.project_a, channel=self.channel_a, title="A2", slug="a2")
+        self.topic_b1 = ChatTopic.objects.create(company=self.company, project=self.project_b, channel=self.channel_b, title="B1", slug="b1")
+
+        # The real registry and the real default roles -- same rows
+        # seed_permissions would create.
+        by_code = {}
+        for code, object_type, scope, description in REGISTRY:
+            by_code[code] = Right.objects.create(
+                code=code, object_type=object_type, scope=scope, description=description,
+            )
+        self.all_codes = list(by_code)
+        self.roles = {}
+        for name, codes in DEFAULT_ROLE_RIGHTS.items():
+            role = Role.objects.create(company=self.company, name=name, scope="company")
+            for code in codes:
+                RoleRight.objects.create(role=role, right=by_code[code])
+            self.roles[name] = role
+
+        # Six shapes of user, covering every scope an assignment can sit at.
+        def mk(username):
+            return User.objects.create_user(username=username, email=f"{username}@acme.test", password="x")
+
+        self.people = {}
+        self.people["owner"] = mk("p_owner")
+        PermissionChecker.assign_role(self.people["owner"], self.roles["Owner"], self.company)
+        self.people["company_admin"] = mk("p_cadmin")
+        PermissionChecker.assign_role(self.people["company_admin"], self.roles["Admin"], self.company)
+        self.people["company_member"] = mk("p_cmember")
+        PermissionChecker.assign_role(self.people["company_member"], self.roles["Member"], self.company)
+        self.people["company_viewer"] = mk("p_cviewer")
+        PermissionChecker.assign_role(self.people["company_viewer"], self.roles["Viewer"], self.company)
+        # The case the whole change exists for: Admin on ONE project only.
+        self.people["project_admin"] = mk("p_padmin")
+        PermissionChecker.assign_role(self.people["project_admin"], self.roles["Admin"], self.project_a)
+        # Member on ONE topic only.
+        self.people["topic_member"] = mk("p_tmember")
+        PermissionChecker.assign_role(self.people["topic_member"], self.roles["Member"], self.topic_a1)
+        # Stacked: Viewer company-wide PLUS Admin on one project.
+        self.people["viewer_plus_project_admin"] = mk("p_stacked")
+        PermissionChecker.assign_role(self.people["viewer_plus_project_admin"], self.roles["Viewer"], self.company)
+        PermissionChecker.assign_role(self.people["viewer_plus_project_admin"], self.roles["Admin"], self.project_a)
+        # Holds nothing at all.
+        self.people["outsider"] = mk("p_outsider")
+
+    def _expected(self, user, **kwargs):
+        return {code for code in self.all_codes if PermissionChecker.can(user, code, **kwargs)}
+
+    def test_payload_equals_can_for_every_user_and_object(self):
+        from authn.services import my_permissions
+
+        for label, user in self.people.items():
+            payload = my_permissions(user, self.company)
+
+            with self.subTest(user=label, obj="company"):
+                self.assertEqual(
+                    set(payload["company"]["rights"]),
+                    self._expected(user, company=self.company),
+                )
+
+            for project in (self.project_a, self.project_b):
+                key = str(project.id)
+                if key not in payload["projects"]:
+                    continue  # not visible -- covered by the visibility tests
+                with self.subTest(user=label, obj=f"project:{project.name}"):
+                    self.assertEqual(
+                        set(payload["projects"][key]),
+                        self._expected(user, obj=project),
+                    )
+
+            for topic in (self.topic_a1, self.topic_a2, self.topic_b1):
+                key = str(topic.id)
+                if key not in payload["topics"]:
+                    continue
+                with self.subTest(user=label, obj=f"topic:{topic.title}"):
+                    self.assertEqual(
+                        set(payload["topics"][key]),
+                        self._expected(user, obj=topic),
+                    )
+
+    def test_every_object_a_user_can_act_on_is_keyed(self):
+        """
+        The converse of the visibility filter: if can() grants ANY right on an
+        object, that object must appear in the payload -- otherwise the client's
+        flat lookup silently hides a control the user is entitled to.
+        """
+        from authn.services import my_permissions
+
+        for label, user in self.people.items():
+            payload = my_permissions(user, self.company)
+            for project in (self.project_a, self.project_b):
+                if self._expected(user, obj=project):
+                    with self.subTest(user=label, obj=f"project:{project.name}"):
+                        self.assertIn(str(project.id), payload["projects"])
+            for topic in (self.topic_a1, self.topic_a2, self.topic_b1):
+                if self._expected(user, obj=topic):
+                    with self.subTest(user=label, obj=f"topic:{topic.title}"):
+                        self.assertIn(str(topic.id), payload["topics"])
+
+
+class PayloadQueryCostTests(PayloadMatchesCanExhaustivelyTests):
+    """
+    The payload resolves every visible project and topic, so a per-object
+    rights lookup made it scale with workspace size (156 queries for 5 projects
+    and 50 topics before PermissionChecker.rights_for_many). This pins that the
+    rights lookup no longer grows per object.
+
+    Projects and channels are held CONSTANT here on purpose: row_rules still
+    walks those per project (it calls can() for channel.list / topic.list), and
+    that is pre-existing behaviour this work did not set out to change. Topics
+    are the unbounded dimension, and the one the batch lookup addresses.
+    """
+
+    def test_topic_count_does_not_drive_the_query_count(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from authn.services import my_permissions
+
+        owner = self.people["owner"]
+
+        with CaptureQueriesContext(connection) as small:
+            baseline = my_permissions(owner, self.company)
+
+        # 40 more topics in the EXISTING channels -- no new projects/channels.
+        for ti in range(40):
+            ChatTopic.objects.create(
+                company=self.company, project=self.project_a, channel=self.channel_a,
+                title=f"Extra {ti}", slug=f"extra-{ti}",
+            )
+
+        with CaptureQueriesContext(connection) as large:
+            payload = my_permissions(owner, self.company)
+
+        self.assertEqual(len(baseline["topics"]), 3)
+        self.assertEqual(len(payload["topics"]), 43)
+        # A per-object implementation would add ~2 queries per topic (+80).
+        # The batch lookup adds none: same projects, same channels, same cost.
+        self.assertEqual(len(large), len(small))

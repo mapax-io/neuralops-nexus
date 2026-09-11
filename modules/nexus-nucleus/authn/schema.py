@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, List, Optional
 
 from ninja import Schema
 
@@ -51,3 +51,23 @@ class AuthVerifyResponse(Schema):
     nucleus_version: Optional[str] = None
     nexus_ai_version: Optional[str] = None
     nexus_transport_version: Optional[str] = None
+
+
+# ── Effective permissions ────────────────────────────────────────────────────
+
+class CompanyPermissionsOut(Schema):
+    id: str
+    rights: List[str]
+
+
+class MyPermissionsOut(Schema):
+    """
+    GET /api/v1/me/permissions/ -- what the signed-in user may do, per object.
+
+    `projects` and `topics` are keyed by id. Every list is already resolved for
+    reach, so the client does a flat lookup; an absent key means no rights on
+    that object.
+    """
+    company: CompanyPermissionsOut
+    projects: Dict[str, List[str]]
+    topics: Dict[str, List[str]]

@@ -299,6 +299,53 @@ def auth_verify(access_token: str) -> dict:
 
 
 # =========================================================
+# Effective permissions (GET /api/v1/me/permissions/)
+# =========================================================
+
+def my_permissions(user, company) -> dict:
+    """
+    Every right `user` holds, resolved for reach and keyed by the object it
+    applies to -- the payload the frontend gates its controls on.
+
+    Each list is already resolved: a project's entry includes rights inherited
+    from a company assignment, a topic's includes rights inherited from its
+    project or company. The client answers "may I?" with a set lookup and never
+    walks the scope hierarchy itself -- reach rules stay here, in one place.
+
+    Only objects the user can reach appear as keys; an absent key means no
+    rights there. A topic reachable ONLY through a project- or company-scope
+    assignment still gets a key, so a project admin keeps their topic-scoped
+    controls (topic.update/archive, persona.mention, session.*, schedule.*).
+
+    Resolves every visible object in a fixed number of queries: the row_rules
+    walk to find them, then two batched lookups each for projects and topics
+    (PermissionChecker.rights_for_many) -- not two per object.
+    """
+    from authn.permissions.checker import PermissionChecker
+    from authn.permissions.row_rules import visible_channels, visible_projects, visible_topics
+
+    visible_project_rows = list(visible_projects(user, company))
+    visible_topic_rows = [
+        topic
+        for project in visible_project_rows
+        for channel in visible_channels(user, project)
+        for topic in visible_topics(user, channel)
+    ]
+
+    project_rights = PermissionChecker.rights_for_many(user, visible_project_rows)
+    topic_rights = PermissionChecker.rights_for_many(user, visible_topic_rows)
+
+    return {
+        "company": {
+            "id": str(company.id),
+            "rights": sorted(PermissionChecker.rights_for(user, company=company)),
+        },
+        "projects": {key: sorted(codes) for key, codes in project_rights.items()},
+        "topics": {key: sorted(codes) for key, codes in topic_rights.items()},
+    }
+
+
+# =========================================================
 # Invitation helper
 # =========================================================
 

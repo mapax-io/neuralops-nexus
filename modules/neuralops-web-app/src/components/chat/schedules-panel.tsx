@@ -12,19 +12,19 @@ import { Skeleton } from "@/components/ui/surfaces";
 import { usePersonas } from "@/hooks/use-intelligence";
 import { useCreateSchedule, useDeleteSchedule, useEditSchedule, useSchedules, useToggleSchedule } from "@/hooks/use-schedules";
 import type { Schedule } from "@/lib/api/schedules";
-import { isCompanyAdmin } from "@/lib/permissions";
+import { topicScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 
 // The Schedules tab: recurring persona runs in THIS chat, executed by the
 // server (celery-beat) whether anyone is online or not.
 export function SchedulesPanel({ pid, cid, tid }: { pid: string; cid: string; tid: string }) {
   const { data: schedules, isLoading, error, refetch } = useSchedules(pid, cid, tid);
-  const role = useConnectionStore((s) => s.connection?.role);
+  const { can } = usePermissions();
   const selfId = useConnectionStore((s) => s.connection?.nucleusUserId);
-  // schedule.manage is Admin-tier and project-reachable.
-  const canManage = isCompanyAdmin(role);
-  // schedule.create rides the PROJECT tier now (DECISIONS §23).
-  const canCreate = role !== "viewer";
+  // Both are TOPIC-scope rights, asked against THIS topic.
+  const canManage = can("schedule.manage", topicScope(tid));
+  const canCreate = can("schedule.create", topicScope(tid));
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<Schedule | null>(null);
   const [editing, setEditing] = useState<Schedule | null>(null);

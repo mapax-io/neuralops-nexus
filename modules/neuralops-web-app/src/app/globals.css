@@ -280,32 +280,38 @@
   font-family: var(--font-jetbrains), monospace;
   font-size: 12.5px;
 }
-/* Slack-style pills — a ProseMirror decoration, not a node, so the underlying
-   text (the wire format) is untouched. Each flavor reads distinctly: @persona/
-   @directive = accent (warm), @you = gold highlight, @teammate = blue,
-   /command = live/green. */
-.nx-editor-content .nx-mention-pill,
-.nx-editor-content .nx-self-pill,
-.nx-editor-content .nx-human-pill,
-.nx-editor-content .nx-command-pill {
+/* Slack-style pills. In the composer these are a ProseMirror decoration, in a
+   sent message a rehype-inserted span — either way only existing text is
+   painted, so the markdown wire format is untouched. Unscoped on purpose: an
+   @name must read the same in the box you type it in and the message it
+   becomes. Each flavor reads distinctly: @persona/@directive = accent (warm),
+   @you = gold highlight, @teammate = blue, /command = live/green. */
+.nx-mention-pill,
+.nx-self-pill,
+.nx-human-pill,
+.nx-command-pill {
   border-radius: 4px;
   padding: 1px 4px;
   font-weight: 500;
 }
-.nx-editor-content .nx-mention-pill {
+.nx-mention-pill {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.nx-editor-content .nx-self-pill {
-  background: color-mix(in srgb, #f5b301 26%, transparent);
+/* Being mentioned yourself is the one you must be able to spot while scrolling,
+   so it is the loudest: Slack's amber highlight, plus a ring so it still reads
+   as "this one is about me" against any bubble background, in both themes. */
+.nx-self-pill {
+  background: color-mix(in srgb, #f5b301 34%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #f5b301 70%, transparent);
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 700;
 }
-.nx-editor-content .nx-human-pill {
+.nx-human-pill {
   background: color-mix(in srgb, #4a90e2 18%, transparent);
   color: #4a90e2;
 }
-.nx-editor-content .nx-command-pill {
+.nx-command-pill {
   background: color-mix(in srgb, var(--live) 16%, transparent);
   color: var(--live);
 }

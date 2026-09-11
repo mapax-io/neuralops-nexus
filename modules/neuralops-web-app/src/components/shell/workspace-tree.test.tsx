@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grantAll, grantNone } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import { useSelectionStore } from "@/stores/selection.store";
 import { WorkspaceTree } from "./workspace-tree";
@@ -29,6 +30,7 @@ function connectAs(role: string) {
 beforeEach(() => {
   useSelectionStore.setState({ byServer: {} });
   server.use(
+    grantAll(BASE, { projects: ["p1"], topics: ["t1"] }),
     http.get(`${BASE}/api/v1/projects/`, () =>
       HttpResponse.json([
         { id: "p1", name: "Demo Project", slug: "demo", description: null, channels: [{ id: "c1", name: "general", slug: "g", description: null }] },
@@ -46,6 +48,7 @@ describe("WorkspaceTree", () => {
         HttpResponse.json([{ id: "t1", title: "chat#1", slug: "t1", project_id: "p1", channel_id: "c1", has_unread: true, unread_count: 2 }]),
       ),
     );
+    server.use(grantNone(BASE)); // no channel.archive, so only the channel button matches
     connectAs("member");
     renderTree();
     expect(await screen.findByText("Demo Project")).toBeInTheDocument();
@@ -58,15 +61,20 @@ describe("WorkspaceTree", () => {
     expect(await screen.findByRole("status", { name: /topics with new messages/i })).toBeInTheDocument();
   });
 
-  it("offers creation controls to admins but not members", async () => {
-    connectAs("admin");
-    renderTree();
-    expect(await screen.findByLabelText("New project")).toBeInTheDocument();
-
+  it("offers creation controls on the right, not on the company role", async () => {
+    // Company role stays "member" in both halves: only the right moves.
     connectAs("member");
     renderTree();
-    // The admin render above is unmounted by rerendering fresh; query the latest DOM state:
-    expect(screen.queryAllByLabelText("New project").length).toBeLessThanOrEqual(1);
+    expect(await screen.findByLabelText("New project")).toBeInTheDocument();
+  });
+
+  it("offers no creation controls when project.create is not held", async () => {
+    server.use(grantNone(BASE));
+    connectAs("admin"); // company admin, but the server grants nothing
+    renderTree();
+    await screen.findByText("Demo Project");
+    expect(screen.queryByLabelText("New project")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Archive project Demo Project")).not.toBeInTheDocument();
   });
 
   it("creates a channel with the optional description the server accepts", async () => {
@@ -91,7 +99,7 @@ describe("WorkspaceTree", () => {
   });
 
   it("shows the empty state when there are no projects", async () => {
-    server.use(http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([])));
+    server.use(http.get(`${BASE}/api/v1/projects/`, () => HttpResponse.json([])), grantNone(BASE));
     connectAs("member");
     renderTree();
     expect(await screen.findByText("No projects yet")).toBeInTheDocument();

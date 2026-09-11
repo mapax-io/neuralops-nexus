@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { useArchiveTopic, useCreateTopic, useProjects, useTopics } from "@/hooks/use-workspace";
-import { isCompanyAdmin } from "@/lib/permissions";
-import { useConnectionStore } from "@/stores/connection.store";
+import { projectScope, topicScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useSelection } from "@/stores/selection.store";
 import { useUiStore } from "@/stores/ui.store";
 
@@ -17,13 +17,12 @@ import { useUiStore } from "@/stores/ui.store";
 export function ChatListPanel({ pid, cid }: { pid: string; cid: string }) {
   const { sel, setTopic, clearTopic } = useSelection();
   const toggleChatsPanel = useUiStore((u) => u.toggleChatsPanel);
-  const role = useConnectionStore((s) => s.connection?.role);
+  const { can } = usePermissions();
   const { data: projects } = useProjects();
   const project = projects?.find((p) => p.id === pid);
-  // topic.create rides the PROJECT tier now (DECISIONS §23).
-  const canCreate = role !== "viewer";
-  // topic.archive is a PROJECT-scope Admin right (Member/Viewer never get it).
-  const canManage = isCompanyAdmin(role);
+  // topic.create is PROJECT-scope -- the topic does not exist yet, so there is
+  // nothing narrower to ask against.
+  const canCreate = can("topic.create", projectScope(pid));
   const channelName = project?.channels.find((c) => c.id === cid)?.name;
   const { data: topics, isLoading, error, refetch } = useTopics(pid, cid);
   const showLoading = useDelayedLoading(isLoading);
@@ -114,7 +113,7 @@ export function ChatListPanel({ pid, cid }: { pid: string; cid: string }) {
                       </span>
                     )}
                   </button>
-                  {canManage && (
+                  {can("topic.archive", topicScope(t.id)) && (
                     <button
                       aria-label={`Archive topic ${t.title}`}
                       title="Archive topic"

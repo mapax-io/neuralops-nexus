@@ -11,15 +11,16 @@ import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { McpTab } from "@/components/intelligence/mcp-tab";
 import { ModelsTab } from "@/components/intelligence/models-tab";
 import { PersonasTab } from "@/components/intelligence/personas-tab";
-import { isCompanyAdmin } from "@/lib/permissions";
+import { projectScope, topicScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { SessionBanner } from "@/components/chat/session-banner";
 import { MessageList } from "@/components/chat/message-list";
 import { SchedulesPanel } from "@/components/chat/schedules-panel";
 import { TypingBar } from "@/components/chat/typing-bar";
 import { useChat } from "@/hooks/use-chat";
+import { useKnownMentions } from "@/hooks/use-known-mentions";
 import { useMarkTopicRead, useProjects, useTopics } from "@/hooks/use-workspace";
-import { useConnectionStore } from "@/stores/connection.store";
 import { useSearchShortcut } from "@/lib/platform";
 import { useSelection } from "@/stores/selection.store";
 import { useUiStore } from "@/stores/ui.store";
@@ -29,11 +30,18 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
   const { clearTopic } = useSelection();
   const panelCollapsed = useUiStore((u) => u.chatsPanelCollapsed);
   const toggleChatsPanel = useUiStore((u) => u.toggleChatsPanel);
-  const role = useConnectionStore((s) => s.connection?.role);
-  // Participation comes from the PROJECT tier (DECISIONS §23): a server
-  // Viewer who is a project Member CAN post here; a server Member on no
-  // team is read-only.
-  const participates = role !== "viewer";
+  const { can } = usePermissions();
+  // The registry has no message.send right (see docs/OPEN-ITEMS.md), so
+  // session.create stands in as the read/write marker: it is the narrowest
+  // topic-scope right every participating tier holds and a Viewer never does.
+  const participates = can("session.create", topicScope(tid));
+  const canEndSession = can("session.close", topicScope(tid));
+  // No team-management right exists either -- the project-admin marker stands
+  // in, matching WorkspaceTree.
+  const canManageTeam = can("project.archive", projectScope(pid));
+  // Same set the composer pills against, so a name reads identically in the
+  // box you type it in and the message it becomes.
+  const { known } = useKnownMentions(pid);
   const { data: projects } = useProjects();
   const { data: topics } = useTopics(pid, cid);
   const markRead = useMarkTopicRead();
@@ -197,15 +205,17 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
               jumpToId={jumpTo}
               onJumped={() => setJumpTo(null)}
               totalLoaded={chat.totalLoaded}
+              known={known}
             />
               <TypingBar actors={chat.typing} />
             </div>
-            <SessionBanner messages={chat.messages} ending={endingSession} onEnd={participates ? () => setConfirmingEnd(true) : undefined} />
+            <SessionBanner messages={chat.messages} ending={endingSession} onEnd={canEndSession ? () => setConfirmingEnd(true) : undefined} />
             {!participates ? (
-              /* Viewer is read-only: no posting, no sessions, no @mentions
-                 (rights.py gives Viewer no create/session/mention rights). */
+              /* Read-only HERE: the check is per topic, so someone who can
+                 post in another chat still lands on this. Say that, rather
+                 than claiming the whole workspace is view-only. */
               <p role="note" className="flex-none border-t border-line bg-bg2/60 px-4 py-3 text-center text-[12.5px] text-ink2">
-                You have view-only access to this workspace — you can read along, but not post.
+                You have read-only access to this chat — you can follow along, but not post.
               </p>
             ) : (
               <Composer projectId={pid} channelId={cid} topicId={tid} channelName={channel?.name} topicTitle={topic?.title} onSend={chat.send}  onShowSchedules={() => setTab("schedules")} onSlashDialog={setSlashDialog} />
@@ -227,9 +237,9 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
         {/* Slash-created entities default to THIS chat's project — the narrowest
             scope the project-ownership model allows (personas/mcp are
             project-owned; models are company-wide so take no default). */}
-        {slashDialog === "models" && <ModelsTab embedded canManage={isCompanyAdmin(role)} />}
+        {slashDialog === "models" && <ModelsTab embedded />}
         {slashDialog === "mcp" && <McpTab embedded defaultProjectId={pid} />}
-        {slashDialog === "personas" && <PersonasTab embedded canManage={isCompanyAdmin(role)} defaultProjectId={pid} />}
+        {slashDialog === "personas" && <PersonasTab embedded defaultProjectId={pid} />}
       </Dialog>
       <ConfirmDialog
         open={confirmingEnd}
@@ -247,7 +257,7 @@ export function TopicView({ pid, cid, tid }: { pid: string; cid: string; tid: st
         confirmIcon={<CircleStop size={14} strokeWidth={2} />}
         tone="neutral"
       />
-      <TeamDialog pid={pid} projectName={project?.name ?? "This project"} canManage={isCompanyAdmin(role)} open={membersOpen} onClose={() => setMembersOpen(false)} />
+      <TeamDialog pid={pid} projectName={project?.name ?? "This project"} canManage={canManageTeam} open={membersOpen} onClose={() => setMembersOpen(false)} />
     </div>
   );
 }

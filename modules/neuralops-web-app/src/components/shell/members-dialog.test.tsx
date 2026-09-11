@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw/server";
+import { grantAll } from "@/test/permissions";
 import { useConnectionStore } from "@/stores/connection.store";
 import { MembersDialog } from "./members-dialog";
 
@@ -29,6 +30,7 @@ beforeEach(() => {
     connection: { serverUrl: BASE, role: "owner", isOwner: true, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
   });
   server.use(
+    grantAll(BASE, { projects: [], topics: [] }),
     http.get(`${BASE}/api/v1/members/`, () => HttpResponse.json([{ user_id: "u1", email: "owner@acme.test", role: "owner", avatar: null, invited_by: null }])),
     http.post(`${BASE}/api/v1/members/invite/`, async ({ request }) => {
       invited = (await request.json()) as Record<string, unknown>;

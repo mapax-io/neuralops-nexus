@@ -10,8 +10,8 @@ import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/li
 import { useFormErrors } from "@/hooks/use-form-errors";
 import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
 import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useSetModelConfigProject } from "@/hooks/use-intelligence";
-import { isCompanyAdmin } from "@/lib/permissions";
-import { useConnectionStore } from "@/stores/connection.store";
+import { companyScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useProjects } from "@/hooks/use-workspace";
 import type { ModelConfig, ModelConfigPatch } from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
@@ -61,11 +61,15 @@ function CapabilityChecks({ value, onChange }: { value: Capabilities; onChange: 
   );
 }
 
-export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedded?: boolean }) {
-  // canManage (create/edit/delete + keys) is COMPANY-scope only; ATTACH is a
-  // separate, lighter PROJECT-scope right a Project Admin also holds.
-  const role = useConnectionStore((s) => s.connection?.role);
-  const canAttach = isCompanyAdmin(role);
+export function ModelsTab({ embedded }: { embedded?: boolean }) {
+  // Registering/editing/deleting a config (and its key) is COMPANY-scope;
+  // ATTACH is a separate, lighter PROJECT-scope right a Project Admin holds,
+  // so it is asked across every project rather than against the company.
+  const { can, canAnyProject } = usePermissions();
+  const canCreate = can("model_config.create", companyScope());
+  const canEdit = can("model_config.update", companyScope());
+  const canRemove = can("model_config.delete", companyScope());
+  const canAttach = canAnyProject("model_config.attach");
   const { data: models, isLoading, error, refetch } = useModelConfigs();
   const [creating, setCreating] = useState(false);
   // One-shot intent from /add-* slash commands (ui.store.intelCreate).
@@ -76,10 +80,10 @@ export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedde
     setIntelCreate(false);
     // Deferred: setState directly inside an effect cascades renders (house rule).
     const raf = requestAnimationFrame(() => {
-      if (canManage) setCreating(true);
+      if (canCreate) setCreating(true);
     });
     return () => cancelAnimationFrame(raf);
-  }, [intelCreate, setIntelCreate, canManage]);
+  }, [intelCreate, setIntelCreate, canCreate]);
   const [managing, setManaging] = useState<string | null>(null); // model id
   const [editing, setEditing] = useState<ModelConfig | null>(null);
   const [removing, setRemoving] = useState<ModelConfig | null>(null);
@@ -91,7 +95,7 @@ export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedde
       embedded={embedded}
       title="AI models"
       blurb="Model endpoints with your own keys — encrypted at rest, never shown again."
-      action={!!models?.length && canManage && (
+      action={!!models?.length && canCreate && (
         <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
           <Plus size={14} strokeWidth={2} /> Register model
         </Button>
@@ -113,8 +117,8 @@ export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedde
         empty={models?.length === 0}
         emptyTitle="No models yet"
         emptyIcon={<Cpu size={24} strokeWidth={1.8} />}
-        emptyHint={canManage ? "Register a model with your own API key — everything AI starts here." : "An admin needs to register a model before personas can answer."}
-        emptyAction={canManage ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> Register model</Button> : undefined}
+        emptyHint={canCreate ? "Register a model with your own API key — everything AI starts here." : "An admin needs to register a model before personas can answer."}
+        emptyAction={canCreate ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> Register model</Button> : undefined}
       />
       {!showLoading && !!models?.length && (
         <CardGrid>
@@ -138,7 +142,7 @@ export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedde
                   <span>{m.project_ids?.length ?? 0} {(m.project_ids?.length ?? 0) === 1 ? "project" : "projects"}</span>
                 </>
               }
-              actions={(canManage || canAttach) && (
+              actions={(canEdit || canRemove || canAttach) && (
                 <>
                   {canAttach && (
                     <button
@@ -150,25 +154,25 @@ export function ModelsTab({ canManage, embedded }: { canManage: boolean; embedde
                       <Boxes size={14} strokeWidth={2} />
                     </button>
                   )}
-                  {canManage && (
-                    <>
-                      <button
-                        aria-label={`Edit model ${m.name}`}
-                        title="Edit model"
-                        onClick={() => setEditing(m)}
-                        className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
-                      >
-                        <Pencil size={14} strokeWidth={2} />
-                      </button>
-                      <button
-                        aria-label={`Remove model ${m.name}`}
-                        title="Remove model"
-                        onClick={() => setRemoving(m)}
-                        className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
-                      >
-                        <Trash2 size={14} strokeWidth={2} />
-                      </button>
-                    </>
+                  {canEdit && (
+                    <button
+                      aria-label={`Edit model ${m.name}`}
+                      title="Edit model"
+                      onClick={() => setEditing(m)}
+                      className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
+                    >
+                      <Pencil size={14} strokeWidth={2} />
+                    </button>
+                  )}
+                  {canRemove && (
+                    <button
+                      aria-label={`Remove model ${m.name}`}
+                      title="Remove model"
+                      onClick={() => setRemoving(m)}
+                      className="flex size-7 items-center justify-center rounded-md text-ink2 hover:bg-crit/10 hover:text-crit"
+                    >
+                      <Trash2 size={14} strokeWidth={2} />
+                    </button>
                   )}
                 </>
               )}

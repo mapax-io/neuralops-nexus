@@ -23,6 +23,8 @@ export interface UiMessage {
   isError: boolean;
   isStalled: boolean;
   lastActivity: number;
+  /** Server-supplied wording for the tool in flight, shown while streaming. */
+  activity?: string | null;
 }
 
 export interface TransitionItem {
@@ -141,6 +143,20 @@ export function applyEvent(state: ChatState, ev: ChatEvent, now: number, selfUse
       return { ...state, messages: { ...state.messages, [ev.id]: merged } };
     }
 
+    // A tool call started. Counts as activity (so stall detection holds off)
+    // and replaces the "Thinking" wording until the next token arrives.
+    case "activity": {
+      const existing = state.messages[ev.id];
+      if (!existing) return state;
+      return {
+        ...state,
+        messages: {
+          ...state.messages,
+          [ev.id]: { ...existing, activity: ev.label, isStalled: false, lastActivity: now },
+        },
+      };
+    }
+
     case "delta": {
       const existing = state.messages[ev.id];
       const base: UiMessage = existing ?? {
@@ -152,7 +168,7 @@ export function applyEvent(state: ChatState, ev: ChatEvent, now: number, selfUse
       };
       return {
         ...state,
-        messages: { ...state.messages, [ev.id]: { ...base, content: base.content + ev.delta, isStreaming: true, isStalled: false, lastActivity: now } },
+        messages: { ...state.messages, [ev.id]: { ...base, content: base.content + ev.delta, isStreaming: true, isStalled: false, activity: null, lastActivity: now } },
       };
     }
 

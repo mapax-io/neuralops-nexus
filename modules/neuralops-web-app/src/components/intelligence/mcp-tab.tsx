@@ -9,8 +9,8 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateRequired, validateUrl as vUrl } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
 import { useCreateMcpServer, useDeleteMcpServer, useMcpOAuthConnect, useMcpServers, usePatchMcpServer } from "@/hooks/use-intelligence";
-import { isCompanyAdmin } from "@/lib/permissions";
-import { useConnectionStore } from "@/stores/connection.store";
+import { projectScope } from "@/lib/permissions";
+import { usePermissions } from "@/hooks/use-permissions";
 import { useProjects } from "@/hooks/use-workspace";
 import type { MCPServer } from "@/lib/api/intelligence";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
@@ -234,12 +234,16 @@ function CallSettings({ idPrefix, timeout, retries, onTimeout, onRetries, errors
 }
 
 export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; defaultProjectId?: string } = {}) {
-  // mcp_server.* create/update/delete are PROJECT-scope rights.
-  const role = useConnectionStore((s) => s.connection?.role);
+  // mcp_server.* create/update/delete are PROJECT-scope rights, so each card
+  // is asked about its OWN project. Creating has no server yet: embedded in a
+  // chat the project is known, on the Intelligence page the dialog picks one,
+  // so the question there is "any project you can reach".
+  const { can, canAnyProject } = usePermissions();
   const { data: projects } = useProjects();
   const { data: servers, isLoading, error, refetch } = useMcpServers();
-  const canManage = isCompanyAdmin(role);
-  const canTouch = isCompanyAdmin(role);
+  const canCreate = defaultProjectId
+    ? can("mcp_server.create", projectScope(defaultProjectId))
+    : canAnyProject("mcp_server.create");
   const connect = useMcpOAuthConnect();
   const [creating, setCreating] = useState(false);
   // One-shot intent from /add-* slash commands (ui.store.intelCreate).
@@ -250,10 +254,10 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
     setIntelCreate(false);
     // Deferred: setState directly inside an effect cascades renders (house rule).
     const raf = requestAnimationFrame(() => {
-      if (canManage) setCreating(true);
+      if (canCreate) setCreating(true);
     });
     return () => cancelAnimationFrame(raf);
-  }, [intelCreate, setIntelCreate, canManage]);
+  }, [intelCreate, setIntelCreate, canCreate]);
   const [editing, setEditing] = useState<MCPServer | null>(null);
   const [removing, setRemoving] = useState<MCPServer | null>(null);
   const showLoading = useDelayedLoading(isLoading);
@@ -265,7 +269,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
       embedded={embedded}
       title="MCP tool servers"
       blurb="External MCP servers by URL or command, plus built-in capabilities the AI worker provides — personas mount both the same way."
-      action={!!servers?.length && canManage && (
+      action={!!servers?.length && canCreate && (
         <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
           <Plus size={14} strokeWidth={2} /> Add server
         </Button>
@@ -287,12 +291,16 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
         empty={servers?.length === 0}
         emptyTitle="No MCP tool servers yet"
         emptyIcon={<Plug2 size={24} strokeWidth={1.8} />}
-        emptyHint={canManage ? "Point at any MCP server and your personas can start acting, not just answering." : "An admin can register MCP servers to give personas tools."}
-        emptyAction={canManage ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> Add server</Button> : undefined}
+        emptyHint={canCreate ? "Point at any MCP server and your personas can start acting, not just answering." : "An admin can register MCP servers to give personas tools."}
+        emptyAction={canCreate ? <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} strokeWidth={2} /> Add server</Button> : undefined}
       />
       {!showLoading && !!servers?.length && (
         <CardGrid>
-          {servers.map((s) => (
+          {servers.map((s) => {
+            // Connecting OAuth writes credentials, so it is an update.
+            const canEditServer = can("mcp_server.update", projectScope(s.project_id));
+            const canRemoveServer = can("mcp_server.delete", projectScope(s.project_id));
+            return (
             <EntityCard
               key={s.id}
               icon={s.is_internal
@@ -310,7 +318,7 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
                         {s.oauth_connected ? <CircleCheck size={11} strokeWidth={2.6} /> : <CircleX size={11} strokeWidth={2.6} />}
                         {s.oauth_connected ? "connected" : "not connected"}
                       </span>
-                      {canTouch && (
+                      {canEditServer && (
                         <button
                           type="button"
                           title={s.oauth_connected ? "Reconnect — sign in to the provider again" : "Sign in to the provider"}
@@ -342,17 +350,19 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
                   )}
                 </>
               )}
-              actions={canTouch && (
+              actions={(canEditServer || canRemoveServer) && (
                 <>
-                  <button
-                    aria-label={`Edit MCP server ${s.name}`}
-                    title="Edit server"
-                    onClick={() => setEditing(s)}
-                    className="flex size-7 cursor-pointer items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
-                  >
-                    <Pencil size={14} strokeWidth={2} />
-                  </button>
-                  {s.is_protected ? (
+                  {canEditServer && (
+                    <button
+                      aria-label={`Edit MCP server ${s.name}`}
+                      title="Edit server"
+                      onClick={() => setEditing(s)}
+                      className="flex size-7 cursor-pointer items-center justify-center rounded-md text-ink2 hover:bg-surface2 hover:text-ink"
+                    >
+                      <Pencil size={14} strokeWidth={2} />
+                    </button>
+                  )}
+                  {!canRemoveServer ? null : s.is_protected ? (
                     // The project's provisioned default: the server refuses to
                     // delete it, so the action is not offered — the lock says why.
                     <span
@@ -376,7 +386,8 @@ export function McpTab({ embedded, defaultProjectId }: { embedded?: boolean; def
                 </>
               )}
             />
-          ))}
+            );
+          })}
         </CardGrid>
       )}
       <CreateMcpDialog open={creating} onClose={() => setCreating(false)} defaultProjectId={defaultProjectId} />

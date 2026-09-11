@@ -249,6 +249,7 @@ Increment `APP_VERSION` on every meaningful change. Update the log below.
 | 0.1.1   | 2026-07-26 | Fix pydantic-ai 2.x MCP path — rewrite `_run_with_mcp` using `FastMCPClient` + `litellm.acompletion()` directly |
 | 0.1.2   | 2026-07-27 | Session UX (open/close system messages, `@session end`, WARNING logs, content guard); persona edit dialog (PATCH); system message rendering in frontend |
 | 0.1.3   | 2026-09-01 | UI/build fixes: restore missing `src/lib/mcpOAuth.ts` (gitignore trap), dialog max-height + scroll, message word-wrap + table scroll, type fixes, prettier pass |
+| 0.16.0  | 2026-09-11 | **Scoped permissions in the UI** — every management control gates on a RIGHT against the object it acts on (`GET /api/v1/me/permissions/`), replacing the `connection.role` string check; `isCompanyAdmin`/`isViewer` removed, so the client holds no role rule of its own. A server without the endpoint is reported as out of date (`PermissionsBanner`) rather than silently hiding everything. **@mention chips in the transcript** — a known persona/teammate/self renders as the same pill the composer draws (`rehypeMentions`, sharing the composer's `findPillRanges`); an unknown name stays plain text; being mentioned yourself is the loudest flavour. **Persona activity from the server** — the cue under a working persona shows nucleus's own `tool_activity` wording ("Searching the web") instead of a fixed "Thinking". See docs/OPEN-ITEMS.md. |
 
 **About dialog:** `src/components/layout/AboutDialog.tsx`
 Opened via the `ⓘ` button in the Sidebar footer.
