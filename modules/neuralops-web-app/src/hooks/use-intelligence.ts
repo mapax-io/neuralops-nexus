@@ -214,3 +214,17 @@ export function useMcpOAuthConnect() {
     },
   });
 }
+
+export function useOpenRouterModels() {
+  return useQuery({
+    queryKey: ["openrouter-models"],
+    queryFn: async () => {
+      const res = await fetch("https://openrouter.ai/api/v1/models");
+      if (!res.ok) throw new Error("Failed to fetch OpenRouter models");
+      const json = await res.json();
+      return json.data as { id: string; name: string }[];
+    },
+    staleTime: 1000 * 60 * 60 * 24, // 24 hours
+    gcTime: 1000 * 60 * 60 * 24, // Keep in memory for 24 hours even if unused
+  });
+}
