@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useUiStore } from "@/stores/ui.store";
 import { Boxes, Check, Cpu, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
 import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
-import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useSetModelConfigProject } from "@/hooks/use-intelligence";
+import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useSetModelConfigProject, useOpenRouterModels } from "@/hooks/use-intelligence";
 import { companyScope } from "@/lib/permissions";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjects } from "@/hooks/use-workspace";
@@ -202,6 +202,55 @@ export function ModelsTab({ embedded }: { embedded?: boolean }) {
     </TabShell>
   );
 }
+function ModelCombobox({
+  id,
+  value,
+  onChange,
+  onBlur,
+  options,
+  placeholder,
+  error,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  options: { id: string; name: string }[];
+  placeholder?: string;
+  error?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function click(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", click);
+    return () => document.removeEventListener("mousedown", click);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const search = value.toLowerCase();
+    return options.filter(o => o.id.toLowerCase().includes(search) || o.name.toLowerCase().includes(search));
+  }, [options, value]);
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <Input id={id} value={value} onChange={(e) => { onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onBlur={onBlur} aria-invalid={error} placeholder={placeholder} className="font-mono" autoComplete="off" />
+      {open && filtered.length > 0 && (
+        <div className="absolute top-[calc(100%+4px)] left-0 max-h-60 w-full overflow-y-auto rounded-[10px] border border-line bg-surface shadow-[0_4px_16px_rgba(0,0,0,0.1)] z-10 p-1 flex flex-col">
+          {filtered.map(o => (
+            <button key={o.id} type="button" onMouseDown={(e) => { e.preventDefault(); onChange(o.id); setOpen(false); }} className="w-full text-left px-2.5 py-1.5 text-sm rounded-[6px] hover:bg-surface2 flex flex-col gap-0.5">
+              <span className="font-medium text-ink truncate leading-tight">{o.name}</span>
+              <span className="font-mono text-[11px] text-ink2 truncate leading-tight">{o.id}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function CreateModelDialog({ open, onClose, attachProjectId, attachProjectName, onCreated }: {
   open: boolean;
@@ -217,6 +266,19 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   const setProject = useSetModelConfigProject();
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<string>("anthropic");
+
+  const { data: catalog } = useOpenRouterModels();
+  const matchingModels = useMemo(() => {
+    if (!catalog) return [];
+    if (!["anthropic", "openai", "google"].includes(provider)) return [];
+    const prefix = provider + "/";
+    return catalog
+      .filter((m) => m.id.startsWith(prefix))
+      .map((m) => ({
+        id: m.id.slice(prefix.length),
+        name: m.name.replace(/^[^:]+:\s*/, ""),
+      }));
+  }, [catalog, provider]);
   const [modelId, setModelId] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
@@ -351,19 +413,23 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
           </div>
           <div>
             <Label htmlFor="m-id" required>Model id</Label>
-            <Input
-              id="m-id"
-              required
-              placeholder={prov.placeholder}
-              value={modelId}
-              aria-invalid={!!form.error("id")}
-              onChange={(e) => {
-                setModelId(e.target.value);
-                syncContext(provider, e.target.value);
-              }}
-              onBlur={() => form.touch("id")}
-              className="font-mono"
-            />
+            {matchingModels.length > 0 ? (
+              <ModelCombobox id="m-id" value={modelId} options={matchingModels} placeholder={prov.placeholder} error={!!form.error("id")} onChange={(v) => { setModelId(v); syncContext(provider, v); }} onBlur={() => form.touch("id")} />
+            ) : (
+              <Input
+                id="m-id"
+                required
+                placeholder={prov.placeholder}
+                value={modelId}
+                aria-invalid={!!form.error("id")}
+                onChange={(e) => {
+                  setModelId(e.target.value);
+                  syncContext(provider, e.target.value);
+                }}
+                onBlur={() => form.touch("id")}
+                className="font-mono"
+              />
+            )}
             {form.error("id") ? <FieldError>{form.error("id")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Bare model name — no provider prefix. Becomes {provider}:{modelId.trim() || prov.placeholder}.</p>}
           </div>
         </div>
@@ -425,6 +491,20 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
 function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onClose: () => void; siblings: ModelConfig[] }) {
   const [name, setName] = useState(model.name);
   const [provider, setProvider] = useState<string>(model.provider);
+
+  const { data: catalog } = useOpenRouterModels();
+  const matchingModels = useMemo(() => {
+    if (!catalog) return [];
+    if (!["anthropic", "openai", "google"].includes(provider)) return [];
+    const prefix = provider + "/";
+    return catalog
+      .filter((m) => m.id.startsWith(prefix))
+      .map((m) => ({
+        id: m.id.slice(prefix.length),
+        name: m.name.replace(/^[^:]+:\s*/, ""),
+      }));
+  }, [catalog, provider]);
+
   const [modelId, setModelId] = useState(model.model_id);
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState(model.api_base ?? "");
@@ -518,15 +598,19 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
           </div>
           <div>
             <Label htmlFor="me-id" required>Model id</Label>
-            <Input
-              id="me-id"
-              required
-              value={modelId}
-              aria-invalid={!!form.error("id")}
-              onChange={(e) => setModelId(e.target.value)}
-              onBlur={() => form.touch("id")}
-              className="font-mono"
-            />
+            {matchingModels.length > 0 ? (
+              <ModelCombobox id="me-id" value={modelId} options={matchingModels} error={!!form.error("id")} onChange={(v) => setModelId(v)} onBlur={() => form.touch("id")} />
+            ) : (
+              <Input
+                id="me-id"
+                required
+                value={modelId}
+                aria-invalid={!!form.error("id")}
+                onChange={(e) => setModelId(e.target.value)}
+                onBlur={() => form.touch("id")}
+                className="font-mono"
+              />
+            )}
             <FieldError>{form.error("id")}</FieldError>
           </div>
         </div>
