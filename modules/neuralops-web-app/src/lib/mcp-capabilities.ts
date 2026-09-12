@@ -29,34 +29,34 @@ export const THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as
 export const DEFAULT_PROTECTED_PATTERNS = [".git/*", ".env", ".env.*", "*.pem", "*.key", "**/secrets*"];
 
 export const CAPABILITIES: readonly CapabilitySpec[] = [
-  { key: "Filesystem", label: "Filesystem", blurb: "Read and write files under the project folder.", editor: "filesystem",
+  { key: "filesystem", label: "Filesystem", blurb: "Read and write files under the project folder.", editor: "filesystem",
     defaults: { root_dir: ".", allowed_patterns: [], denied_patterns: [], protected_patterns: [...DEFAULT_PROTECTED_PATTERNS] } },
-  { key: "Shell", label: "Shell", blurb: "Run an allow-listed set of commands in the project folder.", editor: "shell",
+  { key: "shell", label: "Shell", blurb: "Run an allow-listed set of commands in the project folder.", editor: "shell",
     defaults: { cwd: ".", allowed_commands: ["ls", "touch", "cat", "cd", "grep", "cp", "mkdir"], denied_commands: [], allow_interactive: true, default_timeout: 30, max_output_chars: 50000 } },
-  { key: "Web Search", label: "Web search", blurb: "Search the web.", editor: "web-search", defaults: { local: "duckduckgo" } },
-  { key: "Web Fetch", label: "Web fetch", blurb: "Fetch and read web pages.", editor: "web-fetch", defaults: { local: true } },
-  { key: "Thinking", label: "Thinking", blurb: "Extended reasoning before answering.", editor: "thinking", defaults: { effort: "medium" } },
-  { key: "Planning", label: "Planning", blurb: "Plan multi-step work before acting.", defaults: {} },
-  { key: "Memory", label: "Memory", blurb: "Remember across conversations.", defaults: {} },
-  { key: "Sub Agents", label: "Sub-agents", blurb: "Delegate sub-tasks to helper agents.", defaults: {} },
-  { key: "Dynamic Workflow", label: "Dynamic workflow", blurb: "Build and run multi-step workflows.", defaults: {} },
-  { key: "Advisor", label: "Advisor", blurb: "Ask a second model when stuck.", defaults: {} },
-  { key: "Tool Search", label: "Tool search", blurb: "Find the right tool among many.", defaults: {} },
-  { key: "Compaction", label: "Compaction", blurb: "Summarise long conversations to stay within context.", defaults: {} },
-  { key: "Skills", label: "Skills", blurb: "Load reusable skill documents.", defaults: {} },
-  { key: "Repo Context", label: "Repo context", blurb: "Understand a code repository.", defaults: {} },
-  { key: "X Search", label: "X search", blurb: "Search posts on X.", defaults: {} },
-  { key: "Stack One", label: "Stack One", blurb: "StackOne integrations.", defaults: {} },
-  { key: "Local Stack", label: "Local stack", blurb: "Local service stack access.", defaults: {} },
-  { key: "Gaurdrails", label: "Guardrails", blurb: "Constrain what the persona may do.", defaults: {} },
-  { key: "Spend Limits", label: "Spend limits", blurb: "Cap token and tool spend.", defaults: {} },
-  { key: "Tool Approval", label: "Tool approval", blurb: "Ask before running sensitive tools.", defaults: {} },
-  { key: "Capability Creation", label: "Capability creation", blurb: "Let the persona define new capabilities.", defaults: {} },
+  { key: "web_search", label: "Web search", blurb: "Search the web.", editor: "web-search", defaults: { local: "duckduckgo" } },
+  { key: "web_fetch", label: "Web fetch", blurb: "Fetch and read web pages.", editor: "web-fetch", defaults: { local: true } },
+  { key: "thinking", label: "Thinking", blurb: "Extended reasoning before answering.", editor: "thinking", defaults: { effort: "medium" } },
+  { key: "planning", label: "Planning", blurb: "Plan multi-step work before acting.", defaults: {} },
+  { key: "memory", label: "Memory", blurb: "Remember across conversations.", defaults: {} },
+  { key: "sub_agents", label: "Sub-agents", blurb: "Delegate sub-tasks to helper agents.", defaults: {} },
+  { key: "dynamic_workflow", label: "Dynamic workflow", blurb: "Build and run multi-step workflows.", defaults: {} },
+  { key: "advisor", label: "Advisor", blurb: "Ask a second model when stuck.", defaults: {} },
+  { key: "tool_search", label: "Tool search", blurb: "Find the right tool among many.", defaults: {} },
+  { key: "compaction", label: "Compaction", blurb: "Summarise long conversations to stay within context.", defaults: {} },
+  { key: "skills", label: "Skills", blurb: "Load reusable skill documents.", defaults: {} },
+  { key: "repo_context", label: "Repo context", blurb: "Understand a code repository.", defaults: {} },
+  { key: "x_search", label: "X search", blurb: "Search posts on X.", defaults: {} },
+  { key: "stack_one", label: "Stack One", blurb: "StackOne integrations.", defaults: {} },
+  { key: "local_stack", label: "Local stack", blurb: "Local service stack access.", defaults: {} },
+  { key: "gaurdrails", label: "Guardrails", blurb: "Constrain what the persona may do.", defaults: {} },
+  { key: "spend_limits", label: "Spend limits", blurb: "Cap token and tool spend.", defaults: {} },
+  { key: "tool_approval", label: "Tool approval", blurb: "Ask before running sensitive tools.", defaults: {} },
+  { key: "capability_creation", label: "Capability creation", blurb: "Let the persona define new capabilities.", defaults: {} },
 ];
 
 // The capabilities every new project's default row carries (nucleus
 // DEFAULT_PROJECT_CAPABILITIES) — also the sensible starting ticks for a new row.
-export const DEFAULT_CAPABILITY_KEYS = ["Filesystem", "Shell", "Web Search", "Web Fetch"] as const;
+export const DEFAULT_CAPABILITY_KEYS = ["filesystem", "shell", "web_search", "web_fetch"] as const;
 
 export const capabilitySpec = (key: string): CapabilitySpec | undefined => CAPABILITIES.find((c) => c.key === key);
 

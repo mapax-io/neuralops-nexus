@@ -270,7 +270,7 @@ const S0: MCPServer = {
   is_internal: true,
   is_protected: true,
   is_default: true,
-  capability_config: { Filesystem: { root_dir: "/nexus/projects/apollo" }, Shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, "Web Search": { local: "duckduckgo" }, "Web Fetch": { local: true } },
+  capability_config: { filesystem: { root_dir: "/nexus/projects/apollo" }, shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, web_search: { local: "duckduckgo" }, web_fetch: { local: true } },
   url: null,
   auth_type: "none",
 };
@@ -319,9 +319,9 @@ describe("McpTab — built-in (internal) capabilities", () => {
     await waitFor(() => expect(posted).not.toBeNull());
     expect(posted).toEqual({
       project_id: "p2", name: "Research caps", is_internal: true,
-      capability_config: expect.objectContaining({ Filesystem: expect.any(Object), "Web Search": { local: "duckduckgo" }, "Web Fetch": { local: true }, Thinking: { effort: "high" } }),
+      capability_config: expect.objectContaining({ filesystem: expect.any(Object), web_search: { local: "duckduckgo" }, web_fetch: { local: true }, thinking: { effort: "high" } }),
     });
-    expect((posted!.capability_config as Record<string, unknown>).Shell).toBeUndefined();
+    expect((posted!.capability_config as Record<string, unknown>).shell).toBeUndefined();
     expect(posted).not.toHaveProperty("url");
     expect(posted).not.toHaveProperty("transport");
     expect(posted).not.toHaveProperty("auth_type");
@@ -360,7 +360,7 @@ describe("McpTab — built-in (internal) capabilities", () => {
     fireEvent.submit(document.getElementById("mce-form")!);
     await waitFor(() => expect(patched).not.toBeNull());
     expect(Object.keys(patched!)).toEqual(["capability_config"]);
-    expect(patched!.capability_config).toEqual({ Filesystem: { root_dir: "/nexus/projects/apollo" }, Shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, "Web Search": { local: "duckduckgo" } });
+    expect(patched!.capability_config).toEqual({ filesystem: { root_dir: "/nexus/projects/apollo" }, shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, web_search: { local: "duckduckgo" } });
   });
 });
 

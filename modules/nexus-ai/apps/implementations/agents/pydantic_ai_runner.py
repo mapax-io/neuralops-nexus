@@ -54,7 +54,6 @@ from apps.schemas.trigger import (
     ToolCallData,
     TriggerJob,
     TriggerSwarmJob,
-    MCPServerConfig,
     MCPArgs,
 )
 
@@ -66,19 +65,6 @@ class PydanticAIRunner(AgentRunner):
         "openai": (OpenAIResponsesModel, OpenAIProvider),
         "anthropic": (AnthropicModel, AnthropicProvider),
     }
-
-    _DEFAULT_CAPABILITY_REGISTRY = [
-        WebSearch(local="duckduckgo"),
-        WebFetch(local=True),
-        Shell(
-            cwd=".",
-            allowed_commands=["ls", "cat", "rg", "touch", "grep", "find", "mkdir"],
-            allow_interactive=True,
-        ),
-        FileSystem(root_dir="."),
-        Thinking('medium'),
-        Planning(),
-    ]
 
     _CAPABILITY_REGISTRY = {
         PydanticAICapabilities.ADVISOR: lambda x: Advisor(**x),
@@ -209,14 +195,6 @@ class PydanticAIRunner(AgentRunner):
         
         for mcp_server in mcp_servers:
             if mcp_server.url:
-                # Route A: HTTP/SSE
-                #
-                # The bearer goes out as an explicit header rather than via
-                # the `authorization_token` convenience field. Both exist on
-                # MCP(), but only this one is unambiguous about what reaches
-                # the wire -- and a server that answered 401 for a token it
-                # had just issued itself (verified by hand with curl) is the
-                # reason to stop trusting the convenience path.
                 mcp_kwargs = {"url": mcp_server.url}
                 if mcp_server.authorization_token:
                     mcp_kwargs["headers"] = {
@@ -225,8 +203,6 @@ class PydanticAIRunner(AgentRunner):
                 resolved.append(MCP(**mcp_kwargs))
                 
             elif mcp_server.command:
-                # Route B: Local stdio subprocess
-                # Instantiate the runtime transport object HERE, right before passing it
                 transport = StdioTransport(
                     command=mcp_server.command,
                     args=mcp_server.args,
