@@ -89,3 +89,25 @@ describe("MessageList — initial landing", () => {
     expect(el.scrollTop).toBeGreaterThan(0); // scrolled to the latest, not stuck at the top
   });
 });
+
+describe("MessageList — a load that drags on says so", () => {
+  it("after ten seconds offers Retry, which asks the chat to reload; gone once the history lands", () => {
+    vi.useFakeTimers();
+    try {
+      const onRetry = vi.fn();
+      const { rerender } = render(<MessageList messages={[]} {...base} loading onRetry={onRetry} />);
+      act(() => { vi.advanceTimersByTime(9_900); });
+      expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(screen.getByText(/still loading/i)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+      expect(onRetry).toHaveBeenCalledTimes(1);
+      rerender(<MessageList messages={[msg("m1")]} {...base} loading={false} onRetry={onRetry} />);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.queryByText(/still loading/i)).not.toBeInTheDocument();
+      expect(screen.getByText("m1")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
