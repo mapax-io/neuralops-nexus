@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as intel from "@/lib/api/intelligence";
@@ -215,16 +216,51 @@ export function useMcpOAuthConnect() {
   });
 }
 
-export function useOpenRouterModels() {
-  return useQuery({
-    queryKey: ["openrouter-models"],
-    queryFn: async () => {
-      const res = await fetch("https://openrouter.ai/api/v1/models");
-      if (!res.ok) throw new Error("Failed to fetch OpenRouter models");
-      const json = await res.json();
-      return json.data as { id: string; name: string }[];
-    },
-    staleTime: 1000 * 60 * 60 * 24, // 24 hours
-    gcTime: 1000 * 60 * 60 * 24, // Keep in memory for 24 hours even if unused
+// Model ids to suggest for a provider. OpenRouter's public catalog is the one
+// key-less source that lists every major provider's current models under a
+// single prefix scheme ("anthropic/claude-sonnet-5"), so it doubles as a
+// directory for the providers served natively. Advisory only: the field stays
+// free text, a failed or slow fetch just means no suggestions, and nothing is
+// asked of the catalog before a model dialog is actually open.
+const CATALOG_URL = "https://openrouter.ai/api/v1/models";
+const CATALOG_PROVIDERS = new Set(["anthropic", "openai", "google"]);
+const CATALOG_TTL_MS = 24 * 60 * 60_000;
+
+export interface CatalogModel {
+  id: string;
+  name: string;
+}
+
+async function fetchCatalog({ signal }: { signal: AbortSignal }): Promise<CatalogModel[]> {
+  const res = await fetch(CATALOG_URL, { signal });
+  if (!res.ok) throw new Error(`The model catalog answered ${res.status}.`);
+  const body = (await res.json()) as { data?: unknown } | null;
+  if (!Array.isArray(body?.data)) throw new Error("The model catalog answered in an unexpected shape.");
+  // A third party's payload: keep only rows shaped the way the field needs.
+  return (body.data as unknown[]).flatMap((row) => {
+    const m = row as { id?: unknown; name?: unknown } | null;
+    return typeof m?.id === "string" && typeof m?.name === "string" ? [{ id: m.id, name: m.name }] : [];
   });
+}
+
+export function useProviderModels(provider: string, enabled = true): CatalogModel[] {
+  const covered = CATALOG_PROVIDERS.has(provider);
+  // Not keyed by server on purpose: the catalog is the same whichever nucleus
+  // the app is connected to.
+  const { data } = useQuery({
+    queryKey: ["model-catalog"],
+    queryFn: fetchCatalog,
+    enabled: enabled && covered,
+    retry: 1,
+    staleTime: CATALOG_TTL_MS,
+    gcTime: CATALOG_TTL_MS,
+  });
+  return useMemo(() => {
+    if (!covered || !data) return [];
+    const prefix = `${provider}/`;
+    // Catalog names read "Anthropic: Claude Sonnet 5" -- the provider is already picked.
+    return data
+      .filter((m) => m.id.startsWith(prefix))
+      .map((m) => ({ id: m.id.slice(prefix.length), name: m.name.replace(/^[^:]+:\s*/, "") }));
+  }, [covered, data, provider]);
 }

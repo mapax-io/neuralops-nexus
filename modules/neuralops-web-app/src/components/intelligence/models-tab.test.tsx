@@ -316,3 +316,96 @@ describe("ModelsTab — the Register button follows every rule", () => {
     expect(posted).toBeNull();
   });
 });
+
+// The model id field offers the provider's current models from OpenRouter's
+// public catalog. The catalog is advisory: the field is free text with or
+// without it, and it must never be swapped out from under a typing user.
+const CATALOG_URL = "https://openrouter.ai/api/v1/models";
+const CATALOG = {
+  data: [
+    { id: "anthropic/claude-sonnet-5", name: "Anthropic: Claude Sonnet 5" },
+    { id: "anthropic/claude-haiku-4.5", name: "Anthropic: Claude Haiku 4.5" },
+    { id: "openai/gpt-5", name: "OpenAI: GPT-5" },
+    { id: "google/gemini-2.5-pro", name: "Google: Gemini 2.5 Pro" },
+  ],
+};
+
+describe("ModelsTab — model id suggestions", () => {
+  it("lists the picked provider's models as the user types, and a click fills the bare id", async () => {
+    server.use(http.get(CATALOG_URL, () => HttpResponse.json(CATALOG)));
+    renderTab();
+    const dialog = await openRegister();
+    const id = within(dialog).getByRole("combobox", { name: "Model id" });
+    expect(id).toBeRequired();
+    fireEvent.focus(id);
+    fireEvent.change(id, { target: { value: "son" } });
+    const list = await screen.findByRole("listbox");
+    expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual(["Claude Sonnet 5claude-sonnet-5"]);
+    fireEvent.mouseDown(within(list).getByRole("option", { name: /sonnet/i }));
+    expect(id).toHaveValue("claude-sonnet-5");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    // The context window follows the picked id like a typed one.
+    expect(within(dialog).getByLabelText(/context window/i)).toHaveValue(200000);
+  });
+
+  it("keeps the same field, and the user's focus, when the catalog arrives mid-typing", async () => {
+    let release: (() => void) | null = null;
+    server.use(http.get(CATALOG_URL, async () => {
+      await new Promise<void>((r) => { release = r; });
+      return HttpResponse.json(CATALOG);
+    }));
+    renderTab();
+    const dialog = await openRegister();
+    const id = within(dialog).getByLabelText("Model id");
+    id.focus();
+    fireEvent.change(id, { target: { value: "claude-s" } });
+    await waitFor(() => expect(release).not.toBeNull());
+    release!();
+    await screen.findByRole("listbox");
+    expect(within(dialog).getByLabelText("Model id")).toBe(id);
+    expect(id).toHaveFocus();
+    expect(id).toHaveValue("claude-s");
+  });
+
+  it("offers nothing for a provider the catalog does not cover, and never asks for the catalog before the dialog opens", async () => {
+    let asked = 0;
+    server.use(http.get(CATALOG_URL, () => { asked += 1; return HttpResponse.json(CATALOG); }));
+    renderTab();
+    await screen.findByRole("button", { name: /register model/i });
+    expect(asked).toBe(0);
+    const dialog = await openRegister();
+    await waitFor(() => expect(asked).toBe(1));
+    fireEvent.change(within(dialog).getByLabelText("Provider"), { target: { value: "ollama" } });
+    const id = within(dialog).getByLabelText("Model id");
+    fireEvent.focus(id);
+    fireEvent.change(id, { target: { value: "l" } });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["the catalog is down", () => new HttpResponse(null, { status: 503 })],
+    ["the catalog answers with an unexpected shape", () => HttpResponse.json({ models: "nope" })],
+  ])("stays a plain field when %s", async (_, answer) => {
+    server.use(http.get(CATALOG_URL, answer));
+    renderTab();
+    const dialog = await openRegister();
+    const id = within(dialog).getByLabelText("Model id");
+    fireEvent.focus(id);
+    fireEvent.change(id, { target: { value: "claude-sonnet-5" } });
+    expect(id).toHaveValue("claude-sonnet-5");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("suggests on edit too, from the model's own provider", async () => {
+    server.use(http.get(CATALOG_URL, () => HttpResponse.json(CATALOG)));
+    renderTab();
+    await screen.findByText("House model");
+    fireEvent.click(screen.getByRole("button", { name: "Edit model House model" }));
+    const dialog = screen.getByRole("dialog");
+    const id = within(dialog).getByRole("combobox", { name: "Model id" });
+    fireEvent.change(id, { target: { value: "haiku" } });
+    const list = await screen.findByRole("listbox");
+    fireEvent.mouseDown(within(list).getByRole("option", { name: /haiku/i }));
+    expect(id).toHaveValue("claude-haiku-4.5");
+  });
+});
