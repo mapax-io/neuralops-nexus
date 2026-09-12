@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, Skeleton } from "@/components/ui/surfaces";
 import type { TransitionItem, UiMessage } from "@/lib/realtime/message-store";
 import { sortKey } from "@/lib/realtime/message-store";
-import { useDelayedLoading } from "@/hooks/use-delayed-loading";
+import { useDelayedLoading, useSlowAfter } from "@/hooks/use-delayed-loading";
 import { useConnectionStore } from "@/stores/connection.store";
 import { MessageItem, SystemSeparator } from "./message-item";
 import type { KnownSets } from "@/lib/composer/mention-ranges";
@@ -50,6 +50,9 @@ export function MessageList({ messages, transitions, loading, loadError, onRetry
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [noMore, setNoMore] = useState(false);
   const showSkeleton = useDelayedLoading(loading);
+  // A history that has not arrived in ten seconds is stuck behind something
+  // (a server stall, a dropped request), not slow: say so and offer a retry.
+  const slow = useSlowAfter(loading);
   const selfId = useConnectionStore((s) => s.connection?.nucleusUserId);
 
   // atBottom is a ref (drives scroll logic without re-rendering); firstUnreadId
@@ -160,6 +163,12 @@ export function MessageList({ messages, transitions, loading, loadError, onRetry
         {[0, 1, 2].map((i) => (
           <div key={i} className="flex gap-3"><Skeleton className="size-8 rounded-full" /><div className="flex-1"><Skeleton className="mb-2 h-3.5 w-40" /><Skeleton className="h-4 w-3/4" /></div></div>
         ))}
+        {slow && (
+          <p role="status" className="mt-2 flex items-center justify-center gap-1 text-center text-[12.5px] text-ink2">
+            Still loading this chat…
+            <Button size="sm" variant="link" onClick={onRetry}>Retry</Button>
+          </p>
+        )}
       </div>
     ) : (
       <div className="flex-1" aria-hidden />
