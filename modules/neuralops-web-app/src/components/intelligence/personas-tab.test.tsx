@@ -317,7 +317,7 @@ describe("CreatePersonaDialog — composition", () => {
   });
 
   it("pre-ticks the project's default built-in capabilities on a new persona, badges them, and lets the user untick", async () => {
-    servers = [mcp("s0", "Apollo Capabilities", { is_internal: true, is_default: true, is_protected: true, url: null, capability_config: { Filesystem: {}, Shell: {} } }), ...servers];
+    servers = [mcp("s0", "Apollo Capabilities", { is_internal: true, is_default: true, is_protected: true, url: null, capability_config: { filesystem: {}, shell: {} } }), ...servers];
     renderTab();
     const dialog = await openCreate();
     fireEvent.change(within(dialog).getByLabelText("Model"), { target: { value: "m1" } });

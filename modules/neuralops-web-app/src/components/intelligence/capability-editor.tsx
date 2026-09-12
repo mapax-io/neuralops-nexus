@@ -125,6 +125,33 @@ export function CapabilityEditor({ idPrefix, value, onChange, onError }: {
   );
 }
 
+function LinesTextarea({ id, value, onChange }: { id: string; value: unknown; onChange: (v: string[]) => void }) {
+  const incoming = lines(value);
+  const [local, setLocal] = useState(incoming);
+  const [lastIncoming, setLastIncoming] = useState(incoming);
+
+  if (incoming !== lastIncoming) {
+    setLastIncoming(incoming);
+    if (incoming !== lines(splitLines(local))) {
+      setLocal(incoming);
+    }
+  }
+
+  return (
+    <textarea
+      id={id}
+      rows={2}
+      value={local}
+      onChange={(e) => {
+        setLocal(e.target.value);
+        onChange(splitLines(e.target.value));
+      }}
+      spellCheck={false}
+      className={areaClass}
+    />
+  );
+}
+
 function CapabilityFields({ kind, idPrefix, args, onArgs }: {
   kind: NonNullable<(typeof CAPABILITIES)[number]["editor"]>;
   idPrefix: string;
@@ -144,7 +171,7 @@ function CapabilityFields({ kind, idPrefix, args, onArgs }: {
             <Label htmlFor={`${idPrefix}-${f}`} className="mb-1 text-[12px]">
               {f === "allowed_patterns" ? "Allowed globs" : f === "denied_patterns" ? "Denied globs" : "Read-only globs"} <span className="text-ink2">(one per line)</span>
             </Label>
-            <textarea id={`${idPrefix}-${f}`} rows={2} value={lines(args[f])} onChange={(e) => onArgs({ [f]: splitLines(e.target.value) })} spellCheck={false} className={areaClass} />
+            <LinesTextarea id={`${idPrefix}-${f}`} value={args[f]} onChange={(v) => onArgs({ [f]: v })} />
           </div>
         ))}
       </div>
