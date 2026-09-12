@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { NexusMark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
+import { useSlowAfter } from "@/hooks/use-delayed-loading";
 import { signOutOnThisDevice } from "@/lib/auth/sign-out";
-
-// Past this, a page held behind hydration/auth is stuck, not loading.
-const SLOW_AFTER_MS = 10_000;
 
 // Full-screen loader for blank pages — a route/segment loading, or a page held
 // behind hydration/auth. Shows the app mark so an empty page never just sits
@@ -18,11 +15,8 @@ export function FullPageLoader({ label = "Loading…", escape }: {
   // Hard navigations on purpose: a fresh document also sheds a stale build.
   escape?: { reload: () => void; signOut: () => Promise<void> };
 }) {
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    const t = window.setTimeout(() => setSlow(true), SLOW_AFTER_MS);
-    return () => window.clearTimeout(t);
-  }, []);
+  // Past this, a page held behind hydration/auth is stuck, not loading.
+  const slow = useSlowAfter(true);
   const reload = escape?.reload ?? (() => window.location.reload());
   // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a hard navigation on purpose: a fresh document also sheds a stale build
   const signOut = escape?.signOut ?? (() => signOutOnThisDevice().finally(() => window.location.assign("/login")));
