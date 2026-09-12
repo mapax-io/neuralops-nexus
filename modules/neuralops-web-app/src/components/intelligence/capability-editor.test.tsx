@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { CapabilityEditor } from "./capability-editor";
-import { defaultCapabilityConfig } from "@/lib/mcp-capabilities";
+import { useState } from "react";
+import { defaultCapabilityConfig, type CapabilityConfig } from "@/lib/mcp-capabilities";
 
 describe("CapabilityEditor — the checklist", () => {
   it("ticks the capabilities present in the value and counts them", () => {
@@ -40,6 +41,22 @@ describe("CapabilityEditor — the checklist", () => {
     expect(screen.getByLabelText("Effort")).toHaveValue("low");
     fireEvent.change(screen.getByLabelText("Effort"), { target: { value: "high" } });
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ thinking: { effort: "high" } }));
+  });
+
+  it("keeps a newline the user just typed in a globs field, so a second line can be started", () => {
+    // The stored list has no trailing empty line, so a value re-derived from
+    // it after every keystroke ate the newline before the next glob was typed.
+    function Host() {
+      const [value, setValue] = useState<CapabilityConfig>({ filesystem: { root_dir: "." } });
+      return <CapabilityEditor idPrefix="t" value={value} onChange={setValue} />;
+    }
+    render(<Host />);
+    const area = screen.getByLabelText(/denied globs/i);
+    fireEvent.change(area, { target: { value: "*.pem" } });
+    fireEvent.change(area, { target: { value: "*.pem\n" } });
+    expect(area).toHaveValue("*.pem\n");
+    fireEvent.change(area, { target: { value: "*.pem\nsecrets/**" } });
+    expect(area).toHaveValue("*.pem\nsecrets/**");
   });
 
   it("lists a capability the catalogue does not know and keeps it verbatim", () => {
