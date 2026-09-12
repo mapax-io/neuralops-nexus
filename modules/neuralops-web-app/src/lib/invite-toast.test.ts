@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const success = vi.fn((..._a: unknown[]): number => 42);
-const dismiss = vi.fn((..._a: unknown[]): void => undefined);
-const error = vi.fn((..._a: unknown[]): void => undefined);
+const success = vi.fn<(...a: unknown[]) => number>(() => 42);
+const dismiss = vi.fn<(...a: unknown[]) => void>(() => undefined);
+const error = vi.fn<(...a: unknown[]) => void>(() => undefined);
 vi.mock("sonner", () => ({ toast: { success: (...a: unknown[]) => success(...a), dismiss: (...a: unknown[]) => dismiss(...a), error: (...a: unknown[]) => error(...a) } }));
-const copyText = vi.fn((..._a: unknown[]): Promise<boolean> => Promise.resolve(true));
+const copyText = vi.fn<(...a: unknown[]) => Promise<boolean>>(() => Promise.resolve(true));
 vi.mock("@/lib/browser", () => ({ copyText: (...a: unknown[]) => copyText(...a), randomId: () => "id" }));
 
 import { notifyInvite } from "./invite-toast";
