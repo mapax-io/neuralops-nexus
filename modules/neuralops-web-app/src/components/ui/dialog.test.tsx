@@ -80,6 +80,41 @@ describe("Dialog", () => {
     expect(closeHost).not.toHaveBeenCalled();
   });
 
+  it("yields Escape to an open combobox inside it: the press is the list's to close, not the dialog's", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    function Harness() {
+      const [expanded, setExpanded] = useState(true);
+      return (
+        <Dialog open onClose={onClose} title="Register model">
+          <input aria-label="Model id" role="combobox" aria-expanded={expanded} aria-controls="suggestions" autoFocus onKeyDown={(e) => { if (e.key === "Escape") setExpanded(false); }} />
+          <ul id="suggestions" role="listbox" hidden={!expanded} />
+        </Dialog>
+      );
+    }
+    render(<Harness />);
+    const box = screen.getByRole("combobox", { name: "Model id" });
+    expect(box).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(box).toHaveAttribute("aria-expanded", "false");
+    // Closed list: the next Escape is the dialog's again.
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("still closes on Escape from an expanded section toggle — only comboboxes own the key", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Invite">
+        <button aria-expanded="true" autoFocus>Engineering</button>
+      </Dialog>,
+    );
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the pinned header to icon, title and close; the description opens the scrolling body", () => {
     render(
       <Dialog open onClose={() => {}} title="New channel" description="Channels split a project by subject." icon={<span data-testid="ic" />}>
