@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useUiStore } from "@/stores/ui.store";
 import { Boxes, Check, Cpu, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
@@ -207,7 +208,9 @@ export function ModelsTab({ embedded }: { embedded?: boolean }) {
 // The model id: free text with the provider's catalog models as suggestions,
 // filtered by what has been typed. Always this one field, whether or not the
 // catalog has answered yet -- swapping the element under a typing user drops
-// their focus. A click on a suggestion picks it without blurring the field.
+// their focus. WAI-ARIA combobox: arrows move a highlight, Enter picks (and
+// never submits the form), Escape closes the list alone (the Dialog yields
+// the key to an open combobox), a click picks without blurring the field.
 // The list is portaled and fixed to the field: the dialog body scrolls, and a
 // list positioned inside it is clipped at the body's edge.
 function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur }: {
@@ -220,6 +223,8 @@ function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur
   onBlur: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // null: nothing highlighted yet -- typing never pre-selects a row.
+  const [active, setActive] = useState<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const listId = useId();
@@ -230,6 +235,8 @@ function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur
     return q ? options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)) : options;
   }, [options, value]);
   const shown = open && filtered.length > 0;
+  const highlight = active === null ? null : Math.min(active, filtered.length - 1);
+  const optionId = highlight === null ? undefined : `${listId}-${highlight}`;
 
   // Below the field when there is room, above it otherwise; capped to what
   // the viewport leaves. Re-measured while open on scroll and resize.
@@ -266,10 +273,42 @@ function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur
     };
   }, [shown, place]);
 
+  useEffect(() => {
+    // Optional call: jsdom has no layout, so no scrollIntoView either.
+    if (shown && optionId) document.getElementById(optionId)?.scrollIntoView?.({ block: "nearest" });
+  }, [shown, optionId]);
+
   const pick = (o: CatalogModel) => {
     onChange(o.id);
     setOpen(false);
   };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!filtered.length) return;
+      e.preventDefault();
+      const last = filtered.length - 1;
+      if (!shown) {
+        openList();
+        setActive(e.key === "ArrowDown" ? 0 : last);
+      } else if (highlight === null) {
+        setActive(e.key === "ArrowDown" ? 0 : last);
+      } else {
+        setActive(e.key === "ArrowDown" ? (highlight === last ? 0 : highlight + 1) : highlight === 0 ? last : highlight - 1);
+      }
+      return;
+    }
+    if (!shown) return;
+    if (e.key === "Enter" && highlight !== null) {
+      e.preventDefault();
+      pick(filtered[highlight]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    } else if (e.key === "Tab" || (e.key === "Enter" && highlight === null)) {
+      setOpen(false);
+    }
+  };
+
   return (
     <div ref={wrapperRef} className="relative">
       <Input
@@ -279,15 +318,21 @@ function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur
         aria-autocomplete="list"
         aria-expanded={shown}
         aria-controls={shown ? listId : undefined}
+        aria-activedescendant={shown ? optionId : undefined}
         aria-invalid={error}
         placeholder={placeholder}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
+          setActive(null);
           openList();
         }}
-        onFocus={openList}
+        onFocus={() => {
+          setActive(null);
+          openList();
+        }}
         onBlur={onBlur}
+        onKeyDown={onKeyDown}
         className="font-mono"
       />
       {shown && anchor && createPortal(
@@ -304,12 +349,13 @@ function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur
               key={o.id}
               id={`${listId}-${i}`}
               role="option"
-              aria-selected={false}
+              aria-selected={i === highlight}
               onMouseDown={(e) => {
                 e.preventDefault(); // keep focus (and the blur-validation) on the field
                 pick(o);
               }}
-              className="flex cursor-pointer flex-col gap-0.5 rounded-[6px] px-2.5 py-1.5 text-left text-sm hover:bg-surface2"
+              onMouseEnter={() => setActive(i)}
+              className={cn("flex cursor-pointer flex-col gap-0.5 rounded-[6px] px-2.5 py-1.5 text-left text-sm", i === highlight && "bg-surface2")}
             >
               <span className="truncate font-medium leading-tight text-ink">{o.name}</span>
               <span className="truncate font-mono text-[11px] leading-tight text-ink2">{o.id}</span>

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
@@ -346,6 +346,34 @@ describe("ModelsTab — model id suggestions", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     // The context window follows the picked id like a typed one.
     expect(within(dialog).getByLabelText(/context window/i)).toHaveValue(200000);
+  });
+
+  it("is keyboard-driven: arrows move the highlight, Enter picks without submitting, Escape closes the list and keeps the dialog", async () => {
+    server.use(http.get(CATALOG_URL, () => HttpResponse.json(CATALOG)));
+    renderTab();
+    const dialog = await openRegister();
+    const id = within(dialog).getByRole("combobox", { name: "Model id" });
+    id.focus();
+    const list = await screen.findByRole("listbox");
+    expect(within(list).getAllByRole("option")).toHaveLength(2);
+    fireEvent.keyDown(id, { key: "ArrowDown" });
+    fireEvent.keyDown(id, { key: "ArrowDown" });
+    const haiku = within(list).getByRole("option", { name: /haiku/i });
+    expect(haiku).toHaveAttribute("aria-selected", "true");
+    expect(id).toHaveAttribute("aria-activedescendant", haiku.id);
+    const submitted = vi.fn((e: Event) => e.preventDefault());
+    document.getElementById("m-form")!.addEventListener("submit", submitted);
+    fireEvent.keyDown(id, { key: "Enter" });
+    expect(id).toHaveValue("claude-haiku-4.5");
+    expect(submitted).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    // Reopen with the arrow, then Escape: the list goes, the dialog stays.
+    fireEvent.keyDown(id, { key: "ArrowDown" });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    fireEvent.keyDown(id, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(id).toHaveFocus();
   });
 
   it("keeps the same field, and the user's focus, when the catalog arrives mid-typing", async () => {

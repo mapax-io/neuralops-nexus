@@ -117,6 +117,10 @@ export function Dialog({ open, onClose, title, description, icon, tone = "neutra
       // (both traps used to fight — Tab could never leave the first control).
       if (openDialogStack[openDialogStack.length - 1] !== stackId) return;
       if (e.key === "Escape") {
+        // An open combobox inside the panel owns Escape: the press closes its
+        // list, not the dialog. Only comboboxes -- expanded tree and section
+        // toggles keep focus while open and must not swallow the key.
+        if (e.target instanceof Element && e.target.closest('[role="combobox"][aria-expanded="true"]')) return;
         e.preventDefault();
         onCloseRef.current();
         return;
