@@ -1,10 +1,10 @@
 export const APP_NAME = "NeuralOps Nexus";
-export const APP_VERSION = "0.18.4";
+export const APP_VERSION = "0.18.5";
 export const APP_STAGE = "Alpha";
 
 // Highest server version this app is known-compatible with. While MAJOR is 0,
 // MINOR drift is treated as breaking; PATCH drift only warns.
-export const COMPATIBLE_SERVER_VERSION = "0.1.2";
+export const COMPATIBLE_SERVER_VERSION = "0.2.0";
 
 export type ServerVersionDrift = "match" | "minor" | "breaking" | "unknown";
 
