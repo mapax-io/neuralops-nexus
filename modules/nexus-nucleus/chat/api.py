@@ -44,6 +44,8 @@ from ninja import Query, Router
 from ninja.errors import HttpError
 
 from authn.auth import SupabaseBearer
+from authn.permissions.checker import PermissionChecker
+from chat.events import mention_refused_event
 from chat.schema import MessageOut, SendMessageIn, SendMessageOut
 from chat import services as chat_svc
 from chat.services import MessageDirectives
@@ -95,6 +97,12 @@ _get_active_session = sync_to_async(chat_svc.get_active_session)
 _create_session = sync_to_async(chat_svc.create_session)
 _close_session = sync_to_async(chat_svc.close_session)
 _save_system_message = sync_to_async(chat_svc.save_system_message)
+_can = sync_to_async(PermissionChecker.can)
+
+
+def _refuse(personas: list, code: str, message: str) -> list[dict]:
+    """The refusals payload for `personas`, one entry each (see MentionRefusalOut)."""
+    return [{"persona_id": str(p.id), "name": p.name, "code": code, "message": message, "resets_at": None} for p in personas]
 
 
 def _get_session_timeout_sync(company) -> int:
@@ -238,6 +246,18 @@ async def send_message(
             mentioned_personas.append(p)
             logger.info("[chat/api] mention=%s resolved persona=%s", name, p)
 
+    # 5b. The right to call personas here. persona.mention is TOPIC-scoped, so
+    #     one check covers every persona in this message. Refused ones are
+    #     reported back to the sender (response + mention_refused event) and
+    #     never reach the worker; the message itself already posted, only the
+    #     AI reply is withheld. With no personas left, a "@X @session" from
+    #     someone without the right opens no session either.
+    refusals: list[dict] = []
+    if mentioned_personas and not await _can(user, "persona.mention", obj=topic):
+        refusals = _refuse(mentioned_personas, "no_right", "You can't call personas in this topic.")
+        logger.warning("[chat/api] mention refused user=%s topic=%s personas=%s", user.id, topic_id, [p.name for p in mentioned_personas])
+        mentioned_personas = []
+
     # 6. Apply session routing priority
 
     if directives.is_session_close:
@@ -301,21 +321,32 @@ async def send_message(
         # Rules 4 + 5: no explicit mention — check session
         active_session = await _get_active_session(user.id, topic.id)
         if active_session:
-            # Rule 4: session active — trigger all session personas
+            # Rule 4: session active — trigger all session personas. The
+            # right is re-checked: a session outlives a role change.
             session_personas = list(active_session.personas.all())
-            logger.warning(
-                "[chat/api] session auto-trigger personas=%s",
-                [p.name for p in session_personas],
-            )
-            await _trigger_personas(session_personas, company, project, topic,
-                                     topic_id, msg, directives.clean_message,
-                                     directives.output_type, directives.swarm)
+            if session_personas and not await _can(user, "persona.mention", obj=topic):
+                refusals = _refuse(session_personas, "no_right", "You can't call personas in this topic.")
+                logger.warning("[chat/api] session auto-trigger refused user=%s topic=%s", user.id, topic_id)
+            else:
+                logger.warning(
+                    "[chat/api] session auto-trigger personas=%s",
+                    [p.name for p in session_personas],
+                )
+                await _trigger_personas(session_personas, company, project, topic,
+                                         topic_id, msg, directives.clean_message,
+                                         directives.output_type, directives.swarm)
         # Rule 5: no mention, no session — human-only message, nothing to do
+
+    if refusals:
+        asyncio.create_task(chat_svc.publish_async(
+            centrifugo_channel, mention_refused_event(msg["id"], str(user.id), refusals),
+        ))
 
     # 7. Return immediately
     return {
         "message": msg,
         "channel": centrifugo_channel,
+        "refusals": refusals,
     }
 
 
