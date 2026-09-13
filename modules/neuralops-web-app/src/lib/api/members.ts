@@ -60,7 +60,8 @@ export interface MemberAccess {
 export const getMemberAccess = (userId: string) => apiJson<MemberAccess>(`/api/v1/members/${userId}/access/`);
 
 // Full replace, same rule as an invite: no grants = server-wide at `role`;
-// otherwise exactly those, at `role`. Server refuses the owner and yourself.
+// otherwise exactly those, at `role`. Server refuses the owner, yourself and,
+// unless you are the owner, another admin.
 export const setMemberAccess = (userId: string, body: { role: string; grants: Grant[] }) =>
   apiJson<MemberAccess>(`/api/v1/members/${userId}/access/`, { method: "PUT", body: JSON.stringify(body) });
 

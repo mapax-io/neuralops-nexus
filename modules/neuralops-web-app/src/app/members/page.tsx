@@ -40,6 +40,9 @@ export default function MembersPage() {
   // just against the right rather than the role string.
   const canInvite = can("company.invite_member", companyScope());
   const canRemove = can("company.remove_member", companyScope());
+  // Peers are off limits: an admin manages members and viewers, but only the
+  // owner reshapes or removes another admin. The server enforces the same.
+  const isOwner = connection?.isOwner === true;
 
   useEffect(() => {
     if (!hydrated) return;
@@ -151,9 +154,10 @@ export default function MembersPage() {
                 const name = m.email.split("@")[0];
                 const avatar = absolutizeMedia(m.avatar);
                 const isSelf = !!selfEmail && m.email.toLowerCase() === selfEmail.toLowerCase();
-                const removable = canRemove && !isSelf && m.role !== "owner"; // server enforces the same
-                // Same gate as inviting; the server refuses the owner and yourself.
-                const editable = canInvite && !isSelf && m.role !== "owner";
+                const peer = m.role === "admin" && !isOwner;
+                const removable = canRemove && !isSelf && m.role !== "owner" && !peer; // server enforces the same
+                // Same gate as inviting; the server refuses the owner, yourself and (unless you own the server) an admin.
+                const editable = canInvite && !isSelf && m.role !== "owner" && !peer;
                 return (
                   <li key={m.user_id} className="group flex items-center gap-3.5 border-b border-line px-4 py-3 last:border-b-0">
                     <span className="flex size-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-stone-500 to-stone-700 text-[13px] font-bold text-white">
