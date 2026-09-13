@@ -8,7 +8,7 @@ curl -fsSL https://raw.githubusercontent.com/mapax-io/neuralops-nexus/dev/neural
 curl -fsSL https://raw.githubusercontent.com/mapax-io/neuralops-nexus/dev/neuralops/app.env.example -o neuralops/app.env
 
 # Generate per-deployment secrets (once, ever)
-docker run --rm noamanfaisal/neuralops:0.1.1 init-secrets > neuralops/secrets.env
+docker run --rm noamanfaisal/neuralops:0.2.0 init-secrets > neuralops/secrets.env
 
 # Fill in neuralops/infra.env (POSTGRES_PASSWORD) and neuralops/app.env (NEURALOPS_SERVER_URL), then:
 ENVF="--env-file neuralops/infra.env --env-file neuralops/app.env --env-file neuralops/secrets.env"

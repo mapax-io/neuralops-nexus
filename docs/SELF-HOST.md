@@ -63,7 +63,7 @@ generated fresh per install — nothing shared with anyone else's deployment,
 and nothing baked into the public image:
 
 ```bash
-docker run --rm noamanfaisal/neuralops:0.1.2 init-secrets > neuralops/secrets.env
+docker run --rm noamanfaisal/neuralops:0.2.0 init-secrets > neuralops/secrets.env
 cat neuralops/secrets.env   # confirm 5 lines
 ```
 
@@ -108,7 +108,7 @@ avoids hitting the failure at all.
 | `COMPOSE_PROFILES` | Already set to `production` — pulls prebuilt images, no build step. |
 | `POSTGRES_DB` / `POSTGRES_USER` | Plain identifiers, not secrets — working defaults, safe to leave as-is or change for minor extra hardening. `POSTGRES_PASSWORD` is **not** set here anymore — it comes from `neuralops/secrets.env` (step 2). |
 | `NGINX_HOST_PORT` / `POSTGRES_HOST_PORT` / `REDIS_HOST_PORT` / `NEXUS_AI_HOST_PORT` | Optional — defaults (8095/5495/6395/8020) are fine unless something else on the box already uses them. Only `NGINX_HOST_PORT` needs to be reachable from outside; see the port note below. |
-| `NEURALOPS_IMAGE` | Optional — defaults to `noamanfaisal/neuralops:latest`. **Set it to a pinned tag** (e.g. `noamanfaisal/neuralops:0.1.2`) if you want upgrades to happen only when you choose, rather than on any `docker compose pull`. Use the same value in step 2's `init-secrets` command. |
+| `NEURALOPS_IMAGE` | Optional — defaults to `noamanfaisal/neuralops:latest`. **Set it to a pinned tag** (e.g. `noamanfaisal/neuralops:0.2.0`) if you want upgrades to happen only when you choose, rather than on any `docker compose pull`. Use the same value in step 2's `init-secrets` command. |
 
 > **Only expose `NGINX_HOST_PORT`.** The compose file also publishes Postgres
 > (5495), Redis (6395), and nexus-ai (8020) to the host for debugging. Those

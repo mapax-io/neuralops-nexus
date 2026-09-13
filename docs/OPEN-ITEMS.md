@@ -194,25 +194,6 @@ the sections get a "superseded by PR #99" banner until then.
 
 ---
 
-## `NEURALOPS_VERSION` not bumped for the PR #99 API break
-
-**Where:** `neuralops/Dockerfile` (`NEURALOPS_VERSION="0.1.2"`), consumed by the
-web-app's `COMPATIBLE_SERVER_VERSION` drift check in `src/lib/version.ts`.
-
-PR #99 is a breaking API change for clients (`/ai-models/` → `/model-configs/`,
-`/agents/` gone, persona payloads reshaped), but the image version stayed 0.1.2
-(the dev profile reports `dev`, which the check ignores). The web-app was
-adapted to the new contract and its `COMPATIBLE_SERVER_VERSION` deliberately
-left at 0.1.2: bumping it alone would flag every 0.1.2 production server as
-"breaking" even though 0.1.2 images built from the current `dev` DO speak the
-new contract. When the image version is bumped (0.2.0 would be right under the
-"MINOR drift is breaking while MAJOR is 0" rule), move the frontend constant in
-the same change.
-
-**Decision needed:** release owner's call — when and to what.
-
----
-
 ## Backend fields the AI worker never reads (do not build UI for these yet)
 
 **Where:** `modules/nexus-nucleus/internal/api.py` (`ModelInternal`, `PromptInternal`,
@@ -436,7 +417,6 @@ pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-0
 capability template from nucleus instead of copying it; restore the compose commands;
 decide whether to backfill existing projects.
 
-
 ---
 
 ## Scoped permissions: three registry decisions, deliberately not changed
@@ -537,7 +517,6 @@ exactly the way `team_api.py` already is. (The `# TODO: send email` at
 `members_services.py:76` is likewise dead: the live path sends invitation email
 via `_send_invite_email()` since PR #110.)
 
-
 ---
 
 ## `manage.py test_chat_flow` cannot run — stale import after the AIModel rename
@@ -563,7 +542,6 @@ search-and-replace.
 **Decision needed:** update the command to `ModelConfig` and re-verify what it
 asserts, or retire it if `test_persona_flow` + `test_agent_flow` already cover
 the same ground.
-
 
 ---
 

@@ -108,7 +108,7 @@ RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
 # the same COPY of the repo, so there's no such thing as a real deployed
 # state where they're at different versions from each other -- one build,
 # one tag, one version. This is also the exact string the frontend compares
-# itself against (see modules/neuralops-react-app/src/lib/version.ts,
+# itself against (see modules/neuralops-web-app/src/lib/version.ts,
 # COMPATIBLE_SERVER_VERSION) -- that parser expects a plain MAJOR.MINOR(.PATCH)
 # string, so keep bumps here in sync with that file, and with
 # NEURALOPS_IMAGE in neuralops/infra.env.example, every time this changes.
@@ -146,7 +146,7 @@ RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
 ENV SUPABASE_URL="https://xgfsxikypxjhqlutiepw.supabase.co" \
   SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhnZnN4aWt5cHhqaHFsdXRpZXB3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNDg3MDcsImV4cCI6MjA5NzgyNDcwN30.2_OUNTHuKSeDJh6S-aUW16IqvDTmew8ZcFuKvFkt3Dk" \
   NEURALOPS_PORTAL_URL="https://neuralops-nexus-demo.mapax.io" \
-  NEURALOPS_VERSION="0.1.2"
+  NEURALOPS_VERSION="0.2.0"
 
 COPY --from=nucleus-builder /opt/venv/nucleus-env /opt/venv/nucleus-env
 COPY --from=nexus-ai-builder /opt/venv/nexus-ai-env /opt/venv/nexus-ai-env
