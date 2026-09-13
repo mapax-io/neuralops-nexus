@@ -43,6 +43,15 @@ def _resolve_project(request, project_id: str):
     return company, user, project
 
 
+def _require_team_manager(user, project):
+    # Who may add, invite and remove people on a project: the right the app's
+    # team dialog already draws its controls from. A dedicated
+    # project.invite_member / project.remove_member pair is the documented
+    # follow-up (docs/CONCEPTS-AND-ROLES.md, Part 5).
+    if not PermissionChecker.can(user, "project.archive", obj=project):
+        raise HttpError(403, "You don't have permission to manage this project's team.")
+
+
 def _project_out(project) -> dict:
     channels = project.channel_items.filter(is_active=True).order_by("name")
     return {
@@ -227,6 +236,7 @@ def list_team(request, project_id: str):
 @router.post("/{project_id}/team/", response=TeamMemberOut)
 def add_member(request, project_id: str, payload: AddMemberRequest):
     company, user, project = _resolve_project(request, project_id)
+    _require_team_manager(user, project)
     try:
         return svc.add_member(company, project, payload.user_id, payload.role)
     except ValueError as exc:
@@ -236,6 +246,7 @@ def add_member(request, project_id: str, payload: AddMemberRequest):
 @router.post("/{project_id}/team/invite/", response=InviteToProjectOut)
 def invite_to_project(request, project_id: str, payload: InviteToProjectRequest):
     company, user, project = _resolve_project(request, project_id)
+    _require_team_manager(user, project)
     try:
         return svc.invite_to_project(
             company=company, inviter=user, project=project,
@@ -262,6 +273,7 @@ def available_personas(request, project_id: str):
 @router.delete("/{project_id}/team/{user_id}/")
 def remove_team_member(request, project_id: str, user_id: str):
     company, user, project = _resolve_project(request, project_id)
+    _require_team_manager(user, project)
     try:
         return svc.remove_team_member(company, project, user_id, user)
     except ValueError as exc:
@@ -271,6 +283,8 @@ def remove_team_member(request, project_id: str, user_id: str):
 @router.delete("/server/members/{user_id}/", tags=["Server"])
 def remove_from_server(request, user_id: str):
     company, user = _resolve(request)
+    if not PermissionChecker.can(user, "company.remove_member", company=company):
+        raise HttpError(403, "You don't have permission to remove members.")
     try:
         return svc.remove_user_from_server(company, user_id, user)
     except ValueError as exc:

@@ -671,3 +671,50 @@ class PeerRuleTests(PeerFixture):
         self.assertFalse(ProjectMember.objects.filter(project=self.p1, user=self.sara).exists())
         self.assertEqual(add_member(self.company, self.p1, str(self.sara.id), "viewer")["role"], "viewer")
 
+
+class TeamRouteGateTests(PeerFixture):
+    """The routes that used to call straight into the services now ask the checker first."""
+
+    def call(self, user, method: str, path: str, body: dict | None = None):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            kwargs = {"HTTP_AUTHORIZATION": "Bearer t"}
+            if body is not None:
+                kwargs.update(data=body, content_type="application/json")
+            return getattr(Client(), method)(path, **kwargs)
+
+    def test_removing_someone_from_the_server_needs_the_remove_member_right(self):
+        r = self.call(self.sara, "delete", f"/api/v1/projects/server/members/{self.bea.id}/")
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertTrue(self.is_member(self.bea))
+        r = self.call(self.owner, "delete", f"/api/v1/projects/server/members/{self.bea.id}/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertFalse(self.is_member(self.bea))
+
+    def test_the_peer_rule_reaches_the_server_removal_route(self):
+        r = self.call(self.adam, "delete", f"/api/v1/projects/server/members/{self.bea.id}/")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("Only the owner can remove another admin.", r.json()["detail"])
+        self.assertTrue(self.is_member(self.bea))
+
+    def test_team_add_invite_and_remove_need_the_manage_right(self):
+        p = f"/api/v1/projects/{self.p1.id}/team/"
+        self.assertEqual(self.call(self.sara, "post", p, {"user_id": str(self.bea.id)}).status_code, 403)
+        self.assertEqual(self.call(self.sara, "post", p + "invite/", {"email": "new@acme.test", "scope": "project"}).status_code, 403)
+        self.assertFalse(ProjectMember.objects.filter(project=self.p1, user=self.bea).exists())
+        self.assertFalse(Invitation.objects.filter(email="new@acme.test").exists())
+        r = self.call(self.adam, "post", p, {"user_id": str(self.bea.id)})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self.call(self.sara, "delete", p + f"{self.bea.id}/").status_code, 403)
+        self.assertTrue(ProjectMember.objects.get(project=self.p1, user=self.bea).is_active)
+        r = self.call(self.owner, "delete", p + f"{self.bea.id}/")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertFalse(ProjectMember.objects.get(project=self.p1, user=self.bea).is_active)
+
+    def test_the_manage_right_is_the_one_the_team_dialog_already_uses(self):
+        # A project-scoped Admin holds project.archive on their project and nothing company-wide.
+        pm = User.objects.create_user(username="pm", email="pm@acme.test", password="x")
+        CompanyAccess.objects.create(company=self.company, user=pm, role="admin", invited_by=self.owner)
+        apply_grants(self.company, pm, [self.whole(self.p1)], "admin", self.owner)
+        self.assertEqual(self.call(pm, "post", f"/api/v1/projects/{self.p1.id}/team/", {"user_id": str(self.sara.id)}).status_code, 200)
+        self.assertEqual(self.call(pm, "post", f"/api/v1/projects/{self.p2.id}/team/", {"user_id": str(self.sara.id)}).status_code, 404)
