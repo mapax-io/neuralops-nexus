@@ -461,6 +461,25 @@ each changes what existing users can see — so none was touched.
 
 ---
 
+## `test_chat_flow` cannot run, and breaks `manage.py test chat`
+
+**Where:** `modules/nexus-nucleus/chat/management/commands/test_chat_flow.py`.
+
+The command still imports `AIModel` from `nucleus.models`, a model that went with the
+`AIAgent`/`AIModel` collapse in #99, so `manage.py test_chat_flow` fails at import. Because
+the file is named `test_*.py`, Django's test discovery for the `chat` app also imports it
+and reports an `ImportError` alongside the real tests (run `manage.py test chat.tests` to
+avoid it). Found on 2026-09-14 while adding the `persona.mention` tests; the send path is
+covered by `chat/tests.py` (`MentionRightTests`) instead. Fixing the command means
+re-pointing its fixtures at `ModelConfig`/`Persona`.
+
+Same day, same cause class: `intelligence/tests.py` `ClientOAuthTests` (8 tests) error in
+`setUp` with `null value in column "project_id" of relation "intelligence_mcp_server"` — the
+fixture predates #104's project FK on `MCPServer`. `manage.py test intelligence` has been red
+since then; nothing in the chat or scheduling changes touches it.
+
+---
+
 ## Scoped permissions: rights the UI needs that the registry does not have
 
 **Where:** `modules/nexus-nucleus/authn/permissions/rights.py`,
