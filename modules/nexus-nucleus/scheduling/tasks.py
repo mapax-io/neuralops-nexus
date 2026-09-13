@@ -30,12 +30,13 @@ logger = logging.getLogger(__name__)
 
 @shared_task(name="scheduling.tasks.fire_persona_schedule")
 def fire_persona_schedule(schedule_id: str) -> None:
+    from authn.permissions.checker import PermissionChecker
     from nucleus.models import PersonaSchedule
     from chat import services as chat_svc
 
     schedule = (
         PersonaSchedule.objects.filter(id=schedule_id, is_active=True)
-        .select_related("topic", "project", "company", "persona", "persona__identity_user")
+        .select_related("topic", "project", "company", "persona", "persona__identity_user", "created_by")
         .first()
     )
     if not schedule:
@@ -56,6 +57,31 @@ def fire_persona_schedule(schedule_id: str) -> None:
     persona = schedule.persona
 
     channel_name = chat_svc.topic_channel(str(topic.id))
+
+    # The creator is the actor of every fire -- a schedule is their standing
+    # @mention, so it stops when they can no longer call personas here (or are
+    # gone). Announced topic-wide like every other schedule event, and recorded
+    # on the schedule so the list shows why it did not run.
+    actor = schedule.created_by
+    if actor is None:
+        skip = "its creator no longer has an account here"
+    elif not PermissionChecker.can(actor, "persona.mention", obj=topic):
+        skip = f"{actor.email or actor.username} can no longer call personas in this topic"
+    else:
+        skip = None
+    if skip:
+        logger.warning("[scheduling] fire_persona_schedule: schedule %s skipped: %s", schedule_id, skip)
+        sys_msg = chat_svc.save_system_message(
+            company=company, project=project, topic=topic,
+            content=f"Scheduled run of @{persona.name} skipped: {skip}.",
+        )
+        chat_svc.publish(channel_name, {**sys_msg, "type": "message"})
+        PersonaSchedule.objects.filter(id=schedule.id).update(
+            last_run_at=timezone.now(),
+            last_status=PersonaSchedule.RunStatus.FAILED,
+            last_error=f"Skipped: {skip}."[:2000],
+        )
+        return
 
     try:
         if schedule.trigger_visible:
