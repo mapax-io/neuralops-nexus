@@ -30,6 +30,7 @@ scopes; Owner exists at the Company level only.
 - As a Company Admin, I want to create/delete AI models (including setting their API keys) and personas, so that I can build out the company's AI infrastructure -- these stay Company-scope only, since a model create/delete touches a real provider key and a persona is otherwise unrestricted (see below, still Company-scope-only for now).
 - As a Company Admin, I want to create/update/delete AI agents and MCP servers in any project, and attach existing AI models to any project, so that I can manage AI infrastructure company-wide without needing to also hold a Project Admin assignment on every project.
 - As a Company Admin, I should not be able to delete the company or remove the Owner — those stay Owner-only.
+- As a Company Admin, I should not be able to change, re-scope or remove another Admin — peers are off limits; only the Owner reshapes Admins (promoting a Member to Admin stays mine to do).
 
 ### Project Admin
 - As a Project Admin, I want to create channels and topics inside my project, so that the team can organize their work.

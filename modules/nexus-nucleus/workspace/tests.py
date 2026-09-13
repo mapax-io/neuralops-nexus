@@ -595,3 +595,79 @@ class MemberAccessApiTests(InviteGrantsFixture):
         r = self.call(self.owner, "put", f"/api/v1/members/{self.owner.id}/access/", {"role": "member", "grants": []})
         self.assertEqual(r.status_code, 400)
         self.assertIn("own access", r.json()["detail"])
+
+
+class PeerFixture(InviteGrantsFixture):
+    """Two server-wide admins, Adam and Bea, next to the owner and Sara."""
+
+    def setUp(self):
+        super().setUp()
+        admin_role = Role.objects.get(company=self.company, name="Admin")
+        self.adam = User.objects.create_user(username="adam", email="adam@acme.test", password="x")
+        self.bea = User.objects.create_user(username="bea", email="bea@acme.test", password="x")
+        for u in (self.adam, self.bea):
+            CompanyAccess.objects.create(company=self.company, user=u, role="admin", invited_by=self.owner)
+            PermissionChecker.assign_role(u, admin_role, self.company, granted_by=self.owner)
+
+    def role_of(self, user) -> str:
+        return CompanyAccess.objects.get(company=self.company, user=user).role
+
+    def is_member(self, user) -> bool:
+        return CompanyAccess.objects.filter(company=self.company, user=user, is_active=True).exists()
+
+
+class PeerRuleTests(PeerFixture):
+    """
+    Peers are off limits: an admin manages members and viewers, and may still
+    promote a member to admin, but only the owner changes, re-scopes or
+    removes another admin.
+    """
+
+    def test_an_admin_cannot_change_another_admins_access(self):
+        with self.assertRaisesMessage(ValueError, "Only the owner can change another admin's access."):
+            set_member_access(self.company, self.adam, str(self.bea.id), "member", [])
+        with self.assertRaisesMessage(ValueError, "Only the owner can change another admin's access."):
+            set_member_access(self.company, self.adam, str(self.bea.id), "admin", [self.whole(self.p1)])
+        self.assertEqual(self.role_of(self.bea), "admin")
+        self.assertIn(("company", str(self.company.id)), self.scopes(self.bea))
+
+    def test_the_owner_can_change_an_admins_access(self):
+        set_member_access(self.company, self.owner, str(self.bea.id), "member", [])
+        self.assertEqual(self.role_of(self.bea), "member")
+
+    def test_an_admin_still_manages_members_and_may_promote_one(self):
+        set_member_access(self.company, self.adam, str(self.sara.id), "admin", [])
+        self.assertEqual(self.role_of(self.sara), "admin")
+        # ...and from then on Sara is a peer, out of Adam's reach.
+        with self.assertRaisesMessage(ValueError, "Only the owner can change another admin's access."):
+            set_member_access(self.company, self.adam, str(self.sara.id), "viewer", [])
+
+    def test_an_admin_cannot_remove_another_admin_from_the_server(self):
+        from workspace.services import remove_member, remove_user_from_server
+        with self.assertRaisesMessage(ValueError, "Only the owner can remove another admin."):
+            remove_member(self.company, self.adam, str(self.bea.id))
+        with self.assertRaisesMessage(ValueError, "Only the owner can remove another admin."):
+            remove_user_from_server(self.company, str(self.bea.id), self.adam)
+        self.assertTrue(self.is_member(self.bea))
+        remove_member(self.company, self.owner, str(self.bea.id))
+        self.assertFalse(self.is_member(self.bea))
+
+    def test_an_admin_cannot_remove_another_admin_from_a_project_team(self):
+        from workspace.services import add_member, remove_team_member
+        add_member(self.company, self.p1, str(self.bea.id), "member")
+        add_member(self.company, self.p1, str(self.sara.id), "member")
+        with self.assertRaisesMessage(ValueError, "Only the owner can remove another admin from a project."):
+            remove_team_member(self.company, self.p1, str(self.bea.id), self.adam)
+        self.assertTrue(ProjectMember.objects.get(project=self.p1, user=self.bea).is_active)
+        remove_team_member(self.company, self.p1, str(self.sara.id), self.adam)  # a member: fine
+        remove_team_member(self.company, self.p1, str(self.bea.id), self.owner)
+        self.assertFalse(ProjectMember.objects.get(project=self.p1, user=self.bea).is_active)
+
+    def test_add_member_takes_only_a_real_non_owner_project_role(self):
+        from workspace.services import add_member
+        for bad in ("owner", "boss", ""):
+            with self.assertRaisesMessage(ValueError, "Invalid role"):
+                add_member(self.company, self.p1, str(self.sara.id), bad)
+        self.assertFalse(ProjectMember.objects.filter(project=self.p1, user=self.sara).exists())
+        self.assertEqual(add_member(self.company, self.p1, str(self.sara.id), "viewer")["role"], "viewer")
+

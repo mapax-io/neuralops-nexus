@@ -449,6 +449,9 @@ each changes what existing users can see — so none was touched.
 2. **Owner and Admin hold identical rights.** Admin's explicit list in
    `DEFAULT_ROLE_RIGHTS` covers all 33 registry codes, so the two roles differ
    in name only. Worth deciding before anything relies on the distinction.
+   One behavior now does rely on the role *name* (2026-09-13): only the Owner
+   changes, re-scopes or removes an Admin — `_refuse_peer()` in
+   `workspace/services.py` compares `CompanyAccess.role`, not a right.
 3. **There is no channel scope.** `ScopeType` has only company / project /
    topic, so "member of one channel" cannot be expressed — the nearest options
    are every topic in it (which misses topics created later) or the whole

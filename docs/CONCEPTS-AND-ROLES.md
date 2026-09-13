@@ -607,7 +607,12 @@ action; replacing an Owner means re-running `manage.py create_owner`, not a
   Agents and MCP Servers in *any* project, and attach existing models to any
   project — company-wide reach without needing a separate assignment per
   project; `schedule.manage` across any topic. Cannot delete the company or
-  remove the Owner.
+  remove the Owner. **Peers are off limits:** an Admin manages Members and
+  Viewers (and may promote a Member to Admin), but only the Owner changes,
+  re-scopes or removes another Admin — enforced by `_refuse_peer()` in
+  `workspace/services.py` on the access editor, both server-removal routes
+  and project-team removal (a role-name check, so an Admin scoped to one
+  project counts as an Admin here too).
 - *Project Admin*: create channels/topics inside their own project;
   create/update/delete Agents and MCP Servers *in their own project only*
   (this is what Part 2's Project-scope table reflects — deliberately moved
