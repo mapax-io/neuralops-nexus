@@ -29,6 +29,20 @@ const setScrolledUp = (el: HTMLElement) => {
 beforeAll(() => { window.HTMLElement.prototype.scrollIntoView = vi.fn(); }); // jsdom lacks it
 afterEach(cleanup);
 
+describe("MessageList — refused mentions", () => {
+  it("says under the sender's message which persona did not answer and why", () => {
+    const m = { ...msg("m1", "me"), refusals: [
+      { persona_id: "p1", name: "Sara", code: "no_right", message: "You can't call personas in this topic.", resets_at: null },
+      { persona_id: "p2", name: "Bob", code: "calls_limit", message: "You've used 5 of 5 calls today.", resets_at: "2026-09-15T00:00:00Z" },
+    ] };
+    render(<MessageList messages={[m]} {...base} />);
+    const notes = screen.getAllByRole("status");
+    expect(notes[0]).toHaveTextContent("@Sara didn't answer: You can't call personas in this topic.");
+    expect(notes[1]).toHaveTextContent("@Bob didn't answer: You've used 5 of 5 calls today.");
+    expect(notes[1]).toHaveTextContent(/resets/i);
+  });
+});
+
 describe("MessageList — new-messages pill", () => {
   it("appears when someone else's message arrives while scrolled up, and clears on click", async () => {
     const initial = [msg("m0"), msg("m1")];

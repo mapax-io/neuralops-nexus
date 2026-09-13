@@ -1,4 +1,4 @@
-import type { ChatEvent, WireMessage } from "./events";
+import type { ChatEvent, MentionRefusal, WireMessage } from "./events";
 
 // Pure reducer for a topic's live message state. Encodes every server quirk:
 // start-events may arrive twice per id (merge, never clobber), deltas can
@@ -25,6 +25,8 @@ export interface UiMessage {
   lastActivity: number;
   /** Server-supplied wording for the tool in flight, shown while streaming. */
   activity?: string | null;
+  /** Personas in this (own, human) message that will not answer, and why. */
+  refusals?: MentionRefusal[];
 }
 
 export interface TransitionItem {
@@ -49,12 +51,22 @@ export interface ChatState {
   transitions: TransitionItem[];
   typing: Record<string, TypingActor>;
   transitionSeq: number;
+  /** Refusal notes whose message has not landed yet (event before message). */
+  pendingRefusals: Record<string, MentionRefusal[]>;
 }
 
 export const HUMAN_TYPING_TTL_MS = 4_000;
 export const STREAM_STALL_MS = 90_000;
 
-export const initialChatState = (): ChatState => ({ messages: {}, transitions: [], typing: {}, transitionSeq: 0 });
+export const initialChatState = (): ChatState => ({ messages: {}, transitions: [], typing: {}, transitionSeq: 0, pendingRefusals: {} });
+
+// Pin the refusal notes to the sender's message; park them until it lands.
+export function attachRefusals(state: ChatState, id: string, refusals: MentionRefusal[]): ChatState {
+  if (refusals.length === 0) return state;
+  const existing = state.messages[id];
+  if (!existing) return { ...state, pendingRefusals: { ...state.pendingRefusals, [id]: refusals } };
+  return { ...state, messages: { ...state.messages, [id]: { ...existing, refusals } } };
+}
 
 function fromWire(m: WireMessage): UiMessage {
   return {
@@ -98,7 +110,8 @@ export function applyHistory(state: ChatState, wire: WireMessage[], force = fals
     // its next deltas onto the snapshot; rarer and self-corrects on done.
     const existing = messages[m.id];
     if (existing?.isStreaming && !force) continue;
-    messages[m.id] = fromWire(m);
+    // A refusal note is client-side state the server snapshot cannot carry.
+    messages[m.id] = existing?.refusals ? { ...fromWire(m), refusals: existing.refusals } : fromWire(m);
   }
   return { ...state, messages };
 }
@@ -109,7 +122,17 @@ export function applyEvent(state: ChatState, ev: ChatEvent, now: number, selfUse
       const msg = fromWire(ev.message);
       const typing = { ...state.typing };
       if (msg.senderId) delete typing[`human:${msg.senderId}`];
-      return { ...state, typing, messages: { ...state.messages, [msg.id]: { ...state.messages[msg.id], ...msg } } };
+      const next = { ...state, typing, messages: { ...state.messages, [msg.id]: { ...state.messages[msg.id], ...msg } } };
+      const parked = state.pendingRefusals[msg.id];
+      if (!parked) return next;
+      const pendingRefusals = { ...state.pendingRefusals };
+      delete pendingRefusals[msg.id];
+      return attachRefusals({ ...next, pendingRefusals }, msg.id, parked);
+    }
+
+    case "refused": {
+      if (!selfUserId || ev.actorUserId !== selfUserId) return state; // someone else's note
+      return attachRefusals(state, ev.id, ev.refusals);
     }
 
     case "typing": {

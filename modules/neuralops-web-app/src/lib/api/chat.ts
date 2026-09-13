@@ -1,5 +1,5 @@
 import { apiJson } from "./client";
-import type { WireMessage } from "@/lib/realtime/events";
+import type { WireMessage, MentionRefusal } from "@/lib/realtime/events";
 
 const topicPath = (p: string, c: string, t: string) => `/api/v1/projects/${p}/channels/${c}/topics/${t}`;
 
@@ -9,8 +9,10 @@ export function listMessages(projectId: string, channelId: string, topicId: stri
   return apiJson<WireMessage[]>(`${topicPath(projectId, channelId, topicId)}/messages/?${qs}`);
 }
 
+// `refusals`: personas in the message that will not answer (the message itself
+// always posts). Absent on servers from before the mention right was enforced.
 export function sendMessage(projectId: string, channelId: string, topicId: string, content: string) {
-  return apiJson<{ message: WireMessage; channel: string }>(`${topicPath(projectId, channelId, topicId)}/messages/`, {
+  return apiJson<{ message: WireMessage; channel: string; refusals?: MentionRefusal[] }>(`${topicPath(projectId, channelId, topicId)}/messages/`, {
     method: "POST",
     body: JSON.stringify({ content }),
   });

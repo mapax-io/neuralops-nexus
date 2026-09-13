@@ -20,6 +20,16 @@ export interface WireMessage {
   created_at: string;
 }
 
+// A persona in the sender's message that will not answer, and why. The same
+// shape rides the send response (lib/api/chat.ts) and the mention_refused event.
+export interface MentionRefusal {
+  persona_id: string;
+  name: string;
+  code: string;
+  message: string;
+  resets_at?: string | null;
+}
+
 export type ChatEvent =
   | { kind: "message"; message: WireMessage }
   | { kind: "typing"; userId: string; name: string; avatar: string | null }
@@ -30,7 +40,9 @@ export type ChatEvent =
   | { kind: "transition"; streamId: string; content: string; transitionType?: string; fromPersona?: string; toPersona?: string }
   // What the persona is doing right now (a tool call). `label` is the server's
   // wording — the client renders it verbatim and keeps no tool vocabulary.
-  | { kind: "activity"; id: string; tool: string; label: string };
+  | { kind: "activity"; id: string; tool: string; label: string }
+  // Addressed to one person: `id` is THEIR message; every other client drops it.
+  | { kind: "refused"; id: string; actorUserId: string; refusals: MentionRefusal[] };
 
 type Raw = Record<string, unknown>;
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
@@ -70,6 +82,11 @@ export function parseEvent(raw: unknown): ChatEvent | null {
       return { kind: "done", id, content: str(r.content), outputType: str(r.output_type), renderAs: str(r.render_as) };
     case "message_error":
       return { kind: "error", id, content: str(r.content) };
+    case "mention_refused": {
+      const actor = str(r.actor_user_id);
+      if (!actor || !Array.isArray(r.refusals)) return null;
+      return { kind: "refused", id, actorUserId: actor, refusals: r.refusals as MentionRefusal[] };
+    }
     case "swarm_transition": {
       const meta = (typeof r.metadata === "object" && r.metadata !== null ? r.metadata : {}) as Raw;
       return {

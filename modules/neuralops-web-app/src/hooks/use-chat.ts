@@ -7,10 +7,11 @@ import { listMessages, sendMessage } from "@/lib/api/chat";
 import { ApiError } from "@/lib/api/client";
 import { renameTopic } from "@/lib/api/workspace";
 import { markdownToPlain } from "@/lib/markdown";
-import { parseEvent, type ChatEvent, type WireMessage } from "@/lib/realtime/events";
+import { parseEvent, type ChatEvent, type MentionRefusal, type WireMessage } from "@/lib/realtime/events";
 import {
   applyEvent,
   applyHistory,
+  attachRefusals,
   expireTyping,
   initialChatState,
   markStalled,
@@ -44,7 +45,7 @@ type Action =
   | { t: "history"; wire: WireMessage[]; force?: boolean }
   | { t: "event"; ev: ChatEvent; now: number; self: string | null }
   | { t: "tick"; now: number }
-  | { t: "local"; wire: WireMessage; now: number }
+  | { t: "local"; wire: WireMessage; now: number; refusals?: MentionRefusal[] }
   | { t: "reset" };
 
 function reducer(state: ChatState, a: Action): ChatState {
@@ -61,8 +62,10 @@ function reducer(state: ChatState, a: Action): ChatState {
       return applyEvent(state, a.ev, a.now, a.self);
     case "tick":
       return markStalled(expireTyping(state, a.now), a.now);
-    case "local":
-      return applyEvent(state, { kind: "message", message: a.wire }, a.now, null);
+    case "local": {
+      const next = applyEvent(state, { kind: "message", message: a.wire }, a.now, null);
+      return a.refusals?.length ? attachRefusals(next, a.wire.id, a.refusals) : next;
+    }
     case "reset":
       return initialChatState();
   }
@@ -201,7 +204,10 @@ export function useChat(projectId?: string, channelId?: string, topicId?: string
         toast.error(e instanceof Error ? e.message : "Message failed to send.");
         throw e;
       });
-      dispatch({ t: "local", wire: out.message, now: Date.now() });
+      dispatch({ t: "local", wire: out.message, now: Date.now(), refusals: out.refusals ?? [] });
+      // The note stays under the message; the toast is for eyes that had
+      // already moved on.
+      for (const r of out.refusals ?? []) toast.warning(`@${r.name} didn't answer`, { description: r.message });
       // Auto-generated chats take their name from the FIRST message —
       // immediately, not only after an AI reply.
       if (renamedRef.current !== topicId && titleRef.current && AUTO_TITLE_RE.test(titleRef.current)) {

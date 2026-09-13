@@ -264,10 +264,22 @@ export const MessageItem = memo(function MessageItem({ message, known }: { messa
         {message.isStalled && (
           <p className="mt-1 text-[12px] text-warn">This response has gone quiet — it may have failed on the server. Mention the persona again to retry.</p>
         )}
+        {message.refusals?.map((r) => (
+          <p key={r.persona_id} role="status" className="mt-1 text-[12px] text-warn">
+            @{r.name} didn&apos;t answer: {r.message}
+            {r.resets_at && ` Resets ${formatReset(r.resets_at)}.`}
+          </p>
+        ))}
       </div>
     </article>
   );
 }, (prev, next) => prev.message === next.message);
+
+// When a limit lifts, in the reader's own clock ("Sep 15, 00:00").
+const formatReset = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
 
 // Error bubble — for an MCP OAuth-token expiry the backend forwards the
 // "needs to be reconnected" sentence verbatim; we detect it and offer a
