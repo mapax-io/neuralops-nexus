@@ -208,6 +208,8 @@ services:
     env_file:
       - ./neuralops/secrets.env
     environment:
+      # Optional per-request debug file (prompt, response, usage) -- see app.env.example.
+      - AI_REQUEST_DEBUG_LOG=${AI_REQUEST_DEBUG_LOG:-}
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-fastembed}
@@ -420,6 +422,8 @@ services:
     env_file:
       - ./neuralops/secrets.env
     environment:
+      # Optional per-request debug file (prompt, response, usage) -- see app.env.example.
+      - AI_REQUEST_DEBUG_LOG=${AI_REQUEST_DEBUG_LOG:-}
       - CHROMA_HOST=chromadb-dev
       - CHROMA_PORT=8000
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-fastembed}

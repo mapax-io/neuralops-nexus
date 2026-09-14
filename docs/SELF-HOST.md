@@ -135,6 +135,16 @@ in `neuralops/app.env.example` if you're curious why. There's also no AI
 provider key here on purpose — you add that from inside the chat after
 connecting (step 8), not as an env var.
 
+### Optional: a debug file of every model call
+
+Set `AI_REQUEST_DEBUG_LOG` in `neuralops/app.env` to a path inside the nexus-ai
+container (for example `/nexus/logs/ai/ai-requests.jsonl`) and every model call
+appends one JSON line there: who triggered it, which persona and model served
+it, the full prompt as sent, the response and the usage. The database keeps
+counts only (the AI models tab's usage and budgets come from those), never
+prompts or responses. The file rolls over to `<path>.1` past 50 MB. Leave it
+unset unless you are debugging a persona.
+
 ## Step 5 — Bring the stack up
 
 ```bash

@@ -601,6 +601,46 @@ verification.
 
 ---
 
+## 22. Model Usage & Monthly Budgets (2026-09-14)
+
+**Decision (owner):** every registered model shows what it used and can carry a monthly budget in
+tokens and in dollars, independent, first one reached wins. **Warn at 90 %, stop at 100 %.** A stopped
+model refuses every persona on it until the month rolls over (UTC calendar month) or the budget is
+changed. Full prompts and responses are **never stored in the database**; the worker's
+`AI_REQUEST_DEBUG_LOG` file is the only place they go.
+
+**How it works:**
+- The worker (nexus-ai) reports what a run consumed on its `message_done` event (`usage`: input,
+  output, cache read/write tokens, requests, tool calls, and `cost_usd` from pydantic-ai's price table
+  when it knows the model). Swarm hops each carry their own `usage` and `hop`.
+- Nucleus writes one `AIRequestLog` row per call from that event (`chat/services.py:_record_run`) with
+  the **actor** (the human whose message or schedule caused it -- `actor_user_id` threaded through
+  `send_message`, the schedule fire and the trigger payload), the topic, the persona and the
+  `ModelConfig` row that served it. Failed runs get an error row with no usage. The worker's
+  `POST /internal/ai-request-logs/` still exists for its own error reports and no longer stores
+  prompt/response.
+- Budgets live on `ModelConfig` (`monthly_token_budget`, `monthly_cost_budget_usd`; 0 clears). After
+  every recorded call `intelligence/usage.py:evaluate_budget` posts a system message in the topic where
+  it happened at 90 % and at 100 %, once per month each (`budget_warned_at` / `budget_stopped_at`).
+  Changing a budget clears both markers, so the stop lifts and the notices can post again.
+- The dollar side enforces **only when every call this month carried a price** (`cost_complete`); one
+  unpriced call and it stops enforcing, so a budget never bites on a number that is known to be short.
+  The token side always enforces.
+- At trigger time (`chat/api.py:_gate_personas`) a persona on a stopped model is refused with code
+  `model_budget` and `resets_at` = next month; the message posts, only the AI reply is withheld (§ the
+  refusals contract from the mention right). Schedules skip with the same reason.
+- `GET /model-configs/usage/` returns month / all-time totals and the budget state for every visible
+  model in one call; `GET /model-configs/{id}/provider/` returns OpenRouter's own limit / usage /
+  remaining for a key (5-minute cache); other providers expose no balance and get a 404.
+
+**Files:** `nucleus/models/intelligence.py` (`AIRequestLog`, `ModelConfig`), migration
+`0018_usage_and_budgets`, `intelligence/usage.py`, `chat/services.py`, `chat/api.py`,
+`scheduling/tasks.py`, `internal/api.py`, `intelligence/{schema,services,api}.py`; nexus-ai
+`apps/schemas/trigger.py` (`UsageData`), `apps/implementations/agents/pydantic_ai_runner.py`,
+`apps/managers/{agentic_manager,nucleus_client}.py`, `apps/core/{config,debug_log}.py`.
+
+---
+
 ## 21. Before Starting Any Task
 
 1. Read this file (`DECISIONS.md`)
