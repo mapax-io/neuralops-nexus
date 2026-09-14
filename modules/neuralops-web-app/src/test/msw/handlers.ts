@@ -9,4 +9,7 @@ export const handlers: RequestHandler[] = [
   // The model id suggestions come from a third-party catalog; empty by default
   // so a suite that does not care sees the plain field.
   http.get("https://openrouter.ai/api/v1/models", () => HttpResponse.json({ data: [] })),
+  // Usage and budgets per model: an older server has no such route, and the
+  // cards must render exactly as before against one.
+  http.get("*/api/v1/model-configs/usage/", () => new HttpResponse(null, { status: 404 })),
 ];

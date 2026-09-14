@@ -24,8 +24,45 @@ export interface ModelConfig {
   config: Record<string, unknown>;
   is_active: boolean;
   has_api_key: boolean;
+  // Monthly budgets (UTC month), null = none of that kind. Warn at 90 %, stop at 100 %.
+  monthly_token_budget?: number | null;
+  monthly_cost_budget_usd?: number | null;
   project_ids?: string[]; // projects the config is attached to (visibility gate)
 }
+
+// What a model used, from the server's request log. cost_usd is null when
+// nothing in the window was priced; cost_complete says whether every call was.
+export interface UsageTotals {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  total: number;
+  requests: number;
+  calls: number;
+  cost_usd: number | null;
+  cost_complete: boolean;
+}
+export interface ModelBudget {
+  tokens: number | null;
+  cost_usd: number | null;
+  tokens_remaining: number | null;
+  cost_remaining: number | null;
+  state: "ok" | "warn" | "stopped";
+  fraction: number | null;
+  resets_at: string; // next UTC month start
+}
+export interface ModelUsage {
+  month: UsageTotals;
+  all_time: UsageTotals;
+  budget: ModelBudget;
+}
+// One call for the whole tab, keyed by config id. 404 on a server from before usage tracking.
+export const listModelUsage = () => apiJson<Record<string, ModelUsage>>(`/api/v1/model-configs/usage/`);
+
+// The provider's own balance for the key — OpenRouter reports one, the others 404.
+export interface ProviderRemaining { limit: number | null; usage: number | null; remaining: number | null }
+export const getModelProvider = (id: string) => apiJson<ProviderRemaining>(`/api/v1/model-configs/${id}/provider/`);
 
 // Compact form embedded in a persona.
 export interface ModelConfigRef {
@@ -52,6 +89,8 @@ export interface ModelConfigCreate {
   supports_streaming?: boolean;
   supports_vision?: boolean;
   supports_audio?: boolean;
+  monthly_token_budget?: number;      // 0 = none
+  monthly_cost_budget_usd?: number;   // 0 = none
 }
 
 export const createModelConfig = (payload: ModelConfigCreate) =>
@@ -72,6 +111,8 @@ export interface ModelConfigPatch {
   supports_streaming?: boolean;
   supports_vision?: boolean;
   supports_audio?: boolean;
+  monthly_token_budget?: number;      // 0 clears
+  monthly_cost_budget_usd?: number;   // 0 clears
 }
 
 export const patchModelConfig = (configId: string, payload: ModelConfigPatch) =>

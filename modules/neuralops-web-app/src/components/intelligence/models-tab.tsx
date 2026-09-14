@@ -11,15 +11,16 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
 import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
-import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useProviderModels, useSetModelConfigProject, type CatalogModel } from "@/hooks/use-intelligence";
+import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, useModelProvider, useModelUsage, usePatchModelConfig, useProviderModels, useSetModelConfigProject, type CatalogModel } from "@/hooks/use-intelligence";
 import { companyScope } from "@/lib/permissions";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjects } from "@/hooks/use-workspace";
-import type { ModelConfig, ModelConfigPatch } from "@/lib/api/intelligence";
+import type { ModelConfig, ModelConfigPatch, ModelUsage, UsageTotals } from "@/lib/api/intelligence";
+import { formatTokens, formatUsd } from "@/lib/format";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { CardGrid, Chip, EntityCard, ListState, TabShell, Toolbar } from "./shared";
 
-// The server's five providers (ModelConfig.Provider). The model id is the BARE
+// The server's six providers (ModelConfig.Provider). The model id is the BARE
 // name — the server composes "provider:model" itself and rejects a prefix.
 // `base`: whether an API base URL applies (required for anything OpenAI-shaped
 // behind a custom endpoint, optional for a local Ollama, unused natively).
@@ -73,6 +74,7 @@ export function ModelsTab({ embedded }: { embedded?: boolean }) {
   const canRemove = can("model_config.delete", companyScope());
   const canAttach = canAnyProject("model_config.attach");
   const { data: models, isLoading, error, refetch } = useModelConfigs();
+  const { data: usage } = useModelUsage();
   const [creating, setCreating] = useState(false);
   // One-shot intent from /add-* slash commands (ui.store.intelCreate).
   const intelCreate = useUiStore((u) => u.intelCreate);
@@ -133,6 +135,8 @@ export function ModelsTab({ embedded }: { embedded?: boolean }) {
                 <>
                   {m.has_api_key ? <Chip tone="ok">key set</Chip> : m.provider === "ollama" ? <Chip>local</Chip> : <Chip tone="warn">no key</Chip>}
                   {m.supports_tools && <Chip tone="accent">tools</Chip>}
+                  {usage?.[m.id]?.budget.state === "warn" && <Chip tone="warn">90% of budget</Chip>}
+                  {usage?.[m.id]?.budget.state === "stopped" && <Chip tone="crit">budget reached</Chip>}
                 </>
               }
               body={m.description ?? undefined}
@@ -142,6 +146,7 @@ export function ModelsTab({ embedded }: { embedded?: boolean }) {
                   {m.api_base && <span title={m.api_base} className="max-w-full truncate font-mono">{m.api_base}</span>}
                   <span>ctx {Math.round(m.context_window / 1000)}k</span>
                   <span>{m.project_ids?.length ?? 0} {(m.project_ids?.length ?? 0) === 1 ? "project" : "projects"}</span>
+                  <UsageMeta model={m} usage={usage?.[m.id]} />
                 </>
               }
               actions={(canEdit || canRemove || canAttach) && (
@@ -396,6 +401,8 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   // on a persona whose model lacks it, and defaults a new model to "no tools".
   const [supportsTools, setSupportsTools] = useState(true);
   const [licence, setLicence] = useState(false);
+  const [tokenBudget, setTokenBudget] = useState("");
+  const [costBudget, setCostBudget] = useState("");
   const prov = providerOf(provider) ?? PROVIDERS[0];
   const showsBase = prov.base !== "none";
   const ctxKnown = defaultContextWindow(provider, modelId) !== DEFAULT_CONTEXT_WINDOW;
@@ -414,6 +421,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
     key: [apiKey, prov.needsKey && !apiKey.trim() ? "This provider needs an API key." : null],
     ctx: [contextWindow, validateContext(contextWindow)],
     licence: [licence, licence ? null : "You must accept the provider's terms to register the model."],
+    budgets: validateBudget(tokenBudget) ?? validateBudget(costBudget),
   });
 
   const reset = () => {
@@ -463,6 +471,8 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
       // Streaming, vision and audio are left to the server defaults — nothing
       // downstream reads them yet — and stay adjustable in the edit dialog.
       supports_tools: supportsTools,
+      ...(tokenBudget.trim() ? { monthly_token_budget: Math.round(Number(tokenBudget)) } : {}),
+      ...(costBudget.trim() ? { monthly_cost_budget_usd: Number(costBudget) } : {}),
     });
   };
 
@@ -550,6 +560,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
             <FieldError>{form.error("base")}</FieldError>
           </div>
         )}
+        <BudgetFields idPrefix="m" tokens={tokenBudget} cost={costBudget} onTokens={setTokenBudget} onCost={setCostBudget} />
         </DialogSection>
         <DialogSection title="Details">
         <div>
@@ -597,6 +608,8 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
   const [apiBase, setApiBase] = useState(model.api_base ?? "");
   const [description, setDescription] = useState(model.description ?? "");
   const [contextWindow, setContextWindow] = useState(String(model.context_window));
+  const [tokenBudget, setTokenBudget] = useState(model.monthly_token_budget != null ? String(model.monthly_token_budget) : "");
+  const [costBudget, setCostBudget] = useState(model.monthly_cost_budget_usd != null ? String(model.monthly_cost_budget_usd) : "");
   const [caps, setCaps] = useState<Capabilities>({
     supports_tools: model.supports_tools, supports_streaming: model.supports_streaming,
     supports_vision: model.supports_vision, supports_audio: model.supports_audio,
@@ -615,6 +628,7 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
     id: [modelId, validateModelId(modelId)],
     base: [apiBase, showsBase ? validateBase(apiBase) : null],
     ctx: [contextWindow, validateContext(contextWindow)],
+    budgets: validateBudget(tokenBudget) ?? validateBudget(costBudget),
   });
 
   const submit = (e: React.FormEvent) => {
@@ -630,6 +644,9 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
       ...(description.trim() !== (model.description ?? "") ? { description: description.trim() } : {}),
       ...(Number(contextWindow) !== model.context_window ? { context_window: Number(contextWindow) } : {}),
       ...Object.fromEntries(CAPABILITIES.filter((c) => caps[c.key] !== model[c.key]).map((c) => [c.key, caps[c.key]])),
+      // Budgets: blank means none, sent as 0 so the server clears it.
+      ...(budgetValue(tokenBudget, true) !== (model.monthly_token_budget ?? 0) ? { monthly_token_budget: budgetValue(tokenBudget, true) } : {}),
+      ...(budgetValue(costBudget) !== (model.monthly_cost_budget_usd ?? 0) ? { monthly_cost_budget_usd: budgetValue(costBudget) } : {}),
     };
     if (Object.keys(payload).length === 0) return onClose(); // nothing changed
     patch.mutate({ id: model.id, payload });
@@ -712,6 +729,7 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
             <FieldError>{form.error("base")}</FieldError>
           </div>
         )}
+        <BudgetFields idPrefix="me" tokens={tokenBudget} cost={costBudget} onTokens={setTokenBudget} onCost={setCostBudget} />
         </DialogSection>
         <DialogSection title="Details">
         <div>
@@ -793,5 +811,87 @@ function ModelProjectsDialog({ modelId, onClose }: { modelId: string; onClose: (
       </ul>
       )}
     </Dialog>
+  );
+}
+
+// ── Usage & budgets ───────────────────────────────────────────────────────────
+
+const isOpenRouter = (m: ModelConfig) => m.provider === "openai_compatible" && /openrouter\.ai/i.test(m.api_base ?? "");
+const validateBudget = (v: string): string | null =>
+  v.trim() === "" || (Number.isFinite(Number(v)) && Number(v) >= 0) ? null : "A budget is a number, or blank for none.";
+// Blank = none, sent as 0 so the server clears it; tokens are whole.
+const budgetValue = (v: string, whole = false): number => (v.trim() === "" ? 0 : whole ? Math.round(Number(v)) : Number(v));
+const resetLabel = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+const costLabel = (t: UsageTotals) =>
+  t.cost_usd === null ? "cost unknown" : t.cost_complete ? formatUsd(t.cost_usd) : `${formatUsd(t.cost_usd)} (partial)`;
+
+// The month's usage and each budget as a bar, in the card's meta row. Nothing
+// at all on a server without usage tracking, or for a model with neither
+// usage nor a provider balance to show.
+function UsageMeta({ model, usage }: { model: ModelConfig; usage?: ModelUsage }) {
+  const openRouter = isOpenRouter(model);
+  if (!usage && !openRouter) return null;
+  return (
+    <div className="flex basis-full flex-col gap-1.5 pt-1">
+      {usage && (usage.month.calls === 0
+        ? <span>No usage yet this month.</span>
+        : <span>{formatTokens(usage.month.total)} tokens · {costLabel(usage.month)} this month</span>)}
+      {usage?.budget.tokens != null && (
+        <BudgetBar label="Token budget" used={usage.month.total} budget={usage.budget.tokens} state={usage.budget.state}
+          note={`${formatTokens(usage.budget.tokens_remaining ?? 0)} tokens left of ${formatTokens(usage.budget.tokens)}`} />
+      )}
+      {usage?.budget.cost_usd != null && (
+        <BudgetBar label="Dollar budget" used={usage.month.cost_usd ?? 0} budget={usage.budget.cost_usd}
+          state={usage.month.cost_complete ? usage.budget.state : "ok"}
+          note={usage.month.cost_complete ? `${formatUsd(usage.budget.cost_remaining ?? 0)} left of ${formatUsd(usage.budget.cost_usd)}` : "not enforced: a call this month had no price"} />
+      )}
+      {usage?.budget.state === "stopped" && (
+        <span className="text-crit">Personas on it won&apos;t answer until {resetLabel(usage.budget.resets_at)} (UTC) or the budget is raised.</span>
+      )}
+      {openRouter && <ProviderRemaining id={model.id} />}
+    </div>
+  );
+}
+
+function BudgetBar({ label, used, budget, state, note }: { label: string; used: number; budget: number; state: ModelUsage["budget"]["state"]; note: string }) {
+  const pct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : 0;
+  const tone = state === "stopped" ? "bg-crit" : state === "warn" ? "bg-warn" : "bg-accent";
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-1.5 w-full overflow-hidden rounded-full bg-surface2">
+        <div className={cn("h-full rounded-full transition-[width]", tone)} style={{ width: `${pct}%` }} />
+      </div>
+      <span>{label}: {note}</span>
+    </div>
+  );
+}
+
+// OpenRouter's own balance for the key. Silent on any failure: it is a courtesy
+// line, and the provider's API is not ours.
+function ProviderRemaining({ id }: { id: string }) {
+  const { data } = useModelProvider(id);
+  if (!data || data.remaining == null) return null;
+  return <span>{formatUsd(data.remaining)} left{data.limit != null && ` of ${formatUsd(data.limit)}`} at the provider</span>;
+}
+
+// Two optional numbers in the Access section, same rule stated once.
+function BudgetFields({ idPrefix, tokens, cost, onTokens, onCost }: { idPrefix: string; tokens: string; cost: string; onTokens: (v: string) => void; onCost: (v: string) => void }) {
+  const problem = validateBudget(tokens) ?? validateBudget(cost);
+  return (
+    <div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <Label htmlFor={`${idPrefix}-budget-tokens`}>Monthly token budget <span className="text-ink2">(optional)</span></Label>
+          <Input id={`${idPrefix}-budget-tokens`} type="number" min={0} step={1} inputMode="numeric" placeholder="e.g. 2000000" value={tokens} aria-invalid={!!validateBudget(tokens)} onChange={(e) => onTokens(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor={`${idPrefix}-budget-cost`}>Monthly dollar budget <span className="text-ink2">(optional)</span></Label>
+          <Input id={`${idPrefix}-budget-cost`} type="number" min={0} step="0.01" inputMode="decimal" placeholder="e.g. 25" value={cost} aria-invalid={!!validateBudget(cost)} onChange={(e) => onCost(e.target.value)} />
+        </div>
+      </div>
+      {problem ? <FieldError>{problem}</FieldError> : (
+        <p className="mt-1.5 text-[12px] text-ink2">Warns at 90%, stops at 100%; resets on the 1st (UTC). Dollars count only when every call this month could be priced.</p>
+      )}
+    </div>
   );
 }
