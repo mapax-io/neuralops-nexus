@@ -27,6 +27,7 @@ const PROVIDERS = [
   { value: "anthropic", label: "Anthropic", placeholder: "claude-sonnet-5", needsKey: true, base: "none" },
   { value: "openai", label: "OpenAI", placeholder: "gpt-5", needsKey: true, base: "none" },
   { value: "google", label: "Google (Gemini)", placeholder: "gemini-2.0-flash", needsKey: true, base: "none" },
+  { value: "deepseek", label: "DeepSeek", placeholder: "deepseek-chat", needsKey: true, base: "none" },
   { value: "ollama", label: "Ollama (local)", placeholder: "llama3", needsKey: false, base: "optional" },
   { value: "openai_compatible", label: "OpenAI-compatible endpoint", placeholder: "your-model-name", needsKey: false, base: "required" },
 ] as const;

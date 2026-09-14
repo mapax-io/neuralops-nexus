@@ -24,9 +24,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from fastmcp.client.transports import StdioTransport
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIChatModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai_harness import (
     Advisor,
     CapabilityCreation,
@@ -66,6 +67,8 @@ class PydanticAIRunner(AgentRunner):
     _MODEL_REGISTRY = {
         "openai": (OpenAIResponsesModel, OpenAIProvider),
         "anthropic": (AnthropicModel, AnthropicProvider),
+        "deepseek": (OpenAIChatModel, DeepSeekProvider),
+        "openai_compatible": (OpenAIChatModel, OpenAIProvider),
     }
 
     _CAPABILITY_REGISTRY = {

@@ -223,7 +223,7 @@ export function useMcpOAuthConnect() {
 // free text, a failed or slow fetch just means no suggestions, and nothing is
 // asked of the catalog before a model dialog is actually open.
 const CATALOG_URL = "https://openrouter.ai/api/v1/models";
-const CATALOG_PROVIDERS = new Set(["anthropic", "openai", "google"]);
+const CATALOG_PROVIDERS = new Set(["anthropic", "openai", "google", "deepseek"]);
 const CATALOG_TTL_MS = 24 * 60 * 60_000;
 
 export interface CatalogModel {
