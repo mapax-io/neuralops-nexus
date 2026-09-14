@@ -132,12 +132,13 @@ export function ListState({ loading, error, onRetry, empty, emptyTitle, emptyHin
   return null;
 }
 
-export function Chip({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "accent" | "ok" | "warn" }) {
+export function Chip({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "accent" | "ok" | "warn" | "crit" }) {
   const tones = {
     neutral: "border-line bg-surface2 text-ink2",
     accent: "border-accent/30 bg-accent/10 text-accent",
     ok: "border-ok/30 bg-ok/10 text-ok",
     warn: "border-warn/30 bg-warn/10 text-warn",
+    crit: "border-crit/30 bg-crit/10 text-crit",
   } as const;
   return <span className={`rounded-full border px-2 py-px text-[10.5px] font-semibold ${tones[tone]}`}>{children}</span>;
 }

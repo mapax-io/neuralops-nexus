@@ -280,6 +280,100 @@ describe("ModelsTab — edit", () => {
   });
 });
 
+const USAGE_URL = `${URL}usage/`;
+const totals = (total: number, cost: number | null, complete = true) => ({ input: total, output: 0, cache_read: 0, cache_write: 0, total, requests: total ? 1 : 0, calls: total ? 1 : 0, cost_usd: cost, cost_complete: complete });
+const usageOf = (over: Record<string, unknown> = {}) => ({
+  month: totals(900, 0.5), all_time: totals(4_200, 2.1),
+  budget: { tokens: 1000, cost_usd: null, tokens_remaining: 100, cost_remaining: null, state: "warn", fraction: 0.9, resets_at: "2026-10-01T00:00:00+00:00" },
+  ...over,
+});
+
+describe("ModelsTab — usage and budgets", () => {
+  it("shows this month's tokens and cost, and a budget bar in warn tone at 90%", async () => {
+    server.use(http.get(USAGE_URL, () => HttpResponse.json({ m1: usageOf() })));
+    renderTab();
+    await screen.findByText("House model");
+    expect(await screen.findByText(/900 tokens · \$0\.50 this month/)).toBeInTheDocument();
+    const bar = screen.getByRole("progressbar", { name: /token budget/i });
+    expect(bar).toHaveAttribute("aria-valuenow", "90");
+    expect(screen.getByText("90% of budget")).toBeInTheDocument();
+    expect(screen.getByText(/100 tokens left/)).toBeInTheDocument();
+  });
+
+  it("a stopped model says so and when it resets", async () => {
+    server.use(http.get(USAGE_URL, () => HttpResponse.json({ m1: usageOf({ month: totals(1_200, 0.9), budget: { tokens: 1000, cost_usd: null, tokens_remaining: 0, cost_remaining: null, state: "stopped", fraction: 1.2, resets_at: "2026-10-01T00:00:00+00:00" } }) })));
+    renderTab();
+    await screen.findByText("House model");
+    expect(await screen.findByText("budget reached")).toBeInTheDocument();
+    expect(screen.getByText(/personas on it won't answer until 1 Oct/i)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: /token budget/i })).toHaveAttribute("aria-valuenow", "100");
+  });
+
+  it("says when nothing has run yet, and when the cost is not known", async () => {
+    server.use(http.get(USAGE_URL, () => HttpResponse.json({ m1: usageOf({ month: totals(0, null), budget: { tokens: null, cost_usd: null, tokens_remaining: null, cost_remaining: null, state: "ok", fraction: null, resets_at: "2026-10-01T00:00:00+00:00" } }) })));
+    const { unmount } = renderTab();
+    await screen.findByText("House model");
+    expect(await screen.findByText(/no usage yet/i)).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    unmount();
+    server.use(http.get(USAGE_URL, () => HttpResponse.json({ m1: usageOf({ month: totals(300, null, false) }) })));
+    renderTab();
+    await screen.findByText("House model");
+    expect(await screen.findByText(/300 tokens · cost unknown this month/)).toBeInTheDocument();
+  });
+
+  it("renders the cards as before against a server without the usage route", async () => {
+    renderTab();
+    await screen.findByText("House model");
+    await waitFor(() => expect(screen.getByText("anthropic:claude-sonnet-5")).toBeInTheDocument());
+    expect(screen.queryByText(/this month/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no usage yet/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the provider's own remaining balance for an OpenRouter key only", async () => {
+    const router: ModelConfig = { ...HOUSE, id: "m3", name: "Router model", provider: "openai_compatible", api_base: "https://openrouter.ai/api/v1", qualified_id: "openai_compatible:x" };
+    server.use(
+      http.get(URL, () => HttpResponse.json([HOUSE, router])),
+      http.get(`${URL}m3/provider/`, () => HttpResponse.json({ limit: 10, usage: 2.5, remaining: 7.5 })),
+      http.get(`${URL}m1/provider/`, () => new HttpResponse(null, { status: 404 })),
+    );
+    renderTab();
+    await screen.findByText("Router model");
+    expect(await screen.findByText(/\$7\.50 left of \$10\.00 at the provider/)).toBeInTheDocument();
+    expect(screen.getAllByText(/at the provider/)).toHaveLength(1);
+  });
+
+  it("registers a model with its budgets and patches a cleared budget as 0", async () => {
+    renderTab();
+    await screen.findByText("House model");
+    const dialog = await openRegister();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Budgeted" } });
+    fireEvent.change(within(dialog).getByLabelText("Model id"), { target: { value: "claude-haiku-4-5" } });
+    fireEvent.change(within(dialog).getByLabelText(/api key/i), { target: { value: "sk-1" } });
+    fireEvent.change(within(dialog).getByLabelText(/monthly token budget/i), { target: { value: "1000000" } });
+    fireEvent.change(within(dialog).getByLabelText(/monthly dollar budget/i), { target: { value: "25" } });
+    fireEvent.click(within(dialog).getByLabelText(/accept the model provider/i));
+    fireEvent.submit(document.getElementById("m-form")!);
+    await waitFor(() => expect(posted).not.toBeNull());
+    expect(posted).toMatchObject({ monthly_token_budget: 1000000, monthly_cost_budget_usd: 25 });
+  });
+
+  it("prefills the budgets on edit and sends 0 to clear one", async () => {
+    server.use(http.get(URL, () => HttpResponse.json([{ ...HOUSE, monthly_token_budget: 1000, monthly_cost_budget_usd: 5 }])));
+    renderTab();
+    await screen.findByText("House model");
+    fireEvent.click(screen.getByRole("button", { name: "Edit model House model" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText(/monthly token budget/i)).toHaveValue(1000);
+    expect(within(dialog).getByLabelText(/monthly dollar budget/i)).toHaveValue(5);
+    fireEvent.change(within(dialog).getByLabelText(/monthly token budget/i), { target: { value: "" } });
+    fireEvent.change(within(dialog).getByLabelText(/monthly dollar budget/i), { target: { value: "7.5" } });
+    fireEvent.submit(document.getElementById("me-form")!);
+    await waitFor(() => expect(patched).not.toBeNull());
+    expect(patched).toEqual({ monthly_token_budget: 0, monthly_cost_budget_usd: 7.5 });
+  });
+});
+
 describe("ModelsTab — the Register button follows every rule", () => {
   it("stays disabled until name, model id, key and terms are given; a visited field explains itself live", async () => {
     renderTab();

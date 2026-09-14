@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as intel from "@/lib/api/intelligence";
+import { ApiError } from "@/lib/api/client";
 import { useConnectionStore } from "@/stores/connection.store";
 
 function useGate() {
@@ -15,6 +16,32 @@ function useGate() {
 export function useModelConfigs() {
   const { serverUrl, enabled } = useGate();
   return useQuery({ queryKey: ["model-configs", serverUrl], queryFn: intel.listModelConfigs, enabled });
+}
+
+// Usage and budgets, one query for every visible model. A server from before
+// usage tracking has no route: that reads as "no usage data", never as an error.
+export function useModelUsage() {
+  const { serverUrl, enabled } = useGate();
+  return useQuery({
+    queryKey: ["model-usage", serverUrl],
+    enabled,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async (): Promise<Record<string, intel.ModelUsage>> => {
+      try {
+        return await intel.listModelUsage();
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return {};
+        throw e;
+      }
+    },
+  });
+}
+
+// The provider's own balance for one key; only asked for models whose provider reports one.
+export function useModelProvider(id: string) {
+  const { serverUrl, enabled } = useGate();
+  return useQuery({ queryKey: ["model-provider", serverUrl, id], enabled, retry: false, staleTime: 5 * 60_000, queryFn: () => intel.getModelProvider(id) });
 }
 
 export function useMcpServers() {
@@ -49,7 +76,7 @@ function useInvalidate(...keys: string[]) {
 }
 
 export function useCreateModelConfig(onDone?: (m: intel.ModelConfig) => void) {
-  const inv = useInvalidate("model-configs");
+  const inv = useInvalidate("model-configs", "model-usage");
   return useMutation({
     mutationFn: intel.createModelConfig,
     onSuccess: (m) => {
@@ -63,7 +90,7 @@ export function useCreateModelConfig(onDone?: (m: intel.ModelConfig) => void) {
 
 export function usePatchModelConfig(onDone?: () => void) {
   // Persona cards embed the model's name and tool capability.
-  const inv = useInvalidate("model-configs", "personas");
+  const inv = useInvalidate("model-configs", "personas", "model-usage");
   return useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: intel.ModelConfigPatch }) => intel.patchModelConfig(id, payload),
     onSuccess: (m) => {
@@ -93,7 +120,7 @@ export function useSetModelConfigProject() {
 }
 
 export function useDeleteModelConfig() {
-  const inv = useInvalidate("model-configs", "personas");
+  const inv = useInvalidate("model-configs", "personas", "model-usage");
   return useMutation({
     mutationFn: intel.deleteModelConfig,
     onSuccess: () => {
