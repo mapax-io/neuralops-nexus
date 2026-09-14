@@ -49,6 +49,7 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
 
     model_data = data.get("model")
     model = ModelConfig(
+        id=model_data.get("id") if model_data else None,
         provider=model_data["provider"] if model_data else "litellm",
         model_id=model_data["model_id"] if model_data else settings.LLM_MODEL,
         api_key=model_data.get("api_key") if model_data else None,

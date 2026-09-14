@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     # Options: "pydantic_ai" | "agno" | "langgraph"
     AGENT_BACKEND: str = "pydantic_ai"
 
+    # Path of a JSON-lines file that gets every model call's full prompt,
+    # response and usage (see apps/core/debug_log.py). Empty = off.
+    AI_REQUEST_DEBUG_LOG: str = ""
+
     # ── LLM ──────────────────────────────────────────────────────────────────
     # All LLM calls go through LiteLLM — one gateway for all providers.
     # Encode the provider in LLM_MODEL using LiteLLM's prefix format:

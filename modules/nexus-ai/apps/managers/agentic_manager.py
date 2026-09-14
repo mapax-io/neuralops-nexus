@@ -31,12 +31,32 @@ from apps.schemas.trigger import (
     HistoryMessage,
     TriggerSwarmJob,
     AgentEventType,
+    UsageData,
 )
 from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry
 from apps.output_types.markers import parse_output_markers
 
 logger = logging.getLogger(__name__)
+
+
+from apps.core.debug_log import dump_messages, write_ai_request_debug
+
+
+def _debug_record(job, persona, messages, response: str, usage, *, hop: int | None = None, msg_id: str | None = None) -> dict:
+    """One debug-file line: the call as it happened, prompt and response included."""
+    return {
+        "job_id": job.job_id,
+        "msg_id": msg_id or job.msg_id,
+        "topic_id": job.topic_id,
+        "actor_user_id": getattr(job, "actor_user_id", None),
+        "hop": hop,
+        "persona": {"id": persona.id, "name": persona.name},
+        "model": {"id": persona.model.id, "provider": persona.model.provider, "model_id": persona.model.model_id},
+        "prompt": dump_messages(messages),
+        "response": response,
+        "usage": usage.model_dump() if usage is not None else None,
+    }
 
 
 class NewImprovedAgenticManager:
@@ -69,6 +89,7 @@ class NewImprovedAgenticManager:
         )
 
         accrued_text: list[str] = []
+        usage: UsageData | None = None
         async for event in self.runner.run_stream(job, messages, persona):
             match event.type:
 
@@ -79,6 +100,7 @@ class NewImprovedAgenticManager:
                 # Persist the model's intneral state when all is said and done
                 case AgentEventType.PERSIST.value:
                     internal_model_state = event.metadata.get('internal_model_state') #type: ignore
+                    usage = event.usage
                     continue
 
             yield event
@@ -96,14 +118,17 @@ class NewImprovedAgenticManager:
             render_as = getattr(final_spec, "render_as", None) or "text"
             embed_description = None if render_as == "text" else embed_description
 
-        # Signal the end to the frontend
+        # Signal the end to the frontend -- with what the run consumed, so
+        # nucleus can record it against the persona, model and actor.
         yield AgentEvent(
             type=AgentEventType.END,
             id=job.msg_id,
             content=clean_content,
             render_as=render_as,
             embed_description=embed_description,
+            usage=usage,
         )
+        write_ai_request_debug(_debug_record(job, persona, messages, clean_content, usage))
 
     async def swarm(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]: ...
 
@@ -397,6 +422,7 @@ class AgenticSwarmManager:
             )
 
             agent_response_content = []
+            hop_usage: UsageData | None = None
 
             async for event in self.runner.run_stream(
                 job=job,
@@ -406,6 +432,8 @@ class AgenticSwarmManager:
             ):
                 event.id = current_sub_msg_id
 
+                if event.type == AgentEventType.PERSIST:
+                    hop_usage = event.usage
                 if event.type == "message_delta" and event.delta:
                     agent_response_content.append(event.delta)
 
@@ -522,7 +550,10 @@ class AgenticSwarmManager:
                 output_type=final_type,
                 render_as=final_render_as,
                 embed_description=embed_description,
+                usage=hop_usage,
+                hop=hops,
             )
+            write_ai_request_debug(_debug_record(job, persona, messages, clean_hop, hop_usage, hop=hops, msg_id=current_sub_msg_id))
 
             if agent_response_content:
                 history.append(
