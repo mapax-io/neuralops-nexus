@@ -11,8 +11,6 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     XSearch,
-    capability,
-    web_search,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -21,6 +19,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    FunctionToolCallEvent,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -42,6 +41,9 @@ from pydantic_ai_harness import (
     SpendLimits,
     SubAgents,
     SummarizingCompaction,
+    TieredCompaction,
+    DeduplicateFileReads,
+    ClearToolResults,
 )
 
 from apps.interfaces.agent import AgentRunner
@@ -176,15 +178,32 @@ class PydanticAIRunner(AgentRunner):
         return Agent(
             model=PydanticAIRunner._resolve_model(persona),
             instructions=persona.system_prompt,
-            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers),
+            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers, persona.model.max_tokens),
             retries={"tools": 3},
         )
 
     @classmethod
     def _resolve_capabilities(
-        cls, capabilities: PersonaCapabilities, mcp_servers: list[MCPArgs]
+        cls, capabilities: PersonaCapabilities, mcp_servers: list[MCPArgs], max_tokens: int
     ) -> list[NativeOrLocalTool]:
+
+        token_target = max(max_tokens - 20_000, int(0.9 * max_tokens))
+
         resolved = []
+
+        resolved.append(ToolSearch(strategy=None))
+
+        resolved.append(
+            TieredCompaction(
+                tiers=[
+                    DeduplicateFileReads(file_key=cls._file_key_extractor),
+                    ClearToolResults(max_fraction=0.9, keep_pairs=5),
+                    SummarizingCompaction(receipts=True,
+                                          keep_user_messages=True,
+                                          max_tokens=token_target)],
+                target_tokens=token_target,
+            )
+        )
 
         if capabilities.filesystem is not None:
             resolved.append(FileSystem(**capabilities.filesystem.model_dump(exclude_none=True)))
@@ -208,7 +227,8 @@ class PydanticAIRunner(AgentRunner):
                     args=mcp_server.args,
                     env=mcp_server.env if mcp_server.env else None
                 )
-                resolved.append(MCP(local=transport))
+                resolved.append(MCP(local=transport, defer_loading=True))
+
         return resolved
 
 
@@ -223,3 +243,12 @@ class PydanticAIRunner(AgentRunner):
             raise
         provider = ProviderClass(api_key=persona.model.api_key)
         return ModelClass(model_name, provider=provider)
+    
+    @staticmethod
+    def _file_key_extractor(call: ToolCallPart) -> str | None:
+        if call.tool_name == 'read_file':
+            try:
+                return call.args_as_dict().get('path')
+            except Exception:
+                return None
+        return None
