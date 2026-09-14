@@ -100,9 +100,41 @@ _save_system_message = sync_to_async(chat_svc.save_system_message)
 _can = sync_to_async(PermissionChecker.can)
 
 
-def _refuse(personas: list, code: str, message: str) -> list[dict]:
+def _refuse(personas: list, code: str, message: str, resets_at: str | None = None) -> list[dict]:
     """The refusals payload for `personas`, one entry each (see MentionRefusalOut)."""
-    return [{"persona_id": str(p.id), "name": p.name, "code": code, "message": message, "resets_at": None} for p in personas]
+    return [{"persona_id": str(p.id), "name": p.name, "code": code, "message": message, "resets_at": resets_at} for p in personas]
+
+
+def _budget_refusals_sync(personas: list) -> tuple[list, list[dict]]:
+    """Split `personas` into the ones that may run and refusals for those on a stopped model."""
+    from intelligence import usage as usage_svc
+    stopped = usage_svc.stopped_personas(personas)
+    if not stopped:
+        return personas, []
+    resets = usage_svc.next_month_start().isoformat()
+    refusals = [
+        {"persona_id": str(p.id), "name": p.name, "code": "model_budget",
+         "message": f"{p.name}'s model has used its monthly budget.", "resets_at": resets}
+        for p in stopped
+    ]
+    return [p for p in personas if p not in stopped], refusals
+
+
+_budget_refusals = sync_to_async(_budget_refusals_sync)
+
+
+async def _gate_personas(user, topic, personas: list) -> tuple[list, list[dict]]:
+    """
+    Everything that can stop a persona from answering, in order: the right to
+    call personas here (topic-scoped, so one check covers the list), then the
+    model's monthly budget. Returns the personas that may run and the
+    refusals to report for the rest.
+    """
+    if not personas:
+        return [], []
+    if not await _can(user, "persona.mention", obj=topic):
+        return [], _refuse(personas, "no_right", "You can't call personas in this topic.")
+    return await _budget_refusals(personas)
 
 
 def _get_session_timeout_sync(company) -> int:
@@ -252,11 +284,9 @@ async def send_message(
     #     never reach the worker; the message itself already posted, only the
     #     AI reply is withheld. With no personas left, a "@X @session" from
     #     someone without the right opens no session either.
-    refusals: list[dict] = []
-    if mentioned_personas and not await _can(user, "persona.mention", obj=topic):
-        refusals = _refuse(mentioned_personas, "no_right", "You can't call personas in this topic.")
-        logger.warning("[chat/api] mention refused user=%s topic=%s personas=%s", user.id, topic_id, [p.name for p in mentioned_personas])
-        mentioned_personas = []
+    mentioned_personas, refusals = await _gate_personas(user, topic, mentioned_personas)
+    if refusals:
+        logger.warning("[chat/api] mention refused user=%s topic=%s %s", user.id, topic_id, [(r["name"], r["code"]) for r in refusals])
 
     # 6. Apply session routing priority
 
@@ -309,13 +339,13 @@ async def send_message(
         if directives.message_without_mentions():
             await _trigger_personas(mentioned_personas, company, project, topic,
                                      topic_id, msg, directives.clean_message, 
-                                     directives.output_type, directives.swarm)
+                                     directives.output_type, directives.swarm, str(user.id))
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
         await _trigger_personas(mentioned_personas, company, project, topic,
                                  topic_id, msg, directives.clean_message,
-                                 directives.output_type, directives.swarm)
+                                 directives.output_type, directives.swarm, str(user.id))
 
     else:
         # Rules 4 + 5: no explicit mention — check session
@@ -323,18 +353,18 @@ async def send_message(
         if active_session:
             # Rule 4: session active — trigger all session personas. The
             # right is re-checked: a session outlives a role change.
-            session_personas = list(active_session.personas.all())
-            if session_personas and not await _can(user, "persona.mention", obj=topic):
-                refusals = _refuse(session_personas, "no_right", "You can't call personas in this topic.")
-                logger.warning("[chat/api] session auto-trigger refused user=%s topic=%s", user.id, topic_id)
-            else:
+            session_personas, more = await _gate_personas(user, topic, list(active_session.personas.all()))
+            refusals += more
+            if more:
+                logger.warning("[chat/api] session auto-trigger refused user=%s topic=%s %s", user.id, topic_id, [(r["name"], r["code"]) for r in more])
+            if session_personas:
                 logger.warning(
                     "[chat/api] session auto-trigger personas=%s",
                     [p.name for p in session_personas],
                 )
                 await _trigger_personas(session_personas, company, project, topic,
                                          topic_id, msg, directives.clean_message,
-                                         directives.output_type, directives.swarm)
+                                         directives.output_type, directives.swarm, str(user.id))
         # Rule 5: no mention, no session — human-only message, nothing to do
 
     if refusals:
@@ -359,7 +389,8 @@ async def _trigger_personas(
     msg: dict,
     clean_message: str,
     output_type: str,
-    swarm: bool
+    swarm: bool,
+    actor_user_id: str | None = None,
 ) -> None:
     """
     Fire AI trigger tasks for each persona in parallel.
@@ -388,6 +419,7 @@ async def _trigger_personas(
                 user_message_id=msg["id"],
                 topic_id=topic_id,
                 output_type=output_type,
+                actor_user_id=actor_user_id,
             )
         )
 
@@ -412,6 +444,7 @@ async def _trigger_personas(
                     user_message_id=msg["id"],
                     topic_id=topic_id,
                     output_type=output_type,
+                    actor_user_id=actor_user_id,
                 )
             )
 

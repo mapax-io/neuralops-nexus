@@ -58,6 +58,7 @@ from apps.schemas.trigger import (
     TriggerJob,
     TriggerSwarmJob,
     MCPArgs,
+    UsageData,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,11 +161,13 @@ class PydanticAIRunner(AgentRunner):
                         id=job.msg_id,
                         delta=chunk,
                     )
-                # All the accrued internal states must persist!
+                # All the accrued internal states must persist! The run's
+                # usage rides along: the manager stamps it on message_done.
                 yield AgentEvent(
                     type=AgentEventType.PERSIST,
                     id=job.msg_id,
-                    metadata={"internal_model_state": events.new_messages()}
+                    metadata={"internal_model_state": events.new_messages()},
+                    usage=UsageData.from_run_usage(events.usage()),
                 )
 
         except Exception as e:

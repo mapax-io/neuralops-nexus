@@ -35,6 +35,9 @@ class ModelConfigIn(Schema):
     supports_vision: bool = False
     supports_audio: bool = False
     config: dict = {}
+    # Monthly budgets, UTC calendar month; 0 or absent = none of that kind.
+    monthly_token_budget: Optional[int] = None
+    monthly_cost_budget_usd: Optional[float] = None
     # REMOVED: temperature, max_tokens -> now per-persona
     # REMOVED: secret_ref              -> never read by any code path
 
@@ -56,6 +59,8 @@ class ModelConfigPatchIn(Schema):
     description: Optional[str] = None
     context_window: Optional[int] = None
     supports_tools: Optional[bool] = None
+    monthly_token_budget: Optional[int] = None      # 0 clears
+    monthly_cost_budget_usd: Optional[float] = None  # 0 clears
     supports_streaming: Optional[bool] = None
     supports_vision: Optional[bool] = None
     supports_audio: Optional[bool] = None
@@ -79,9 +84,45 @@ class ModelConfigOut(Schema):
     config: dict
     is_active: bool
     has_api_key: bool
+    monthly_token_budget: Optional[int] = None
+    monthly_cost_budget_usd: Optional[float] = None
     # Projects this config is attached to (visibility gate) -- lets clients
     # render and manage attachments without a second endpoint.
     project_ids: list[str] = []
+
+
+class UsageTotalsOut(Schema):
+    input: int
+    output: int
+    cache_read: int
+    cache_write: int
+    total: int
+    requests: int
+    calls: int
+    cost_usd: Optional[float] = None      # None when nothing this window was priced
+    cost_complete: bool                   # every call carried a price
+
+
+class BudgetOut(Schema):
+    tokens: Optional[int] = None
+    cost_usd: Optional[float] = None
+    tokens_remaining: Optional[int] = None
+    cost_remaining: Optional[float] = None
+    state: str                            # ok | warn | stopped
+    fraction: Optional[float] = None
+    resets_at: str                        # next UTC month start
+
+
+class ModelUsageOut(Schema):
+    month: UsageTotalsOut
+    all_time: UsageTotalsOut
+    budget: BudgetOut
+
+
+class ProviderRemainingOut(Schema):
+    limit: Optional[float] = None
+    usage: Optional[float] = None
+    remaining: Optional[float] = None
 
 
 class ModelConfigRef(Schema):

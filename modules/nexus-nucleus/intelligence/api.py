@@ -17,7 +17,7 @@ attached, invisible to everyone under row-level visibility.
 rotating an API key used to require delete-and-recreate, and delete is
 refused while any persona references the row.
 """
-from typing import List
+from typing import Dict, List
 from ninja import Router
 from ninja.errors import HttpError
 from pathlib import Path
@@ -37,8 +37,10 @@ from .schema import (
     AIRequestLogOut,
     ListTemplatePrompts,
     TemplatePromptContent,
+    ModelUsageOut, ProviderRemainingOut,
 )
 from . import services as svc
+from intelligence import usage as usage_svc
 
 router = Router(tags=["Intelligence"], auth=SupabaseBearer())
 
@@ -85,6 +87,8 @@ def _model_config_out(config) -> ModelConfigOut:
         config=config.config,
         is_active=config.is_active,
         has_api_key=bool(config.api_key_encrypted),
+        monthly_token_budget=config.monthly_token_budget,
+        monthly_cost_budget_usd=float(config.monthly_cost_budget_usd) if config.monthly_cost_budget_usd is not None else None,
         project_ids=[
             str(pid) for pid in config.projects.filter(is_active=True).values_list("id", flat=True)
         ],
@@ -185,6 +189,29 @@ def _persona_out(persona) -> PersonaOut:
 def list_model_configs(request):
     company = _company(request)
     return [_model_config_out(m) for m in svc.list_model_configs(company, request.auth)]
+
+
+@router.get("/model-configs/usage/", response=Dict[str, ModelUsageOut])
+def model_configs_usage(request):
+    """This month, all time and the budget state, per model the caller can see. One call for the whole tab."""
+    company = _company(request)
+    return {str(m.id): usage_svc.usage_summary(m) for m in svc.list_model_configs(company, request.auth)}
+
+
+@router.get("/model-configs/{config_id}/provider/", response=ProviderRemainingOut)
+def model_config_provider(request, config_id: str):
+    """The provider's own balance for this key -- OpenRouter reports one; the others do not (404)."""
+    company = _company(request)
+    config = svc.list_model_configs(company, request.auth).filter(id=config_id).first()
+    if not config:
+        raise HttpError(404, "Model config not found.")
+    try:
+        data = usage_svc.provider_remaining(config)
+    except Exception as exc:  # noqa: BLE001 -- the provider's API, not ours
+        raise HttpError(502, f"The provider did not answer: {exc}")
+    if data is None:
+        raise HttpError(404, "This model's provider does not report a balance.")
+    return data
 
 
 @router.post("/model-configs/", response=ModelConfigOut)

@@ -13,6 +13,7 @@ from fastmcp.client.transports import StdioTransport
 
 
 class ModelConfig(BaseModel):
+    id: str | None = None  # nucleus's ModelConfig row -- usage is attributed to it
     provider: str  # "litellm" | "local"
     model_id: str  # "anthropic/claude-haiku-4-5-20251001"
     api_key: str | None = None  # decrypted key from AIModel — passed per-call
@@ -258,6 +259,9 @@ class TriggerJob(BaseModel):
     # "auto" = nexus-ai should classify intent via cosine similarity.
     # Any other value = explicit override (e.g. "chart", "terminal", "code").
     output_type: str = "auto"
+    # The human whose message (or schedule) caused this run. Informational
+    # here -- nucleus decides and records; the debug file names them.
+    actor_user_id: str | None = None
 
 
 class TriggerSwarmJob(BaseModel):
@@ -285,9 +289,37 @@ class TriggerSwarmJob(BaseModel):
     # "auto" = nexus-ai should classify intent via cosine similarity.
     # Any other value = explicit override (e.g. "chart", "terminal", "code").
     output_type: str = "auto"
+    actor_user_id: str | None = None
 
 
 # ── Outbound SSE events (nexus-ai → nexus-nucleus) ────────────────────────────
+
+
+class UsageData(BaseModel):
+    """
+    What one run consumed, as nucleus records it. cost_usd comes from the
+    library's price table (genai-prices) and is None for a model it cannot
+    price -- nucleus then counts tokens only for that call.
+    """
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    requests: int = 0
+    tool_calls: int = 0
+    cost_usd: float | None = None
+
+    @classmethod
+    def from_run_usage(cls, usage) -> "UsageData":
+        return cls(
+            input_tokens=usage.input_tokens or 0,
+            output_tokens=usage.output_tokens or 0,
+            cache_read_tokens=usage.cache_read_tokens or 0,
+            cache_write_tokens=usage.cache_write_tokens or 0,
+            requests=usage.requests or 0,
+            tool_calls=usage.tool_calls or 0,
+            cost_usd=float(usage.cost) if usage.cost is not None else None,
+        )
 
 
 class ToolCallData(BaseModel):
@@ -340,3 +372,8 @@ class AgentEvent(BaseModel):
 
     # swarm_transition only
     metadata: dict | None = None
+    # message_done (and the runner's persist event): what the run consumed.
+    # Absent on message_error -- nothing completed. `hop` is the swarm hop
+    # index this done belongs to; None outside a swarm.
+    usage: UsageData | None = None
+    hop: int | None = None

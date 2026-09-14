@@ -44,6 +44,9 @@ def get_company():
 
 # ── ModelConfig ───────────────────────────────────────────────────────────────
 
+BUDGET_FIELDS = ("monthly_token_budget", "monthly_cost_budget_usd")
+
+
 def list_model_configs(company, user):
     from authn.permissions.row_rules import visible_model_configs
     return visible_model_configs(user, company)
@@ -63,6 +66,9 @@ def create_model_config(company, user, data: dict):
     _reject_unknown_provider(data.get("provider"))
     _reject_prefixed_model_id(data.get("model_id"))
 
+    for key in BUDGET_FIELDS:
+        if key in data:
+            data[key] = data[key] or None  # 0 = no budget of that kind
     config = ModelConfig(company=company, created_by=user, **data)
     if api_key:
         config.set_api_key(api_key)
@@ -91,6 +97,13 @@ def update_model_config(company, config_id: str, data: dict):
     if data.get("model_id") is not None:
         _reject_prefixed_model_id(data["model_id"])
 
+    # A budget change (raise, lower, clear -- 0 clears) lifts a stop and lets
+    # the month's notices post again against the new number.
+    for key in BUDGET_FIELDS:
+        if key in data:
+            setattr(config, key, data.pop(key) or None)
+            config.budget_warned_at = None
+            config.budget_stopped_at = None
     for field, value in data.items():
         if value is not None:
             setattr(config, field, value)

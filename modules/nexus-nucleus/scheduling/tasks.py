@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 @shared_task(name="scheduling.tasks.fire_persona_schedule")
 def fire_persona_schedule(schedule_id: str) -> None:
     from authn.permissions.checker import PermissionChecker
+    from intelligence import usage as usage_svc
     from nucleus.models import PersonaSchedule
     from chat import services as chat_svc
 
     schedule = (
         PersonaSchedule.objects.filter(id=schedule_id, is_active=True)
-        .select_related("topic", "project", "company", "persona", "persona__identity_user", "created_by")
+        .select_related("topic", "project", "company", "persona", "persona__identity_user", "persona__model", "created_by")
         .first()
     )
     if not schedule:
@@ -67,6 +68,8 @@ def fire_persona_schedule(schedule_id: str) -> None:
         skip = "its creator no longer has an account here"
     elif not PermissionChecker.can(actor, "persona.mention", obj=topic):
         skip = f"{actor.email or actor.username} can no longer call personas in this topic"
+    elif usage_svc.is_model_stopped(persona.model):
+        skip = f"{persona.model.name} has used its monthly budget"
     else:
         skip = None
     if skip:
@@ -105,6 +108,7 @@ def fire_persona_schedule(schedule_id: str) -> None:
             user_message_id=str(uuid.uuid4()),
             topic_id=str(topic.id),
             output_type="auto",
+            actor_user_id=str(schedule.created_by_id),
         )
 
         PersonaSchedule.objects.filter(id=schedule.id).update(
