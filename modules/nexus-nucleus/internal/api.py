@@ -176,8 +176,10 @@ class AIRequestLogIn(Schema):
     persona_id: Optional[str] = None
     model_id: str
     provider: str
-    prompt: list
-    response: str
+    # Accepted for older workers, never stored (usage plan, decision 6): the
+    # prompt and response go to the worker's debug file, not the database.
+    prompt: Optional[list] = None
+    response: Optional[str] = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: int = 0
@@ -394,8 +396,8 @@ def create_ai_request_log(request, payload: AIRequestLogIn):
         persona=persona,
         model_id=payload.model_id,
         provider=payload.provider,
-        prompt=payload.prompt,
-        response=payload.response,
+        prompt=None,
+        response=None,
         prompt_tokens=payload.prompt_tokens,
         completion_tokens=payload.completion_tokens,
         latency_ms=payload.latency_ms,

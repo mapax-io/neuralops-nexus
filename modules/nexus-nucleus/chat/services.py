@@ -20,6 +20,7 @@ from django.db.models import Max
 from django.utils import timezone
 from asgiref.sync import sync_to_async
 import json
+import time
 import uuid
 from datetime import datetime, timezone as dt_timezone
 from .events import tool_activity_event
@@ -372,6 +373,28 @@ async def embed_message_async(
 
 # ── AI trigger — fire-and-forget (M3 + M7) ────────────────────────────────────
 
+def _record_run(*, company, persona, topic, msg_id, job_id, actor_user_id, usage, latency_ms, status, error, hop=0) -> None:
+    """
+    One usage row for a finished call, then the model's budget check. Never
+    raises into the relay -- accounting must not break a reply that already
+    streamed.
+    """
+    from intelligence import usage as usage_svc
+    try:
+        model_config = persona.model
+        usage_svc.record_ai_request(
+            company, persona=persona, model_config=model_config, actor_id=actor_user_id, topic=topic,
+            msg_id=msg_id, job_id=job_id, hop=hop, usage=usage, latency_ms=latency_ms, status=status, error=error,
+        )
+        if status == "success":
+            usage_svc.evaluate_budget(model_config, topic)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[usage] could not record run msg=%s: %s", msg_id, exc)
+
+
+_record_run_async = sync_to_async(_record_run)
+
+
 def create_ai_message(company, project, topic, persona, render_as: str = "text") -> dict:
     """Pre-create a PENDING ChatMessage for the AI response."""
     from nucleus.models import ChatMessage
@@ -461,6 +484,7 @@ async def trigger_ai_response_async(
     user_message_id: str,
     topic_id: str,
     output_type: str = "auto",
+    actor_user_id: str | None = None,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -548,6 +572,7 @@ async def trigger_ai_response_async(
         "message": user_message,
         "context_sources": context_sources,
         "output_type": output_type,  # M7: "auto" | "chart" | "code" | "terminal" | ...
+        "actor_user_id": actor_user_id,  # the human this run is charged to
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
@@ -558,6 +583,8 @@ async def trigger_ai_response_async(
     embed_description: str | None = None
     ai_error: str | None = None
     ai_error_code: str | None = None
+    usage: dict | None = None
+    started = time.monotonic()
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -612,6 +639,7 @@ async def trigger_ai_response_async(
                             final_clean_content = event.get("content")
                             # M8: plain-text description for html/form/terminal embedding
                             embed_description = event.get("embed_description")
+                            usage = event.get("usage")
                             break
 
                         elif event_type == "message_error":
@@ -665,6 +693,13 @@ async def trigger_ai_response_async(
         "output_type": final_output_type,   # M7: e.g. "chart"
         "render_as": final_render_as,        # M7: e.g. "html"
     })
+    # Accounting after the terminal event: the DB write and the budget check
+    # must not delay what the reader sees.
+    await _record_run_async(
+        company=company, persona=persona, topic=topic, msg_id=msg_id, job_id=job_payload["job_id"],
+        actor_user_id=actor_user_id, usage=None if ai_error else usage,
+        latency_ms=int((time.monotonic() - started) * 1000), status="error" if ai_error else "success", error=ai_error,
+    )
 
     # M8: Embed AI response — smart content selection
     # text/code → embed full response; html/form/terminal → embed description only
@@ -703,6 +738,7 @@ async def trigger_ai_swarm_response_async(
     user_message_id: str,
     topic_id: str,
     output_type: str = "auto",
+    actor_user_id: str | None = None,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -791,11 +827,14 @@ async def trigger_ai_swarm_response_async(
         "message": user_message,
         "context_sources": context_sources,
         "output_type": output_type,  # M7: "auto" | "chart" | "code" | "terminal" | ...
+        "actor_user_id": actor_user_id,
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
     active_msg_id = msg_id
     streamed_contents: dict[str, list[str]] = {msg_id: []}
+    hop_personas: dict = {msg_id: personas[0]}   # who is answering on each sub-message
+    hop_started: dict[str, float] = {msg_id: time.monotonic()}
     ai_error: str | None = None
 
     try:
@@ -845,8 +884,10 @@ async def trigger_ai_swarm_response_async(
                                 })
                                 # Track this new msg metadata for embedding later
                                 streamed_contents[f"{current_id}_meta"] = new_ai_msg
+                                hop_personas[current_id] = p_obj
                                 
                             active_msg_id = current_id
+                            hop_started.setdefault(current_id, time.monotonic())
                             streamed_contents[current_id] = []
                             await publish_async(channel, event)
 
@@ -876,6 +917,13 @@ async def trigger_ai_swarm_response_async(
                             )
                             event["id"] = active_msg_id
                             await publish_async(channel, event)
+                            await _record_run_async(
+                                company=company, persona=hop_personas.get(active_msg_id, personas[0]), topic=topic,
+                                msg_id=active_msg_id, job_id=job_payload["job_id"], actor_user_id=actor_user_id,
+                                usage=event.get("usage"), hop=int(event.get("hop") or 0),
+                                latency_ms=int((time.monotonic() - hop_started.get(active_msg_id, time.monotonic())) * 1000),
+                                status="success", error=None,
+                            )
                             
                             # M8: Embed AI response
                             _TEXT_EMBEDDABLE = {"text", "code", "auto"}
@@ -920,6 +968,12 @@ async def trigger_ai_swarm_response_async(
                                 active_msg_id, ai_error,
                             )
                             await _fail_ai_message(active_msg_id, ai_error)
+                            await _record_run_async(
+                                company=company, persona=hop_personas.get(active_msg_id, personas[0]), topic=topic,
+                                msg_id=active_msg_id, job_id=job_payload["job_id"], actor_user_id=actor_user_id,
+                                usage=None, latency_ms=int((time.monotonic() - hop_started.get(active_msg_id, time.monotonic())) * 1000),
+                                status="error", error=ai_error,
+                            )
                             # The single path publishes this; the swarm path used
                             # to fail silently, leaving the client to guess from
                             # stall detection. Same friendly copy, same shape --

@@ -228,6 +228,16 @@ class ModelConfig(TenantBaseModel):
     # (model_config.list) still sees everything regardless; this governs the
     # narrow/project-scoped fallback in
     # authn/permissions/row_rules.py:visible_model_configs().
+    # -- Monthly budgets (usage plan, 2026-09-14) -------------------------------
+    # Tokens and dollars, independent; whichever is reached first wins. Null =
+    # no budget of that kind. Warn at 90 %, stop at 100 %: the two date fields
+    # remember the month a notice was posted so each is posted once per month;
+    # changing either budget clears them (intelligence/services.update_model_config).
+    monthly_token_budget = models.PositiveBigIntegerField(null=True, blank=True)
+    monthly_cost_budget_usd = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    budget_warned_at = models.DateField(null=True, blank=True)
+    budget_stopped_at = models.DateField(null=True, blank=True)
+
     projects = models.ManyToManyField(
         "nucleus.Project",
         blank=True,
@@ -285,13 +295,16 @@ class ModelConfig(TenantBaseModel):
 
 class AIRequestLog(TenantBaseModel):
     """
-    Logs every model call made by nexus-ai.
-    Written by nexus-ai via POST /internal/ai-request-logs/ after each completion.
-    Records the exact prompt sent and the raw response received.
+    One row per model call. Since the usage plan (2026-09-14) nucleus writes
+    it itself from the worker's message_done event (chat/services.py), with
+    the actor, topic and the ModelConfig row that served it; the worker's
+    POST /internal/ai-request-logs/ stays for its own error reports.
 
-    NOTE: model_id/provider are plain strings, NOT an FK to ModelConfig --
-    deliberately, so a log row survives its ModelConfig being deleted. The
-    trade-off is that you cannot join a log back to the row that served it.
+    The prompt and response are NOT stored any more (decision 6): counts only.
+    The worker's AI_REQUEST_DEBUG_LOG file is where a developer reads them.
+
+    model_id/provider stay plain strings next to the nullable model_config FK,
+    so a row survives its ModelConfig being deleted and still says what ran.
     """
 
     class Status(models.TextChoices):
@@ -313,14 +326,29 @@ class AIRequestLog(TenantBaseModel):
     # -- Model identity -------------------------------------------------------
     model_id = models.CharField(max_length=255)   # e.g. "claude-haiku-4-5-20251001"
     provider = models.CharField(max_length=50)    # e.g. "anthropic"
+    model_config = models.ForeignKey(
+        "nucleus.ModelConfig", on_delete=models.SET_NULL, null=True, blank=True, related_name="request_logs",
+    )
 
-    # -- Payload --------------------------------------------------------------
-    prompt   = models.JSONField()                 # full messages array sent
-    response = models.TextField(blank=True)       # raw text received
+    # -- Attribution ----------------------------------------------------------
+    actor = models.ForeignKey(  # the human whose message or schedule caused the call
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="ai_requests",
+    )
+    topic = models.ForeignKey("nucleus.ChatTopic", on_delete=models.SET_NULL, null=True, blank=True, related_name="ai_requests")
+    hop = models.PositiveSmallIntegerField(default=0)  # swarm hop index; 0 = a plain reply
+
+    # -- Payload (no longer written; kept nullable for rows from before) --------
+    prompt   = models.JSONField(null=True, blank=True)
+    response = models.TextField(null=True, blank=True)
 
     # -- Stats ----------------------------------------------------------------
-    prompt_tokens     = models.PositiveIntegerField(default=0)
-    completion_tokens = models.PositiveIntegerField(default=0)
+    prompt_tokens     = models.PositiveIntegerField(default=0)   # input tokens
+    completion_tokens = models.PositiveIntegerField(default=0)   # output tokens
+    cache_read_tokens  = models.PositiveIntegerField(default=0)
+    cache_write_tokens = models.PositiveIntegerField(default=0)
+    requests   = models.PositiveIntegerField(default=0)
+    tool_calls = models.PositiveIntegerField(default=0)
+    cost_usd   = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)  # null = library had no price
     latency_ms        = models.PositiveIntegerField(default=0)
 
     # -- Status ---------------------------------------------------------------
@@ -339,7 +367,14 @@ class AIRequestLog(TenantBaseModel):
             models.Index(fields=["company", "created_at"]),
             models.Index(fields=["job_id"]),
             models.Index(fields=["msg_id"]),
+            models.Index(fields=["model_config", "created_at"]),
+            models.Index(fields=["actor", "created_at"]),
+            models.Index(fields=["persona", "actor", "created_at"]),
         ]
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens + self.cache_read_tokens + self.cache_write_tokens
 
     def __str__(self):
         return f"[{self.status}] {self.provider}:{self.model_id} job={self.job_id}"
