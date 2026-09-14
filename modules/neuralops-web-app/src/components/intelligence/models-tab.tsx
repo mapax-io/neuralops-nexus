@@ -20,7 +20,7 @@ import { formatTokens, formatUsd } from "@/lib/format";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { CardGrid, Chip, EntityCard, ListState, TabShell, Toolbar } from "./shared";
 
-// The server's five providers (ModelConfig.Provider). The model id is the BARE
+// The server's six providers (ModelConfig.Provider). The model id is the BARE
 // name — the server composes "provider:model" itself and rejects a prefix.
 // `base`: whether an API base URL applies (required for anything OpenAI-shaped
 // behind a custom endpoint, optional for a local Ollama, unused natively).

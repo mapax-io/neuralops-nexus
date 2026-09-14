@@ -120,11 +120,11 @@ describe("ModelsTab — register", () => {
     expect(posted).toMatchObject({ provider: "openai_compatible", model_id: "qwen2.5-7b", api_base: "http://vllm.internal:8000/v1" });
   });
 
-  it("offers exactly the server's five providers", async () => {
+  it("offers exactly the server's six providers", async () => {
     renderTab();
     const dialog = await openRegister();
     const options = within(within(dialog).getByLabelText("Provider")).getAllByRole("option").map((o) => (o as HTMLOptionElement).value);
-    expect(options).toEqual(["anthropic", "openai", "google", "ollama", "openai_compatible"]);
+    expect(options).toEqual(["anthropic", "openai", "google", "deepseek", "ollama", "openai_compatible"]);
   });
 });
 
