@@ -182,7 +182,10 @@ class PydanticAIRunner(AgentRunner):
             model=PydanticAIRunner._resolve_model(persona),
             instructions=persona.system_prompt,
             capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers, persona.model.max_tokens),
-            retries={"tools": 3},
+            retries={
+                "tools": 3,
+                "output": 3,
+            }
         )
 
     @classmethod
