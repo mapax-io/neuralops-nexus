@@ -1,0 +1,77 @@
+
+NOTICE
+NeuralOps Nexus
+Copyright (C) 2026 Noaman Faisal Bin
+ 
+This product is licensed under the GNU Affero General Public License v3.0
+(AGPL-3.0-only). See the LICENSE file for the full license text.
+ 
+This product includes third-party software components, each governed by
+its own license. Their inclusion here does not imply endorsement by their
+respective copyright holders.
+ 
+-------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+-------------------------------------------------------------------------
+ 
+The list below reflects what has been discussed and confirmed so far. It
+is a STARTING POINT, not a complete or verified inventory — before
+publishing, generate a full automated scan of every dependency actually
+pinned in requirements.txt / pyproject.toml / package.json / the Docker
+base images, since an incomplete NOTICE is one of the first things
+enterprise buyers' diligence will flag. Suggested tools: `pip-licenses`
+(Python), `license-checker` (Node/npm), and a manual check of each Docker
+base image's own licensing.
+ 
+Component               | License          | Notes
+-------------------------|------------------|----------------------------------
+Django (nucleus)         | BSD-3-Clause     | AGPL-compatible
+FastAPI (nexus-ai)       | MIT              | AGPL-compatible
+pydantic-ai (nexus-ai)   | MIT              | AGPL-compatible
+ChromaDB                 | Apache-2.0       | AGPL-compatible; if modified,
+                          |                  | retain Apache-2.0 §4 notices
+Redis                    | VERIFY PINNED    | BSD-3-Clause through Redis 7.2;
+                          | VERSION          | RSALv2/SSPLv1 from Redis 7.4/2024
+                          |                  | onward; AGPLv3 optional from
+                          |                  | Redis 8. Confirm the exact
+                          |                  | version pinned in this project
+                          |                  | before publishing — this
+                          |                  | determines redistribution
+                          |                  | obligations for the public
+                          |                  | Docker image. If the pin falls
+                          |                  | in the SSPL window, consider
+                          |                  | Valkey (BSD-licensed fork)
+                          |                  | instead.
+Centrifugo                | Apache-2.0       | Bundled, unmodified source, inside this
+                          |                  | project's own Docker image (confirmed —
+                          |                  | no longer referenced as a separate
+                          |                  | container). Copyright 2023 Centrifugal
+                          |                  | Labs LTD. Redistribution requires
+                          |                  | retaining this copyright notice and a
+                          |                  | copy of the Apache-2.0 license text
+                          |                  | (both satisfied by this NOTICE file
+                          |                  | plus the project's bundled LICENSE).
+                          |                  | Upstream keeps no separate NOTICE file
+                          |                  | of its own, so there is nothing further
+                          |                  | to propagate under Apache-2.0 §4(d).
+PostgreSQL                | PostgreSQL       | Permissive, AGPL-compatible
+                          | License          |
+nginx                     | BSD-2-Clause     | AGPL-compatible
+LibreChat.ai              | N/A — inspiration| Confirmed no code copied; no
+                          | only, no code    | attribution obligation
+                          | copied           |
+ 
+-------------------------------------------------------------------------
+HOW TO COMPLETE THIS FILE
+-------------------------------------------------------------------------
+ 
+1. Run a license scanner against the actual pinned dependency manifests
+   in the repository (Python, Node, and any Docker base images).
+2. Add every component found, with its exact license identifier (SPDX
+   where possible) and version.
+3. For any component under a "copyleft-with-attribution" license (like
+   Apache-2.0), confirm this NOTICE preserves the required notices
+   verbatim rather than summarizing them.
+4. Re-generate this file whenever dependencies change materially —
+   treat it as living documentation, not a one-time task.
+ 
