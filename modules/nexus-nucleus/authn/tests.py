@@ -4,17 +4,24 @@ Unit tests for authn services outside the permission system.
 """
 import shutil
 import tempfile
+import time
 from io import BytesIO
+from unittest.mock import patch
 
+import jwt as pyjwt
+from cryptography.hazmat.primitives.asymmetric import ec
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
+from jwt.jwk_set_cache import JWKSetCache
 from PIL import Image
 
 from authn.services import (
     AVATAR_MAX_BYTES, AvatarError, assign_display_name, clear_profile_photo,
     set_profile_photo,
 )
+from authn.supabase import jwks_client, verify_supabase_token
 
 User = get_user_model()
 
@@ -158,3 +165,57 @@ class AvatarUrlTests(TestCase):
         # decide where a browser looks for the image.
         self.user.avatar.name = "avatars/pool/human/021.png"
         self.assertNotIn("somewhere-else", self.user.get_avatar_url())
+
+
+def _key_pair(kid):
+    private = ec.generate_private_key(ec.SECP256R1())
+    public = pyjwt.algorithms.ECAlgorithm.to_jwk(private.public_key(), as_dict=True)
+    public.update({"kid": kid, "use": "sig", "alg": "ES256"})
+    return private, public
+
+
+def _token(private, kid):
+    now = int(time.time())
+    claims = {
+        "sub": "u1", "email": "u@example.com", "iat": now, "exp": now + 60,
+        "aud": settings.SUPABASE_JWT_AUDIENCE, "iss": settings.SUPABASE_JWT_ISSUER,
+    }
+    return pyjwt.encode(claims, private, algorithm="ES256", headers={"kid": kid})
+
+
+class JwksClientTests(SimpleTestCase):
+    """Verifying a token must not hit the network for a key already seen.
+
+    With only the 5-minute JWK-set cache, the first request after expiry
+    re-fetched the set synchronously on the one sync thread, and every other
+    request waited behind it for as long as that fetch took (0.4-4.5 s
+    measured) -- seen as chats stuck on their loader.
+    """
+
+    def setUp(self):
+        jwks_client.get_signing_key.cache_clear()
+        self._expire_set()
+
+    def _expire_set(self):
+        # What the lifespan does on its own after five minutes -- forced.
+        jwks_client.jwk_set_cache = JWKSetCache(jwks_client.jwk_set_cache.lifespan)
+
+    def test_a_key_seen_once_is_never_fetched_again(self):
+        private, public = _key_pair("kid-1")
+        with patch.object(jwks_client, "fetch_data", return_value={"keys": [public]}) as fetch:
+            self.assertEqual(verify_supabase_token(_token(private, "kid-1"))["sub"], "u1")
+            self._expire_set()
+            verify_supabase_token(_token(private, "kid-1"))
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_an_unknown_key_id_still_refreshes_the_set(self):
+        old_private, old_public = _key_pair("kid-1")
+        new_private, new_public = _key_pair("kid-2")
+        answers = [{"keys": [old_public]}, {"keys": [old_public, new_public]}]
+        with patch.object(jwks_client, "fetch_data", side_effect=answers) as fetch:
+            verify_supabase_token(_token(old_private, "kid-1"))
+            self.assertEqual(verify_supabase_token(_token(new_private, "kid-2"))["sub"], "u1")
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_the_one_fetch_left_cannot_hold_a_request_for_long(self):
+        self.assertLessEqual(jwks_client.timeout, 10)

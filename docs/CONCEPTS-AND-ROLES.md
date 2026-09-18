@@ -607,7 +607,12 @@ action; replacing an Owner means re-running `manage.py create_owner`, not a
   Agents and MCP Servers in *any* project, and attach existing models to any
   project — company-wide reach without needing a separate assignment per
   project; `schedule.manage` across any topic. Cannot delete the company or
-  remove the Owner.
+  remove the Owner. **Peers are off limits:** an Admin manages Members and
+  Viewers (and may promote a Member to Admin), but only the Owner changes,
+  re-scopes or removes another Admin — enforced by `_refuse_peer()` in
+  `workspace/services.py` on the access editor, both server-removal routes
+  and project-team removal (a role-name check, so an Admin scoped to one
+  project counts as an Admin here too).
 - *Project Admin*: create channels/topics inside their own project;
   create/update/delete Agents and MCP Servers *in their own project only*
   (this is what Part 2's Project-scope table reflects — deliberately moved
@@ -686,25 +691,20 @@ are things to be aware of, not things this document is pretending are solved:
   is already a company member with no broader role — there, `invite_to_system()`
   is a genuine no-op and the Topic-scope assignment is the only one they hold.
 
-- **Project team management has no `PermissionChecker` gate at all.**
-  `add_member`, `invite_to_project`, `remove_team_member`, `list_team`,
-  `available_users`, and `available_personas` in `workspace/api.py` call
-  straight into their service functions with no `PermissionChecker.can(...)`
-  check — the only barrier is `_resolve_project()`, which just requires the
-  caller be able to *view* the project at all. `remove_from_server`
-  (`DELETE /projects/server/members/{user_id}/`) is looser still: it only
-  calls `_resolve()`, so it isn't even project-gated — its sole protections
-  are the two `ValueError` guards inside `remove_user_from_server()` (can't
-  remove yourself, can't remove the `CompanyAccess.Role.OWNER`), meaning
-  **any authenticated company member can deactivate any other non-owner
-  user's server access and every one of their project memberships.**
-  `ROLE_STORIES.md` says *"As a Project Admin, I want to add and remove
-  people from my project"* as though this tier is Admin-gated, but as
-  currently wired any Project Member — or Viewer — can do all of it. There
-  is no `Right` in the registry yet for these actions (e.g. a
-  `project.invite_member` / `project.remove_member` pair); adding them, and
-  gating `remove_from_server` on `company.remove_member`, is what would make
-  the code match the documented intent.
+- **Project team management borrows `project.archive` as its gate.**
+  `add_member`, `invite_to_project` and `remove_team_member` in
+  `workspace/api.py` now go through `_require_team_manager()`, which asks
+  `PermissionChecker.can(user, "project.archive", obj=project)` — the same
+  right the web app's team dialog draws its add/remove controls from, so a
+  Project Admin manages their own project's team and a Member or Viewer gets
+  a 403 (until 2026-09-13 the only barrier was `_resolve_project()`, i.e.
+  being able to *view* the project). `remove_from_server`
+  (`DELETE /projects/server/members/{user_id}/`) is gated on
+  `company.remove_member`; it used to call only `_resolve()`. `list_team`,
+  `available_users` and `available_personas` stay view-gated. There is still
+  no `Right` in the registry for team management itself — a
+  `project.invite_member` / `project.remove_member` pair would let the gate
+  say what it means instead of borrowing the archive right.
 
 - **The company-level `/members/` router bypasses the RBAC engine, and its
   Django-permission substitute is mis-tiered.** `invite_member` and

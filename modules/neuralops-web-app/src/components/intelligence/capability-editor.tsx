@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { ChipInput } from "@/components/ui/chip-input";
 import { Label, FieldError } from "@/components/ui/field";
 import {
   CAPABILITIES,
@@ -9,6 +11,7 @@ import {
   capabilitySpec,
   formatCapabilityConfig,
   parseCapabilityConfig,
+  shellListsProblem,
   type CapabilityArgs,
   type CapabilityConfig,
 } from "@/lib/mcp-capabilities";
@@ -19,8 +22,6 @@ import {
 // worker may know capabilities this copy of the catalogue does not — are
 // listed and kept verbatim, never dropped.
 const slug = (k: string) => k.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-const lines = (v: unknown): string => (Array.isArray(v) ? v.map(String).join("\n") : "");
-const splitLines = (t: string): string[] => t.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
 const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 const inputClass = "h-9 w-full rounded-[8px] border border-line bg-surface px-2.5 text-[13px] outline-none focus:border-accent";
 const areaClass = "w-full resize-y rounded-[8px] border border-line bg-surface px-2.5 py-1.5 font-mono text-[12.5px] leading-relaxed outline-none focus:border-accent";
@@ -114,7 +115,7 @@ export function CapabilityEditor({ idPrefix, value, onChange, onError }: {
                 <input type="checkbox" checked onChange={() => toggle(k)} className="mt-0.5 accent-[var(--accent)]" />
                 <span className="min-w-0">
                   <span className="font-medium">{k}</span>
-                  <span className="block text-[12px] text-ink2">Set by the server — edit its settings as JSON.</span>
+                  <span className="block text-[12px] text-ink2">Not in this list — its settings are editable as JSON.</span>
                 </span>
               </label>
             </li>
@@ -124,6 +125,12 @@ export function CapabilityEditor({ idPrefix, value, onChange, onError }: {
     </fieldset>
   );
 }
+
+const GLOB_FIELDS = [
+  ["allowed_patterns", "Allowed globs"],
+  ["denied_patterns", "Denied globs"],
+  ["protected_patterns", "Read-only globs"],
+] as const;
 
 function CapabilityFields({ kind, idPrefix, args, onArgs }: {
   kind: NonNullable<(typeof CAPABILITIES)[number]["editor"]>;
@@ -139,63 +146,16 @@ function CapabilityFields({ kind, idPrefix, args, onArgs }: {
           <input id={`${idPrefix}-root`} value={String(args.root_dir ?? "")} onChange={(e) => onArgs({ root_dir: e.target.value })} className={`${inputClass} font-mono`} />
           <p className="mt-1 text-[11.5px] text-ink2">Relative to the project folder; the project&apos;s default row points at the folder itself.</p>
         </div>
-        {(["allowed_patterns", "denied_patterns", "protected_patterns"] as const).map((f) => (
+        {GLOB_FIELDS.map(([f, label]) => (
           <div key={f} className={f === "protected_patterns" ? "sm:col-span-2" : ""}>
-            <Label htmlFor={`${idPrefix}-${f}`} className="mb-1 text-[12px]">
-              {f === "allowed_patterns" ? "Allowed globs" : f === "denied_patterns" ? "Denied globs" : "Read-only globs"} <span className="text-ink2">(one per line)</span>
-            </Label>
-            <textarea id={`${idPrefix}-${f}`} rows={2} value={lines(args[f])} onChange={(e) => onArgs({ [f]: splitLines(e.target.value) })} spellCheck={false} className={areaClass} />
+            <Label htmlFor={`${idPrefix}-${f}`} className="mb-1 text-[12px]">{label}</Label>
+            <ChipInput id={`${idPrefix}-${f}`} label={label} value={list(args[f])} onChange={(v) => onArgs({ [f]: v })} placeholder="Type a glob and press Enter" />
           </div>
         ))}
       </div>
     );
   }
-  if (kind === "shell") {
-    const allowed = list(args.allowed_commands);
-    const denied = list(args.denied_commands);
-    const flip = (field: "allowed_commands" | "denied_commands", cmd: string) => {
-      const cur = list(args[field]);
-      onArgs({ [field]: cur.includes(cmd) ? cur.filter((c) => c !== cmd) : [...cur, cmd] });
-    };
-    return (
-      <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
-        <div>
-          <Label htmlFor={`${idPrefix}-cwd`} className="mb-1 text-[12px]">Working folder</Label>
-          <input id={`${idPrefix}-cwd`} value={String(args.cwd ?? "")} onChange={(e) => onArgs({ cwd: e.target.value })} className={`${inputClass} font-mono`} />
-        </div>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <Label htmlFor={`${idPrefix}-timeout`} className="mb-1 text-[12px]">Timeout (s)</Label>
-            <input id={`${idPrefix}-timeout`} type="number" min={1} step={1} value={String(args.default_timeout ?? "")} onChange={(e) => onArgs({ default_timeout: Number(e.target.value) })} className={inputClass} />
-          </div>
-          <div className="flex-1">
-            <Label htmlFor={`${idPrefix}-max`} className="mb-1 text-[12px]">Max output (chars)</Label>
-            <input id={`${idPrefix}-max`} type="number" min={1} step={1} value={String(args.max_output_chars ?? "")} onChange={(e) => onArgs({ max_output_chars: Number(e.target.value) })} className={inputClass} />
-          </div>
-        </div>
-        {(["allowed_commands", "denied_commands"] as const).map((field) => (
-          <div key={field} className="sm:col-span-2">
-            <p className="mb-1 text-[12px] font-medium text-ink2">{field === "allowed_commands" ? "Allowed commands" : "Denied commands"}</p>
-            <div role="group" aria-label={field === "allowed_commands" ? "Allowed commands" : "Denied commands"} className="flex flex-wrap gap-1.5">
-              {SHELL_COMMANDS.map((cmd) => {
-                const on = (field === "allowed_commands" ? allowed : denied).includes(cmd);
-                return (
-                  <button key={cmd} type="button" aria-pressed={on} onClick={() => flip(field, cmd)}
-                    className={`rounded-full border px-2 py-0.5 font-mono text-[11.5px] transition-colors ${on ? "border-accent bg-accent/15 text-accent" : "border-line text-ink2 hover:border-accent/50"}`}>
-                    {cmd}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        <label className="flex items-center gap-2 text-[12.5px] text-ink2 sm:col-span-2">
-          <input type="checkbox" checked={args.allow_interactive !== false} onChange={(e) => onArgs({ allow_interactive: e.target.checked })} className="accent-[var(--accent)]" />
-          Allow interactive commands
-        </label>
-      </div>
-    );
-  }
+  if (kind === "shell") return <ShellFields idPrefix={idPrefix} args={args} onArgs={onArgs} />;
   if (kind === "web-search") {
     return (
       <div className="mt-2 max-w-xs">
@@ -218,6 +178,105 @@ function CapabilityFields({ kind, idPrefix, args, onArgs }: {
       <select id={`${idPrefix}-effort`} value={String(args.effort ?? "medium")} onChange={(e) => onArgs({ effort: e.target.value })} className={inputClass}>
         {THINKING_EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
       </select>
+    </div>
+  );
+}
+
+// The worker's Shell takes one list — an allow list or a block list — and
+// refuses to start with both. So the policy is one choice, and every write
+// fills the chosen list and empties the other.
+type ShellPolicy = "any" | "only" | "all-but";
+const POLICIES: readonly { id: ShellPolicy; label: string; blurb: string }[] = [
+  { id: "any", label: "Any command", blurb: "Nothing is filtered by name." },
+  { id: "only", label: "Only these", blurb: "Everything else is refused." },
+  { id: "all-but", label: "All but these", blurb: "Anything not listed may run." },
+];
+
+function ShellFields({ idPrefix, args, onArgs }: { idPrefix: string; args: CapabilityArgs; onArgs: (patch: CapabilityArgs) => void }) {
+  const allowed = list(args.allowed_commands);
+  const denied = list(args.denied_commands);
+  // The lists say which policy is in force. When both are empty they cannot,
+  // and the radio keeps the last policy the lists (or the user) named — an
+  // allow list being emptied stays "Only these" instead of jumping to "Any
+  // command" under the user.
+  const implied: ShellPolicy | null = allowed.length ? "only" : denied.length ? "all-but" : null;
+  const [chosen, setChosen] = useState<ShellPolicy>(implied ?? "any");
+  const [seen, setSeen] = useState(implied);
+  if (implied !== seen) {
+    setSeen(implied);
+    if (implied) setChosen(implied);
+  }
+  const policy = implied ?? chosen;
+  const collision = shellListsProblem({ shell: args });
+  const picks = policy === "only" ? allowed : denied;
+  // A saved command the catalogue lacks stays visible, so it can be unpicked.
+  const commands = [...SHELL_COMMANDS, ...picks.filter((c) => !(SHELL_COMMANDS as readonly string[]).includes(c))];
+  const write = (next: string[]) => onArgs({ allowed_commands: policy === "only" ? next : [], denied_commands: policy === "all-but" ? next : [] });
+  const pick = (cmd: string) => write(picks.includes(cmd) ? picks.filter((c) => c !== cmd) : [...picks, cmd]);
+  const choose = (p: ShellPolicy) => {
+    setChosen(p);
+    onArgs({ allowed_commands: [], denied_commands: [] });
+  };
+
+  return (
+    <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
+      <div>
+        <Label htmlFor={`${idPrefix}-cwd`} className="mb-1 text-[12px]">Working folder</Label>
+        <input id={`${idPrefix}-cwd`} value={String(args.cwd ?? "")} onChange={(e) => onArgs({ cwd: e.target.value })} className={`${inputClass} font-mono`} />
+      </div>
+      <div className="flex items-end gap-3">
+        <div className="flex-1">
+          <Label htmlFor={`${idPrefix}-timeout`} className="mb-1 text-[12px]">Timeout (s)</Label>
+          <input id={`${idPrefix}-timeout`} type="number" min={1} step={1} value={String(args.default_timeout ?? "")} onChange={(e) => onArgs({ default_timeout: Number(e.target.value) })} className={inputClass} />
+        </div>
+        <div className="flex-1">
+          <Label htmlFor={`${idPrefix}-max`} className="mb-1 text-[12px]">Max output (chars)</Label>
+          <input id={`${idPrefix}-max`} type="number" min={1} step={1} value={String(args.max_output_chars ?? "")} onChange={(e) => onArgs({ max_output_chars: Number(e.target.value) })} className={inputClass} />
+        </div>
+      </div>
+      <div className="sm:col-span-2">
+        <p className="mb-1 text-[12px] font-medium text-ink2">Commands</p>
+        {collision ? (
+          <div>
+            <FieldError>{collision}</FieldError>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button type="button" size="sm" onClick={() => onArgs({ denied_commands: [] })}>Keep the allow list ({allowed.length})</Button>
+              <Button type="button" size="sm" onClick={() => onArgs({ allowed_commands: [] })}>Keep the block list ({denied.length})</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div role="radiogroup" aria-label="Command policy" className="grid gap-1">
+              {POLICIES.map((p) => (
+                <label key={p.id} className="flex cursor-pointer items-center gap-1.5 text-[12.5px]">
+                  <input type="radio" name={`${idPrefix}-policy`} checked={policy === p.id} onChange={() => choose(p.id)} className="accent-[var(--accent)]" />
+                  {p.label} <span className="text-ink2">— {p.blurb}</span>
+                </label>
+              ))}
+            </div>
+            {policy !== "any" && (
+              <div role="group" aria-label={policy === "only" ? "Allowed commands" : "Blocked commands"} className="mt-2 flex flex-wrap gap-1.5">
+                {commands.map((cmd) => {
+                  const on = picks.includes(cmd);
+                  return (
+                    <button key={cmd} type="button" aria-pressed={on} onClick={() => pick(cmd)}
+                      className={`cursor-pointer rounded-full border px-2 py-0.5 font-mono text-[11.5px] transition-colors ${on ? "border-accent bg-accent/15 text-accent" : "border-line text-ink2 hover:border-accent/50"}`}>
+                      {cmd}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {policy === "only" && picks.length === 0 && (
+              <p className="mt-1.5 text-[11.5px] text-warn">Nothing picked yet, so any command may run.</p>
+            )}
+          </>
+        )}
+      </div>
+      <label className="flex items-center gap-2 text-[12.5px] text-ink2 sm:col-span-2">
+        <input type="checkbox" checked={args.allow_interactive !== false} onChange={(e) => onArgs({ allow_interactive: e.target.checked })} className="accent-[var(--accent)]" />
+        Allow interactive commands
+      </label>
     </div>
   );
 }

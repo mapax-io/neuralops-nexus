@@ -33,3 +33,25 @@ export function useDelayedLoading(loading: boolean, { delay = 150, minDuration =
   // exactly the flicker-free behavior.
   return show;
 }
+
+// "This is taking longer than usual": true once `active` has held for
+// `after` ms, false again the moment it drops, and a fresh clock for every
+// new wait. A loader past this point says so and offers a way out instead
+// of sitting there — a server stalled behind a slow upstream call looks
+// exactly like a hang from the outside.
+export function useSlowAfter(active: boolean, after = 10_000): boolean {
+  const [slow, setSlow] = useState(false);
+  const [lastActive, setLastActive] = useState(active);
+  if (active !== lastActive) {
+    // Adjusting state on a prop change, in render: the flag belongs to one
+    // wait, and must not carry over into the next.
+    setLastActive(active);
+    setSlow(false);
+  }
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => setSlow(true), after);
+    return () => clearTimeout(t);
+  }, [active, after]);
+  return active && slow;
+}

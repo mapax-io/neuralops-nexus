@@ -41,6 +41,17 @@ class MessageOut(Schema):
     created_at: str
 
 
+class MentionRefusalOut(Schema):
+    """A persona in the sender's message that will not answer, and why."""
+    persona_id: str
+    name: str
+    code: str                       # "no_right" today; per-persona codes arrive with call rights
+    message: str
+    resets_at: Optional[str] = None  # set once limits exist
+
+
 class SendMessageOut(Schema):
     message: MessageOut
     channel: str
+    # Only the AI reply is withheld -- the message above always posted.
+    refusals: list[MentionRefusalOut] = []

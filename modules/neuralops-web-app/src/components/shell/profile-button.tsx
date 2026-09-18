@@ -7,8 +7,7 @@ import { ProfileDialog } from "@/components/shell/profile-dialog";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { absolutizeMedia } from "@/lib/api/client";
 import { useMembers } from "@/hooks/use-workspace";
-import { clearAccountScopedState } from "@/lib/auth/session-cleanup";
-import { supabase } from "@/lib/supabase";
+import { signOutOnThisDevice } from "@/lib/auth/sign-out";
 import { useConnectionStore } from "@/stores/connection.store";
 import { usePermissions } from "@/hooks/use-permissions";
 import { companyScope } from "@/lib/permissions";
@@ -32,12 +31,7 @@ export function ProfileButton({ size = 9 }: { size?: 8 | 9 }) {
 
 
   const signOut = async () => {
-    clearAccountScopedState(); // one shared cleanup — stores, drafts, query cache, realtime
-    try {
-      await supabase().auth.signOut();
-    } catch {
-      /* local state is cleared regardless — the session dies on this device */
-    }
+    await signOutOnThisDevice();
     router.replace("/login");
   };
 

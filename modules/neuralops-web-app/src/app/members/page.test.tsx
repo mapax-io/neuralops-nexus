@@ -63,6 +63,54 @@ beforeEach(() => {
 // The page's dialog composes the same hook and fields as the header dialog;
 // this proves the page wiring — footer buttons outside the form, refetch on
 // success — carries the picks through.
+describe("MembersPage — Access per member", () => {
+  it("offers Access for other members, never for yourself or the owner", async () => {
+    server.use(http.get(`${BASE}/api/v1/members/`, () => HttpResponse.json([
+      { user_id: "u1", email: "owner@acme.test", role: "owner", avatar: null, invited_by: null, joined_at: "2026-09-01T00:00:00Z" },
+      { user_id: "u2", email: "sara@acme.test", role: "member", avatar: null, invited_by: null, joined_at: "2026-09-02T00:00:00Z" },
+    ])));
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Access for sara" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Access for owner" })).not.toBeInTheDocument();
+  });
+});
+
+describe("MembersPage — peers are off limits", () => {
+  const ROWS = [
+    { user_id: "u1", email: "owner@acme.test", role: "owner", avatar: null, invited_by: null, joined_at: "2026-09-01T00:00:00Z" },
+    { user_id: "u2", email: "adam@acme.test", role: "admin", avatar: null, invited_by: null, joined_at: "2026-09-02T00:00:00Z" },
+    { user_id: "u3", email: "bea@acme.test", role: "admin", avatar: null, invited_by: null, joined_at: "2026-09-03T00:00:00Z" },
+    { user_id: "u4", email: "sara@acme.test", role: "member", avatar: null, invited_by: null, joined_at: "2026-09-04T00:00:00Z" },
+  ];
+
+  it("as an admin: Access and Remove for a member, nothing for another admin, yourself or the owner", async () => {
+    useConnectionStore.setState({
+      email: "adam@acme.test",
+      connection: { serverUrl: BASE, role: "admin", isOwner: false, companyName: "Acme", serverVersion: "dev", moduleVersions: {} },
+    });
+    server.use(http.get(`${BASE}/api/v1/members/`, () => HttpResponse.json(ROWS)));
+    renderPage();
+    await screen.findByText("sara");
+    expect(screen.getByRole("button", { name: "Access for sara" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove sara from this server" })).toBeInTheDocument();
+    for (const name of ["bea", "adam", "owner"]) {
+      expect(screen.queryByRole("button", { name: `Access for ${name}` })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: `Remove ${name} from this server` })).not.toBeInTheDocument();
+    }
+  });
+
+  it("as the owner: Access and Remove for admins too", async () => {
+    server.use(http.get(`${BASE}/api/v1/members/`, () => HttpResponse.json(ROWS)));
+    renderPage();
+    await screen.findByText("sara");
+    for (const name of ["adam", "bea", "sara"]) {
+      expect(screen.getByRole("button", { name: `Access for ${name}` })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: `Remove ${name} from this server` })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "Access for owner" })).not.toBeInTheDocument();
+  });
+});
+
 describe("MembersPage — Invite teammate", () => {
   it("sends a whole-project grant with the picked role and refreshes the list", async () => {
     renderPage();

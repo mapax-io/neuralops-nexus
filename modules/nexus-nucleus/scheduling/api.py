@@ -105,6 +105,9 @@ def create_schedule(
 
     if not PermissionChecker.can(user, "schedule.create", obj=topic):
         raise HttpError(403, "You don't have permission to create a schedule in this topic.")
+    # A schedule is a standing @mention: the same right the send path checks.
+    if not PermissionChecker.can(user, "persona.mention", obj=topic):
+        raise HttpError(403, "You don't have permission to call personas in this topic.")
 
     persona = intel_svc.get_persona(company, payload.persona_id)
     if not persona:

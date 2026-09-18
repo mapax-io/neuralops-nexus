@@ -3,6 +3,7 @@ import { parseEvent } from "./events";
 import {
   applyEvent,
   applyHistory,
+  attachRefusals,
   expireTyping,
   initialChatState,
   markStalled,
@@ -36,6 +37,41 @@ describe("event parsing", () => {
   });
   it("ignores unknown event types", () => {
     expect(parseEvent({ type: "tool_call_start", id: "x" })).toBeNull();
+  });
+  it("parses mention_refused with its actor and the refusals verbatim", () => {
+    const refusals = [{ persona_id: "p1", name: "Sara", code: "no_right", message: "You can't call personas in this topic.", resets_at: null }];
+    expect(parseEvent({ type: "mention_refused", id: "m1", actor_user_id: "u1", refusals })).toEqual({ kind: "refused", id: "m1", actorUserId: "u1", refusals });
+    expect(parseEvent({ type: "mention_refused", id: "m1", refusals })).toBeNull(); // no actor: nobody to tell
+  });
+});
+
+describe("message store — refused mentions", () => {
+  const refusals = [{ persona_id: "p1", name: "Sara", code: "no_right", message: "You can't call personas in this topic.", resets_at: null }];
+
+  it("attaches the note to the sender's own message and ignores other people's", () => {
+    let s = initialChatState();
+    s = ev(s, wireMsg("m1", 1));
+    const mine = ev(s, { type: "mention_refused", id: "m1", actor_user_id: "u1", refusals }, NOW, "u1");
+    expect(mine.messages.m1.refusals).toEqual(refusals);
+    const theirs = ev(s, { type: "mention_refused", id: "m1", actor_user_id: "u1", refusals }, NOW, "u2");
+    expect(theirs).toBe(s);
+  });
+
+  it("holds a note that arrives before its message and attaches it when the message lands", () => {
+    let s = initialChatState();
+    s = ev(s, { type: "mention_refused", id: "m1", actor_user_id: "u1", refusals }, NOW, "u1");
+    expect(s.messages.m1).toBeUndefined();
+    s = ev(s, wireMsg("m1", 1));
+    expect(s.messages.m1.refusals).toEqual(refusals);
+    expect(s.pendingRefusals).toEqual({});
+  });
+
+  it("attaches the send response's refusals directly (the sender's own tab)", () => {
+    let s = initialChatState();
+    s = ev(s, wireMsg("m1", 1));
+    s = attachRefusals(s, "m1", refusals);
+    expect(s.messages.m1.refusals).toEqual(refusals);
+    expect(attachRefusals(s, "m1", [])).toBe(s);
   });
 });
 

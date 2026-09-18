@@ -138,6 +138,7 @@ class ModelConfig(TenantBaseModel):
         OPENAI            = "openai",            "OpenAI"
         ANTHROPIC         = "anthropic",         "Anthropic"
         GOOGLE            = "google",            "Google (Gemini)"
+        DEEPSEEK          = "deepseek",          "DeepSeek"
         OLLAMA            = "ollama",            "Ollama (local)"
         # Everything reachable with an OpenAI-shaped API plus an api_base:
         # vLLM, LM Studio, OpenRouter, Together, Groq, Fireworks, Mistral,

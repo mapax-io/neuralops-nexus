@@ -9,10 +9,11 @@ describe("compareServerVersion", () => {
     [null, "unknown"],
     [undefined, "unknown"],
     ["not-semver", "unknown"],
-    ["1.1.2", "breaking"], // MAJOR differs
-    ["0.2.0", "breaking"], // MAJOR 0: MINOR drift is breaking
-    ["0.1.9", "minor"], // PATCH-only drift warns, never blocks
-    ["0.1.0", "minor"],
+    ["1.2.0", "breaking"], // MAJOR differs
+    ["0.3.0", "breaking"], // MAJOR 0: MINOR drift is breaking
+    ["0.1.2", "breaking"], // a server from before the 0.2 contract
+    ["0.2.9", "minor"], // PATCH-only drift warns, never blocks
+    ["0.2.1", "minor"],
   ];
   it.each(cases)("%s → %s", (server, expected) => {
     expect(compareServerVersion(server)).toBe(expected);

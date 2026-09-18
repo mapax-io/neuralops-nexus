@@ -193,6 +193,7 @@ def remove_user_from_server(company, user_id: str, requesting_user) -> dict:
         raise ValueError("User is not a member of this server.")
     if access.role == CompanyAccess.Role.OWNER:
         raise ValueError("Cannot remove the server owner.")
+    _refuse_peer(company, requesting_user, access, "Only the owner can remove another admin.")
 
     email = access.user.email or str(user_id)
     access.is_active = False
@@ -251,6 +252,23 @@ def member_access(company, user) -> dict:
     }
 
 
+def _is_owner(company, user) -> bool:
+    return str(company.owner_id) == str(user.id) or CompanyAccess.objects.filter(
+        company=company, user=user, role=CompanyAccess.Role.OWNER, is_active=True,
+    ).exists()
+
+
+def _refuse_peer(company, actor, target_access, message: str) -> None:
+    """
+    Peers are off limits: an admin manages members and viewers (and may still
+    promote a member to admin), but only the owner changes, re-scopes or
+    removes another admin. Role name only -- an admin scoped to one project is
+    an admin here too.
+    """
+    if target_access.role == CompanyAccess.Role.ADMIN and not _is_owner(company, actor):
+        raise ValueError(message)
+
+
 def set_member_access(company, actor, target_user_id: str, role: str, grants: list) -> dict:
     """
     Replace what a member holds: everything they had goes, then either the
@@ -259,8 +277,9 @@ def set_member_access(company, actor, target_user_id: str, role: str, grants: li
     follow, so the members list and the old has_perm() checks agree.
 
     Refuses the owner (nothing on this server outranks them), the caller's own
-    row (locking yourself out is not something the UI should offer), and
-    handing out ownership. Validated before anything is written.
+    row (locking yourself out is not something the UI should offer), another
+    admin unless the caller is the owner, and handing out ownership. Validated
+    before anything is written.
     """
     from django.contrib.auth.models import Group
     # CompanyAccess, ProjectMember, TopicParticipant, Role, PermissionChecker — imported at top of file.
@@ -277,6 +296,7 @@ def set_member_access(company, actor, target_user_id: str, role: str, grants: li
         raise ValueError("User is not a member of this server.")
     if access.role == CompanyAccess.Role.OWNER or str(company.owner_id) == str(target_user_id):
         raise ValueError("The owner's access cannot be changed.")
+    _refuse_peer(company, actor, access, "Only the owner can change another admin's access.")
     role_row = Role.objects.filter(company=company, name=role.capitalize()).first()
     if role_row is None:
         raise ValueError(f"Role '{role}' is not set up on this server. Run manage.py seed_permissions.")
@@ -441,7 +461,10 @@ def _send_invite_email(company, email: str, redirect_to: str | None) -> tuple[bo
     from authn.supabase import SupabaseAdminError, invite_user_by_email, send_recovery_email
 
     if not settings.SUPABASE_SERVICE_KEY:
-        return False, None
+        # A configuration gap, not a delivery failure -- say which, so the
+        # admin reading the toast knows what to set rather than wondering
+        # whether the address was wrong.
+        return False, "This server is not set up to send email -- no SUPABASE_SERVICE_KEY is configured."
     if redirect_to and not redirect_to.startswith(("http://", "https://")):
         redirect_to = None
     server_url = (getattr(settings, "NEURALOPS_SERVER_URL", "") or "").rstrip("/")
@@ -599,6 +622,7 @@ def remove_member(company, caller, target_user_id: str) -> dict:
         raise ValueError("Cannot remove the server owner.")
     if target_access.user == caller:
         raise ValueError("You cannot remove yourself.")
+    _refuse_peer(company, caller, target_access, "Only the owner can remove another admin.")
 
     target_access.soft_delete()
     return {"ok": True, "message": f"{target_access.user.email} has been removed from this server."}
@@ -650,6 +674,9 @@ def list_team(company, project) -> list:
 def add_member(company, project, user_id: str, role: str = "member") -> dict:
     # ProjectMember — imported at top of file.
 
+    roles = [r.value for r in ProjectMember.Role if r != ProjectMember.Role.OWNER]
+    if role not in roles:
+        raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(roles)}")
     user = User.objects.filter(id=user_id, is_active=True).first()
     if not user:
         raise ValueError("User not found.")
@@ -682,6 +709,9 @@ def remove_team_member(company, project, user_id: str, requesting_user) -> dict:
         raise ValueError("Cannot remove the project owner.")
     if str(member.user_id) == str(requesting_user.id):
         raise ValueError("You cannot remove yourself from the project.")
+    target_access = get_member_access(company, member.user)
+    if target_access:  # a persona's shadow user holds no server access
+        _refuse_peer(company, requesting_user, target_access, "Only the owner can remove another admin from a project.")
 
     member.soft_delete()
     return {"ok": True, "message": f"{member.user.email or 'Member'} removed from project."}

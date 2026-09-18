@@ -33,6 +33,16 @@ TOOL_ACTIVITY_LABELS = {
 }
 
 
+def mention_refused_event(msg_id: str, actor_user_id: str, refusals: list[dict]) -> dict:
+    """
+    For the sender only: the personas in their message that will not answer,
+    and why. It rides the topic channel like everything else -- clients drop
+    it unless actor_user_id is their own -- so the sender's other tabs learn it
+    too. `id` is the HUMAN message the note attaches to.
+    """
+    return {"type": "mention_refused", "id": msg_id, "actor_user_id": actor_user_id, "refusals": refusals}
+
+
 def tool_activity_event(msg_id: str, event: dict) -> dict | None:
     """
     The tool_activity payload for a worker tool_call_start event, or None when

@@ -60,3 +60,13 @@ describe("absolutizeMedia", () => {
     expect(absolutizeMedia(null)).toBeNull();
   });
 });
+
+// A request that never answers (a server mid-restart during a deploy) must
+// not hold a loader forever: it becomes the same "could not reach" failure a
+// dropped connection is, which every gate already knows how to show.
+describe("apiJson — a request that never answers gives up", () => {
+  it("rejects after the timeout as an unreachable server", async () => {
+    server.use(http.get(`${BASE}/api/v1/hang/`, () => new Promise<never>(() => {})));
+    await expect(apiJson("/api/v1/hang/", { timeoutMs: 60 })).rejects.toMatchObject({ status: 0, message: "Could not reach the server." });
+  });
+});

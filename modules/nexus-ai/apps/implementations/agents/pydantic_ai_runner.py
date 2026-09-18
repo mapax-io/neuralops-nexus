@@ -11,8 +11,6 @@ from pydantic_ai.capabilities import (
     WebFetch,
     WebSearch,
     XSearch,
-    capability,
-    web_search,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -21,13 +19,15 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    FunctionToolCallEvent,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from fastmcp.client.transports import StdioTransport
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIChatModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai_harness import (
     Advisor,
     CapabilityCreation,
@@ -42,6 +42,9 @@ from pydantic_ai_harness import (
     SpendLimits,
     SubAgents,
     SummarizingCompaction,
+    TieredCompaction,
+    DeduplicateFileReads,
+    ClearToolResults,
 )
 
 from apps.interfaces.agent import AgentRunner
@@ -54,7 +57,6 @@ from apps.schemas.trigger import (
     ToolCallData,
     TriggerJob,
     TriggerSwarmJob,
-    MCPServerConfig,
     MCPArgs,
 )
 
@@ -65,20 +67,9 @@ class PydanticAIRunner(AgentRunner):
     _MODEL_REGISTRY = {
         "openai": (OpenAIResponsesModel, OpenAIProvider),
         "anthropic": (AnthropicModel, AnthropicProvider),
+        "deepseek": (OpenAIChatModel, DeepSeekProvider),
+        "openai_compatible": (OpenAIChatModel, OpenAIProvider),
     }
-
-    _DEFAULT_CAPABILITY_REGISTRY = [
-        WebSearch(local="duckduckgo"),
-        WebFetch(local=True),
-        Shell(
-            cwd=".",
-            allowed_commands=["ls", "cat", "rg", "touch", "grep", "find", "mkdir"],
-            allow_interactive=True,
-        ),
-        FileSystem(root_dir="."),
-        Thinking('medium'),
-        Planning(),
-    ]
 
     _CAPABILITY_REGISTRY = {
         PydanticAICapabilities.ADVISOR: lambda x: Advisor(**x),
@@ -190,15 +181,35 @@ class PydanticAIRunner(AgentRunner):
         return Agent(
             model=PydanticAIRunner._resolve_model(persona),
             instructions=persona.system_prompt,
-            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers),
-            retries={"tools": 3},
+            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers, persona.model.max_tokens),
+            retries={
+                "tools": 3,
+                "output": 3,
+            }
         )
 
     @classmethod
     def _resolve_capabilities(
-        cls, capabilities: PersonaCapabilities, mcp_servers: list[MCPArgs]
+        cls, capabilities: PersonaCapabilities, mcp_servers: list[MCPArgs], max_tokens: int
     ) -> list[NativeOrLocalTool]:
+
+        token_target = max(max_tokens - 20_000, int(0.9 * max_tokens))
+
         resolved = []
+
+        resolved.append(ToolSearch(strategy=None))
+
+        resolved.append(
+            TieredCompaction(
+                tiers=[
+                    DeduplicateFileReads(file_key=cls._file_key_extractor),
+                    ClearToolResults(max_fraction=0.9, keep_pairs=5),
+                    SummarizingCompaction(receipts=True,
+                                          keep_user_messages=True,
+                                          max_tokens=token_target)],
+                target_tokens=token_target,
+            )
+        )
 
         if capabilities.filesystem is not None:
             resolved.append(FileSystem(**capabilities.filesystem.model_dump(exclude_none=True)))
@@ -209,14 +220,6 @@ class PydanticAIRunner(AgentRunner):
         
         for mcp_server in mcp_servers:
             if mcp_server.url:
-                # Route A: HTTP/SSE
-                #
-                # The bearer goes out as an explicit header rather than via
-                # the `authorization_token` convenience field. Both exist on
-                # MCP(), but only this one is unambiguous about what reaches
-                # the wire -- and a server that answered 401 for a token it
-                # had just issued itself (verified by hand with curl) is the
-                # reason to stop trusting the convenience path.
                 mcp_kwargs = {"url": mcp_server.url}
                 if mcp_server.authorization_token:
                     mcp_kwargs["headers"] = {
@@ -225,14 +228,13 @@ class PydanticAIRunner(AgentRunner):
                 resolved.append(MCP(**mcp_kwargs))
                 
             elif mcp_server.command:
-                # Route B: Local stdio subprocess
-                # Instantiate the runtime transport object HERE, right before passing it
                 transport = StdioTransport(
                     command=mcp_server.command,
                     args=mcp_server.args,
                     env=mcp_server.env if mcp_server.env else None
                 )
-                resolved.append(MCP(local=transport))
+                resolved.append(MCP(local=transport, defer_loading=True))
+
         return resolved
 
 
@@ -247,3 +249,12 @@ class PydanticAIRunner(AgentRunner):
             raise
         provider = ProviderClass(api_key=persona.model.api_key)
         return ModelClass(model_name, provider=provider)
+    
+    @staticmethod
+    def _file_key_extractor(call: ToolCallPart) -> str | None:
+        if call.tool_name == 'read_file':
+            try:
+                return call.args_as_dict().get('path')
+            except Exception:
+                return None
+        return None

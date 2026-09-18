@@ -19,7 +19,13 @@ class SupabaseAdminError(Exception):
         self.code = code
 
 
-jwks_client = PyJWKClient(settings.SUPABASE_JWKS_URL)
+# Signing keys are cached per key id for the life of the process; an unknown
+# kid still refreshes the set, so rotation works. Without this the JWK set
+# expired every 5 minutes and the next request re-fetched it synchronously on
+# the one sync thread, stalling every other request for as long as the fetch
+# took (0.4-4.5 s measured) -- seen as chats stuck on their loader. The
+# timeout bounds the one fetch left: the first request after start-up.
+jwks_client = PyJWKClient(settings.SUPABASE_JWKS_URL, cache_keys=True, timeout=10)
 
 
 def verify_supabase_token(access_token: str) -> dict:

@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useUiStore } from "@/stores/ui.store";
 import { Boxes, Check, Cpu, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ConfirmDialog, Dialog, DialogSection } from "@/components/ui/dialog";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { validateName as vName, validateNumber, validateUrl as vUrl } from "@/lib/validation";
 import { useFormErrors } from "@/hooks/use-form-errors";
 import { DEFAULT_CONTEXT_WINDOW, defaultContextWindow } from "@/lib/model-context";
-import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useSetModelConfigProject } from "@/hooks/use-intelligence";
+import { useCreateModelConfig, useDeleteModelConfig, useModelConfigs, usePatchModelConfig, useProviderModels, useSetModelConfigProject, type CatalogModel } from "@/hooks/use-intelligence";
 import { companyScope } from "@/lib/permissions";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjects } from "@/hooks/use-workspace";
@@ -25,12 +27,12 @@ const PROVIDERS = [
   { value: "anthropic", label: "Anthropic", placeholder: "claude-sonnet-5", needsKey: true, base: "none" },
   { value: "openai", label: "OpenAI", placeholder: "gpt-5", needsKey: true, base: "none" },
   { value: "google", label: "Google (Gemini)", placeholder: "gemini-2.0-flash", needsKey: true, base: "none" },
+  { value: "deepseek", label: "DeepSeek", placeholder: "deepseek-chat", needsKey: true, base: "none" },
   { value: "ollama", label: "Ollama (local)", placeholder: "llama3", needsKey: false, base: "optional" },
   { value: "openai_compatible", label: "OpenAI-compatible endpoint", placeholder: "your-model-name", needsKey: false, base: "required" },
 ] as const;
 
 const providerOf = (value: string) => PROVIDERS.find((p) => p.value === value);
-const providerLabel = (value: string) => providerOf(value)?.label ?? value;
 
 const validateModelId = (v: string) => {
   const t = v.trim();
@@ -204,6 +206,169 @@ export function ModelsTab({ embedded }: { embedded?: boolean }) {
   );
 }
 
+// The model id: free text with the provider's catalog models as suggestions,
+// filtered by what has been typed. Always this one field, whether or not the
+// catalog has answered yet -- swapping the element under a typing user drops
+// their focus. WAI-ARIA combobox: arrows move a highlight, Enter picks (and
+// never submits the form), Escape closes the list alone (the Dialog yields
+// the key to an open combobox), a click picks without blurring the field.
+// The list is portaled and fixed to the field: the dialog body scrolls, and a
+// list positioned inside it is clipped at the body's edge.
+function ModelIdField({ id, value, options, placeholder, error, onChange, onBlur }: {
+  id: string;
+  value: string;
+  options: CatalogModel[];
+  placeholder?: string;
+  error?: boolean;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // null: nothing highlighted yet -- typing never pre-selects a row.
+  const [active, setActive] = useState<number | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const listId = useId();
+  const [anchor, setAnchor] = useState<React.CSSProperties | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    return q ? options.filter((o) => o.id.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)) : options;
+  }, [options, value]);
+  const shown = open && filtered.length > 0;
+  const highlight = active === null ? null : Math.min(active, filtered.length - 1);
+  const optionId = highlight === null ? undefined : `${listId}-${highlight}`;
+
+  // Below the field when there is room, above it otherwise; capped to what
+  // the viewport leaves. Re-measured while open on scroll and resize.
+  const place = useCallback(() => {
+    const r = wrapperRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const below = window.innerHeight - r.bottom - 12;
+    const above = r.top - 12;
+    const cap = (room: number) => Math.max(96, Math.min(240, room));
+    setAnchor(
+      below >= 160 || below >= above
+        ? { position: "fixed", top: r.bottom + 4, left: r.left, width: r.width, maxHeight: cap(below) }
+        : { position: "fixed", bottom: window.innerHeight - r.top + 4, left: r.left, width: r.width, maxHeight: cap(above) },
+    );
+  }, []);
+  const openList = () => {
+    place();
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!shown) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!wrapperRef.current?.contains(t) && !listRef.current?.contains(t)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("resize", place);
+    document.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("scroll", place, true);
+    };
+  }, [shown, place]);
+
+  useEffect(() => {
+    // Optional call: jsdom has no layout, so no scrollIntoView either.
+    if (shown && optionId) document.getElementById(optionId)?.scrollIntoView?.({ block: "nearest" });
+  }, [shown, optionId]);
+
+  const pick = (o: CatalogModel) => {
+    onChange(o.id);
+    setOpen(false);
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!filtered.length) return;
+      e.preventDefault();
+      const last = filtered.length - 1;
+      if (!shown) {
+        openList();
+        setActive(e.key === "ArrowDown" ? 0 : last);
+      } else if (highlight === null) {
+        setActive(e.key === "ArrowDown" ? 0 : last);
+      } else {
+        setActive(e.key === "ArrowDown" ? (highlight === last ? 0 : highlight + 1) : highlight === 0 ? last : highlight - 1);
+      }
+      return;
+    }
+    if (!shown) return;
+    if (e.key === "Enter" && highlight !== null) {
+      e.preventDefault();
+      pick(filtered[highlight]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    } else if (e.key === "Tab" || (e.key === "Enter" && highlight === null)) {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <Input
+        id={id}
+        required
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={shown}
+        aria-controls={shown ? listId : undefined}
+        aria-activedescendant={shown ? optionId : undefined}
+        aria-invalid={error}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setActive(null);
+          openList();
+        }}
+        onFocus={() => {
+          setActive(null);
+          openList();
+        }}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        className="font-mono"
+      />
+      {shown && anchor && createPortal(
+        <ul
+          ref={listRef}
+          id={listId}
+          role="listbox"
+          aria-label="Suggested models"
+          style={anchor}
+          className="z-[60] flex flex-col overflow-y-auto rounded-[10px] border border-line bg-surface p-1 shadow-[0_4px_16px_rgba(0,0,0,0.1)]"
+        >
+          {filtered.map((o, i) => (
+            <li
+              key={o.id}
+              id={`${listId}-${i}`}
+              role="option"
+              aria-selected={i === highlight}
+              onMouseDown={(e) => {
+                e.preventDefault(); // keep focus (and the blur-validation) on the field
+                pick(o);
+              }}
+              onMouseEnter={() => setActive(i)}
+              className={cn("flex cursor-pointer flex-col gap-0.5 rounded-[6px] px-2.5 py-1.5 text-left text-sm", i === highlight && "bg-surface2")}
+            >
+              <span className="truncate font-medium leading-tight text-ink">{o.name}</span>
+              <span className="truncate font-mono text-[11px] leading-tight text-ink2">{o.id}</span>
+            </li>
+          ))}
+        </ul>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
 export function CreateModelDialog({ open, onClose, attachProjectId, attachProjectName, onCreated }: {
   open: boolean;
   onClose: () => void;
@@ -218,6 +383,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
   const setProject = useSetModelConfigProject();
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<string>("anthropic");
+  const suggestions = useProviderModels(provider, open);
   const [modelId, setModelId] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
@@ -352,18 +518,17 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
           </div>
           <div>
             <Label htmlFor="m-id" required>Model id</Label>
-            <Input
+            <ModelIdField
               id="m-id"
-              required
-              placeholder={prov.placeholder}
               value={modelId}
-              aria-invalid={!!form.error("id")}
-              onChange={(e) => {
-                setModelId(e.target.value);
-                syncContext(provider, e.target.value);
+              options={suggestions}
+              placeholder={prov.placeholder}
+              error={!!form.error("id")}
+              onChange={(v) => {
+                setModelId(v);
+                syncContext(provider, v);
               }}
               onBlur={() => form.touch("id")}
-              className="font-mono"
             />
             {form.error("id") ? <FieldError>{form.error("id")}</FieldError> : <p className="mt-1.5 text-[12px] text-ink2">Bare model name — no provider prefix. Becomes {provider}:{modelId.trim() || prov.placeholder}.</p>}
           </div>
@@ -426,6 +591,7 @@ export function CreateModelDialog({ open, onClose, attachProjectId, attachProjec
 function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onClose: () => void; siblings: ModelConfig[] }) {
   const [name, setName] = useState(model.name);
   const [provider, setProvider] = useState<string>(model.provider);
+  const suggestions = useProviderModels(provider);
   const [modelId, setModelId] = useState(model.model_id);
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState(model.api_base ?? "");
@@ -519,15 +685,7 @@ function EditModelDialog({ model, onClose, siblings }: { model: ModelConfig; onC
           </div>
           <div>
             <Label htmlFor="me-id" required>Model id</Label>
-            <Input
-              id="me-id"
-              required
-              value={modelId}
-              aria-invalid={!!form.error("id")}
-              onChange={(e) => setModelId(e.target.value)}
-              onBlur={() => form.touch("id")}
-              className="font-mono"
-            />
+            <ModelIdField id="me-id" value={modelId} options={suggestions} error={!!form.error("id")} onChange={setModelId} onBlur={() => form.touch("id")} />
             <FieldError>{form.error("id")}</FieldError>
           </div>
         </div>

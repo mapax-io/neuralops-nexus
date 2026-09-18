@@ -270,7 +270,7 @@ const S0: MCPServer = {
   is_internal: true,
   is_protected: true,
   is_default: true,
-  capability_config: { Filesystem: { root_dir: "/nexus/projects/apollo" }, Shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, "Web Search": { local: "duckduckgo" }, "Web Fetch": { local: true } },
+  capability_config: { filesystem: { root_dir: "/nexus/projects/apollo" }, shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, web_search: { local: "duckduckgo" }, web_fetch: { local: true } },
   url: null,
   auth_type: "none",
 };
@@ -319,9 +319,9 @@ describe("McpTab — built-in (internal) capabilities", () => {
     await waitFor(() => expect(posted).not.toBeNull());
     expect(posted).toEqual({
       project_id: "p2", name: "Research caps", is_internal: true,
-      capability_config: expect.objectContaining({ Filesystem: expect.any(Object), "Web Search": { local: "duckduckgo" }, "Web Fetch": { local: true }, Thinking: { effort: "high" } }),
+      capability_config: expect.objectContaining({ filesystem: expect.any(Object), web_search: { local: "duckduckgo" }, web_fetch: { local: true }, thinking: { effort: "high" } }),
     });
-    expect((posted!.capability_config as Record<string, unknown>).Shell).toBeUndefined();
+    expect((posted!.capability_config as Record<string, unknown>).shell).toBeUndefined();
     expect(posted).not.toHaveProperty("url");
     expect(posted).not.toHaveProperty("transport");
     expect(posted).not.toHaveProperty("auth_type");
@@ -360,7 +360,46 @@ describe("McpTab — built-in (internal) capabilities", () => {
     fireEvent.submit(document.getElementById("mce-form")!);
     await waitFor(() => expect(patched).not.toBeNull());
     expect(Object.keys(patched!)).toEqual(["capability_config"]);
-    expect(patched!.capability_config).toEqual({ Filesystem: { root_dir: "/nexus/projects/apollo" }, Shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, "Web Search": { local: "duckduckgo" } });
+    expect(patched!.capability_config).toEqual({ filesystem: { root_dir: "/nexus/projects/apollo" }, shell: { cwd: "/nexus/projects/apollo", allowed_commands: ["ls"] }, web_search: { local: "duckduckgo" } });
+  });
+
+  it("refuses to add built-in capabilities whose shell has both lists", async () => {
+    renderTab();
+    await screen.findByText("Warehouse tools");
+    await openCreateDialog();
+    fireEvent.click(screen.getByLabelText(/built-in capabilities/i));
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p1" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Both lists" } });
+    fireEvent.click(screen.getByRole("button", { name: /edit as json/i }));
+    fireEvent.change(screen.getByLabelText("Capabilities JSON"), { target: { value: JSON.stringify({ shell: { allowed_commands: ["ls"], denied_commands: ["rm"] } }) } });
+    fireEvent.click(screen.getByRole("button", { name: /back to the list/i }));
+    expect(screen.getByRole("button", { name: /add capabilities/i })).toBeDisabled();
+    submitCreate();
+    expect(posted).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /keep the allow list/i }));
+    expect(screen.getByRole("button", { name: /add capabilities/i })).toBeEnabled();
+  });
+
+  it("refuses to save a shell allow list and block list together, until one is kept", async () => {
+    server.use(http.get(SERVERS_URL, () => HttpResponse.json([S0])));
+    let patched: Record<string, unknown> | null = null;
+    server.use(http.patch(`${SERVERS_URL}:id/`, async ({ request }) => { patched = (await request.json()) as Record<string, unknown>; return HttpResponse.json({ ...S0, ...patched }); }));
+    renderTab();
+    await screen.findByText("Apollo Capabilities");
+    fireEvent.click(screen.getByRole("button", { name: "Edit MCP server Apollo Capabilities" }));
+    await screen.findByText("Edit Apollo Capabilities");
+    fireEvent.click(screen.getByRole("button", { name: /edit as json/i }));
+    fireEvent.change(screen.getByLabelText("Capabilities JSON"), { target: { value: JSON.stringify({ shell: { cwd: ".", allowed_commands: ["ls"], denied_commands: ["rm"] } }) } });
+    fireEvent.click(screen.getByRole("button", { name: /back to the list/i }));
+    expect(screen.getByRole("alert")).toHaveTextContent(/both an allow list and a block list/i);
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeDisabled();
+    fireEvent.submit(document.getElementById("mce-form")!);
+    expect(patched).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /keep the block list/i }));
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeEnabled();
+    fireEvent.submit(document.getElementById("mce-form")!);
+    await waitFor(() => expect(patched).not.toBeNull());
+    expect(patched!.capability_config).toEqual({ shell: { cwd: ".", allowed_commands: [], denied_commands: ["rm"] } });
   });
 });
 

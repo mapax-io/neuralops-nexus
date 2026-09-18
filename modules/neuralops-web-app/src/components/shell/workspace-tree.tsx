@@ -180,7 +180,7 @@ function ProjectNode({ project, activeChannelId }: { project: Project; activeCha
   return (
     <div className="mb-2">
       <div className="group flex items-center rounded-lg px-1.5 py-1 hover:bg-surface">
-        <button aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13.5px] font-semibold">
+        <button aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13.5px] font-semibold transition-colors hover:text-accent">
           <ChevronRight aria-hidden size={12} strokeWidth={2.25} className={`flex-none text-ink2 transition-transform ${open ? "rotate-90" : ""}`} />
           <Mark aria-hidden size={14} strokeWidth={2} className={`flex-none ${tint}`} />
           {/* Full name, wrapped — never an ellipsis (matches the topics panel). */}
@@ -308,6 +308,11 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
   const { data: projects } = useProjects();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  // True from submit until the create has fully settled. The list refetches
+  // the moment the server has the new project -- while this dialog is still
+  // open waiting for rights -- and the name just sent must not read as a
+  // duplicate of itself for that gap.
+  const [submitting, setSubmitting] = useState(false);
 
   // Projects are stored under a kebab-cased name, so the duplicate check must
   // compare the SAME normalized form — not the raw typed string (else
@@ -317,7 +322,7 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
     const base = validateName(v, { label: "project name", max: 60 });
     if (base) return base;
     const s = toSlug(v);
-    if (projects?.some((p) => p.name.toLowerCase() === s)) return `A project named "${v.trim()}" already exists.`;
+    if (!submitting && projects?.some((p) => p.name.toLowerCase() === s)) return `A project named "${v.trim()}" already exists.`;
     return null;
   };
   // Both rules derived live: the button gates on them, the name shows its
@@ -346,7 +351,10 @@ function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => 
     // The button is gated on form.invalid; a submit that slips through
     // reveals the message instead of posting.
     if (form.invalid) return form.touchAll();
-    create.mutate({ name: toSlug(name), description: description.trim() || undefined });
+    setSubmitting(true);
+    // Settles after the hook's own callbacks -- i.e. after the rights refetch
+    // it waits for -- so the guard covers the whole window.
+    create.mutate({ name: toSlug(name), description: description.trim() || undefined }, { onSettled: () => setSubmitting(false) });
   };
   return (
     <Dialog
@@ -399,6 +407,9 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
   const { setChannel } = useSelection();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  // Same as the project dialog: the parent's list refetches before this
+  // closes, and the channel just sent must not read as its own duplicate.
+  const [submitting, setSubmitting] = useState(false);
 
   // Channels are stored under a kebab-cased name — compare the normalized form,
   // not the raw typed string (see the project dialog for the same reasoning).
@@ -407,7 +418,7 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
     const base = validateName(v, { label: "channel name", max: 40 });
     if (base) return base;
     const s = toSlug(v);
-    if (existingNames.some((n) => n.toLowerCase() === s)) return `A channel named "${v.trim()}" already exists.`;
+    if (!submitting && existingNames.some((n) => n.toLowerCase() === s)) return `A channel named "${v.trim()}" already exists.`;
     return null;
   };
   const form = useFormErrors({ name: [name, validate(name)] });
@@ -427,7 +438,8 @@ function CreateChannelDialog({ projectId, projectName, existingNames, open, onCl
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (form.invalid) return form.touchAll();
-    create.mutate({ name: toSlug(name), description: description.trim() || undefined });
+    setSubmitting(true);
+    create.mutate({ name: toSlug(name), description: description.trim() || undefined }, { onSettled: () => setSubmitting(false) });
   };
   return (
     <Dialog

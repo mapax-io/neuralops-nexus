@@ -194,25 +194,6 @@ the sections get a "superseded by PR #99" banner until then.
 
 ---
 
-## `NEURALOPS_VERSION` not bumped for the PR #99 API break
-
-**Where:** `neuralops/Dockerfile` (`NEURALOPS_VERSION="0.1.2"`), consumed by the
-web-app's `COMPATIBLE_SERVER_VERSION` drift check in `src/lib/version.ts`.
-
-PR #99 is a breaking API change for clients (`/ai-models/` → `/model-configs/`,
-`/agents/` gone, persona payloads reshaped), but the image version stayed 0.1.2
-(the dev profile reports `dev`, which the check ignores). The web-app was
-adapted to the new contract and its `COMPATIBLE_SERVER_VERSION` deliberately
-left at 0.1.2: bumping it alone would flag every 0.1.2 production server as
-"breaking" even though 0.1.2 images built from the current `dev` DO speak the
-new contract. When the image version is bumped (0.2.0 would be right under the
-"MINOR drift is breaking while MAJOR is 0" rule), move the frontend constant in
-the same change.
-
-**Decision needed:** release owner's call — when and to what.
-
----
-
 ## Backend fields the AI worker never reads (do not build UI for these yet)
 
 **Where:** `modules/nexus-nucleus/internal/api.py` (`ModelInternal`, `PromptInternal`,
@@ -413,10 +394,20 @@ pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-0
   #101/#102 entry). Everything the capability editor saves is stored and forwarded,
   and then not read. Nothing the web app can do until `resolve_persona` maps
   `capabilities` → `capability_config` and the runner builds capabilities from it.
-- **Template drift, already.** `settings.MCP_CAPABILITY_TEMPLATE`'s Shell comment lists
-  `sed` and `wget` as valid commands; `trigger.py`'s `ShellCommands` enum has neither.
-  The web app's catalogue (`src/lib/mcp-capabilities.ts`) mirrors the enum, and is a
-  third copy of the same shape. An endpoint serving the template would end the copies.
+- **Three copies of the Shell command list.** `settings.MCP_CAPABILITY_TEMPLATE`'s Shell
+  comment and `trigger.py`'s `ShellCommands` enum agree (`ls` … `wget`, 17 names since the
+  worker added `sed`/`wget` on 2026-09-07); the web app's catalogue
+  (`src/lib/mcp-capabilities.ts`) is a third copy, realigned in app 0.18.6 after shipping
+  without those two. An endpoint serving the template would end the copies.
+- **Shell allow and block lists are exclusive in the worker, and both-empty means
+  unrestricted.** The pydantic-ai harness `Shell` raises `ValueError('Specify
+  allowed_commands or denied_commands, not both.')` at toolset construction, so a row saved
+  with both lists breaks the persona's next run rather than one command. The web app (0.18.6)
+  never writes both and blocks Save on a row that has both. Separately, nexus-ai always
+  forwards `denied_commands` explicitly (the schema defaults it to `[]`), so the harness's
+  built-in denylist of destructive commands never applies: a row with both lists empty runs
+  any command by name. The editor labels that state "Any command"; whether the worker should
+  fall back to the harness denylist instead is a nexus-ai decision.
 - **`is_protected` / `is_default` were not exposed or enforced.** Both existed on the
   model (the provisioned row sets them) but `MCPServerOut` did not carry them and
   `delete_mcp_server_standalone` did not check `is_protected`, so the default row was
@@ -435,7 +426,6 @@ pre-ticked on new personas, no cap). Verified against the merged code, 2026-09-0
 **Decision needed:** map `capabilities` in the worker (the point of the split); serve the
 capability template from nucleus instead of copying it; restore the compose commands;
 decide whether to backfill existing projects.
-
 
 ---
 
@@ -459,12 +449,34 @@ each changes what existing users can see — so none was touched.
 2. **Owner and Admin hold identical rights.** Admin's explicit list in
    `DEFAULT_ROLE_RIGHTS` covers all 33 registry codes, so the two roles differ
    in name only. Worth deciding before anything relies on the distinction.
+   One behavior now does rely on the role *name* (2026-09-13): only the Owner
+   changes, re-scopes or removes an Admin — `_refuse_peer()` in
+   `workspace/services.py` compares `CompanyAccess.role`, not a right.
 3. **There is no channel scope.** `ScopeType` has only company / project /
    topic, so "member of one channel" cannot be expressed — the nearest options
    are every topic in it (which misses topics created later) or the whole
    project.
 
 **Decision needed:** owner's call on each, separately from the UI work.
+
+---
+
+## `test_chat_flow` cannot run, and breaks `manage.py test chat`
+
+**Where:** `modules/nexus-nucleus/chat/management/commands/test_chat_flow.py`.
+
+The command still imports `AIModel` from `nucleus.models`, a model that went with the
+`AIAgent`/`AIModel` collapse in #99, so `manage.py test_chat_flow` fails at import. Because
+the file is named `test_*.py`, Django's test discovery for the `chat` app also imports it
+and reports an `ImportError` alongside the real tests (run `manage.py test chat.tests` to
+avoid it). Found on 2026-09-14 while adding the `persona.mention` tests; the send path is
+covered by `chat/tests.py` (`MentionRightTests`) instead. Fixing the command means
+re-pointing its fixtures at `ModelConfig`/`Persona`.
+
+Same day, same cause class: `intelligence/tests.py` `ClientOAuthTests` (8 tests) error in
+`setUp` with `null value in column "project_id" of relation "intelligence_mcp_server"` — the
+fixture predates #104's project FK on `MCPServer`. `manage.py test intelligence` has been red
+since then; nothing in the chat or scheduling changes touches it.
 
 ---
 
@@ -537,7 +549,6 @@ exactly the way `team_api.py` already is. (The `# TODO: send email` at
 `members_services.py:76` is likewise dead: the live path sends invitation email
 via `_send_invite_email()` since PR #110.)
 
-
 ---
 
 ## `manage.py test_chat_flow` cannot run — stale import after the AIModel rename
@@ -563,7 +574,6 @@ search-and-replace.
 **Decision needed:** update the command to `ModelConfig` and re-verify what it
 asserts, or retire it if `test_persona_flow` + `test_agent_flow` already cover
 the same ground.
-
 
 ---
 

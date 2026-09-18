@@ -1,14 +1,13 @@
-// Invitations are email pre-authorisations: the server records the address
-// and lets that account in the moment it connects — it sends NO email
-// (authn/services.py auth_verify accepts the pending Invitation by email;
-// the Supabase admin invite helper has no caller). So the inviter has to pass
-// the steps on. These helpers make that a copy, not a conversation.
+// Invitations are pre-authorisations: the server records the address and lets
+// that account in, with the access it was given, the moment it connects. The
+// server may or may not manage to email the invitee (it needs a service key
+// for that), and by product decision the app never says which -- the way in
+// is the same, so the inviter gets the steps to pass on either way. These
+// helpers make that a copy, not a conversation.
 
 export interface InviteOutcome {
   is_new_user?: boolean;
   expires_at?: string | null;
-  email_sent?: boolean;      // the server emailed the invitee (it holds a service key)
-  email_note?: string | null; // why it did not, when it did not
 }
 
 // A brand-new person: the server created a pending Invitation (and only that

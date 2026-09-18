@@ -25,7 +25,7 @@ export function Label({ className, required, ...props }: React.LabelHTMLAttribut
 // secret gets "new-password" (honoured) plus the manager opt-outs. A field
 // that passes a credential hint (email, current-password, new-password…)
 // keeps autofill — that is how login, reset and change-password opt in.
-const MANAGER_OPT_OUT = { "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" } as const;
+export const MANAGER_OPT_OUT = { "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" } as const;
 
 export function Input({ className, autoComplete, type, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
   const credential = autoComplete !== undefined && autoComplete !== "off";

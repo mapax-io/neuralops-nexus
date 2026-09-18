@@ -176,15 +176,6 @@ class MCPArgs(BaseModel):
         default=None,
         description=""
     )
-    # A bearer token is an opaque string chosen by the provider, not a format
-    # this side gets to define. The previous character class
-    # (^[A-Za-z0-9\-_.~+/=]+$) accepted GitHub's alphanumeric tokens and
-    # rejected Cloudflare's, which are shaped "userId:grantId:secret" -- the
-    # colon alone was enough to make the server unusable.
-    #
-    # What IS worth enforcing is that the value can go into a header at all:
-    # printable ASCII, no newlines or control characters. That is a
-    # header-injection guard, not a token-format guess.
     authorization_token: str | None = Field(
         default=None,
         pattern=r"^[\x21-\x7E]+$",

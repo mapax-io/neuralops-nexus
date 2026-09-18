@@ -29,6 +29,20 @@ const setScrolledUp = (el: HTMLElement) => {
 beforeAll(() => { window.HTMLElement.prototype.scrollIntoView = vi.fn(); }); // jsdom lacks it
 afterEach(cleanup);
 
+describe("MessageList — refused mentions", () => {
+  it("says under the sender's message which persona did not answer and why", () => {
+    const m = { ...msg("m1", "me"), refusals: [
+      { persona_id: "p1", name: "Sara", code: "no_right", message: "You can't call personas in this topic.", resets_at: null },
+      { persona_id: "p2", name: "Bob", code: "calls_limit", message: "You've used 5 of 5 calls today.", resets_at: "2026-09-15T00:00:00Z" },
+    ] };
+    render(<MessageList messages={[m]} {...base} />);
+    const notes = screen.getAllByRole("status");
+    expect(notes[0]).toHaveTextContent("@Sara didn't answer: You can't call personas in this topic.");
+    expect(notes[1]).toHaveTextContent("@Bob didn't answer: You've used 5 of 5 calls today.");
+    expect(notes[1]).toHaveTextContent(/resets/i);
+  });
+});
+
 describe("MessageList — new-messages pill", () => {
   it("appears when someone else's message arrives while scrolled up, and clears on click", async () => {
     const initial = [msg("m0"), msg("m1")];
@@ -87,5 +101,27 @@ describe("MessageList — initial landing", () => {
     const el = container.querySelector(".overflow-y-auto") as HTMLElement;
     expect(el).not.toBeNull();
     expect(el.scrollTop).toBeGreaterThan(0); // scrolled to the latest, not stuck at the top
+  });
+});
+
+describe("MessageList — a load that drags on says so", () => {
+  it("after ten seconds offers Retry, which asks the chat to reload; gone once the history lands", () => {
+    vi.useFakeTimers();
+    try {
+      const onRetry = vi.fn();
+      const { rerender } = render(<MessageList messages={[]} {...base} loading onRetry={onRetry} />);
+      act(() => { vi.advanceTimersByTime(9_900); });
+      expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(screen.getByText(/still loading/i)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+      expect(onRetry).toHaveBeenCalledTimes(1);
+      rerender(<MessageList messages={[msg("m1")]} {...base} loading={false} onRetry={onRetry} />);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(screen.queryByText(/still loading/i)).not.toBeInTheDocument();
+      expect(screen.getByText("m1")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

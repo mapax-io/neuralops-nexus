@@ -6,4 +6,7 @@ export const handlers: RequestHandler[] = [
   // every component test that doesn't override it exercises the same legacy
   // fallback that runs in production today.
   http.get("*/api/v1/me/permissions/", () => new HttpResponse(null, { status: 404 })),
+  // The model id suggestions come from a third-party catalog; empty by default
+  // so a suite that does not care sees the plain field.
+  http.get("https://openrouter.ai/api/v1/models", () => HttpResponse.json({ data: [] })),
 ];

@@ -72,7 +72,7 @@ function CodeBlock({ content, terminal }: { content: string; terminal?: boolean 
         <span className="font-mono text-[11px] text-ink2">{terminal ? "terminal" : "code"}</span>
         <button
           aria-label="Copy to clipboard"
-          className="flex items-center gap-1.5 text-[11.5px] text-ink2 hover:text-ink"
+          className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11.5px] text-ink2 transition-colors hover:bg-surface hover:text-ink"
           onClick={() => void copyText(content).then((ok) => (ok ? toast.success("Copied") : toast.error("Copy failed — check clipboard permissions")))}
         >
           <Copy size={12} strokeWidth={2} /> Copy
@@ -111,7 +111,7 @@ function FencedCode({ lang, code, children }: { lang: string | null; code: strin
           aria-label="Copy code"
           title="Copy code"
           onClick={() => void copyText(code).then((ok) => (ok ? toast.success("Copied") : toast.error("Copy failed — check clipboard permissions")))}
-          className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-ink2 hover:text-ink"
+          className="flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11.5px] text-ink2 transition-colors hover:bg-surface hover:text-ink"
         >
           <Copy size={12} strokeWidth={2} /> Copy
         </button>
@@ -264,10 +264,22 @@ export const MessageItem = memo(function MessageItem({ message, known }: { messa
         {message.isStalled && (
           <p className="mt-1 text-[12px] text-warn">This response has gone quiet — it may have failed on the server. Mention the persona again to retry.</p>
         )}
+        {message.refusals?.map((r) => (
+          <p key={r.persona_id} role="status" className="mt-1 text-[12px] text-warn">
+            @{r.name} didn&apos;t answer: {r.message}
+            {r.resets_at && ` Resets ${formatReset(r.resets_at)}.`}
+          </p>
+        ))}
       </div>
     </article>
   );
 }, (prev, next) => prev.message === next.message);
+
+// When a limit lifts, in the reader's own clock ("Sep 15, 00:00").
+const formatReset = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
 
 // Error bubble — for an MCP OAuth-token expiry the backend forwards the
 // "needs to be reconnected" sentence verbatim; we detect it and offer a

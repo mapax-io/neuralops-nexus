@@ -76,7 +76,7 @@ export function EntityCard({ icon, title, chips, body, meta, actions }: {
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="group relative flex flex-col rounded-xl border border-line bg-surface p-4 transition-all hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_16px_44px_-20px_var(--accent-soft)]">
+    <div className="group relative flex flex-col rounded-xl border border-line bg-surface p-4 transition-[border-color,box-shadow] hover:border-accent/40 hover:shadow-[0_16px_44px_-20px_var(--accent-soft)]">
       <div className="flex items-start gap-3">
         <span className="flex size-10 flex-none items-center justify-center overflow-hidden rounded-[10px] border border-line bg-surface2 text-ink2">
           {icon}
@@ -118,7 +118,7 @@ export function ListState({ loading, error, onRetry, empty, emptyTitle, emptyHin
   if (error) {
     return (
       <p className="text-[13.5px] text-crit">
-        Couldn&apos;t load this list. <Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>
+        Couldn&apos;t load this list. <Button size="sm" variant="link" onClick={onRetry}>Retry</Button>
       </p>
     );
   }

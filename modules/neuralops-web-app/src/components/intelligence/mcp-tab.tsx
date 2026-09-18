@@ -17,7 +17,7 @@ import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { CardGrid, Chip, EntityCard, ListState, ProjectSelect, TabShell, Toolbar } from "./shared";
 import { McpAuthSection, draftFromConfig, draftToPayload, emptyOAuthDraft, validateOAuth, type OAuthDraft } from "./mcp-auth-section";
 import { CapabilityEditor } from "./capability-editor";
-import { capabilityLabels, defaultCapabilityConfig, formatCapabilityConfig, type CapabilityConfig } from "@/lib/mcp-capabilities";
+import { capabilityLabels, defaultCapabilityConfig, formatCapabilityConfig, shellListsProblem, type CapabilityConfig } from "@/lib/mcp-capabilities";
 
 // A server's connection identity: same URL + same auth config = the same
 // connection. The client secret is write-only (never returned), so a duplicate
@@ -480,6 +480,7 @@ export function CreateMcpDialog({ open, onClose, defaultProjectId, onCreated }: 
     name: [name, validateName(name)],
     caps: internal && Object.keys(caps).length === 0 ? "Turn on at least one capability." : null,
     capJson: internal ? capErr : null,
+    capShell: internal ? shellListsProblem(caps) : null,
     url: [stdio ? command : url, internal ? null : validateUrl(url) ?? (dupConn ? `This project already has a server with these exact connection details ("${dupConn.name}").` : null)],
     timeout: [timeout, internal ? null : validateTimeout(timeout)],
     retries: [retries, internal ? null : validateRetries(retries)],
@@ -710,6 +711,7 @@ function EditMcpDialog({ server, onClose, siblings }: { server: MCPServer; onClo
     name: [name, validateName(name)],
     caps: server.is_internal && Object.keys(caps).length === 0 ? "Turn on at least one capability." : null,
     capJson: server.is_internal ? capErr : null,
+    capShell: server.is_internal ? shellListsProblem(caps) : null,
     url: [stdio ? command : url, server.is_internal ? null : validateUrl(url)],
     timeout: [timeout, server.is_internal ? null : validateTimeout(timeout)],
     retries: [retries, server.is_internal ? null : validateRetries(retries)],

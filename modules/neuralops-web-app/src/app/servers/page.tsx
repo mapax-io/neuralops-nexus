@@ -21,10 +21,9 @@ import { FieldError, Input, Label } from "@/components/ui/field";
 import { FullPageLoader } from "@/components/ui/full-page-loader";
 import { useDelayedLoading } from "@/hooks/use-delayed-loading";
 import { connectToServer, fetchServerConfig, type ServerConfig } from "@/lib/api/servers";
-import { clearAccountScopedState } from "@/lib/auth/session-cleanup";
 import { pullServers, pushServersDebounced } from "@/lib/servers-sync";
-import { supabase } from "@/lib/supabase";
 import { compareServerVersion } from "@/lib/version";
+import { signOutOnThisDevice } from "@/lib/auth/sign-out";
 import { useConnectionStore } from "@/stores/connection.store";
 import { primePermissions } from "@/hooks/use-permissions";
 import { useSelectionStore } from "@/stores/selection.store";
@@ -126,12 +125,7 @@ export default function ServersPage() {
   };
 
   const signOut = async () => {
-    clearAccountScopedState(); // one shared cleanup — stores, drafts, query cache, realtime
-    try {
-      await supabase().auth.signOut();
-    } catch {
-      /* local state is cleared regardless — the session dies on this device */
-    }
+    await signOutOnThisDevice();
     router.replace("/login");
   };
 
