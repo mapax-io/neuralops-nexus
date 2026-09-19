@@ -7,13 +7,13 @@ handled automatically by a CLA bot the first time you open a PR.
 
 ## Why a CLA
 
-NeuralOps Nexus is released under AGPL-3.0-only, and is also available
-under a separate commercial license for organizations that need terms
-AGPL doesn't offer. To keep that dual-licensing model working — and to
-keep the project's licensing position clean for anyone who wants to rely
-on it — every contribution needs to come with clear rights attached, not
-just an implicit "I put this in a pull request." The CLA below is what
-provides that.
+NeuralOps Nexus is released under the NeuralOps Nexus Source Available
+License 1.0, and is also available under a separate commercial license
+for organizations that need terms it doesn't offer. To keep that
+dual-licensing model working — and to keep the project's licensing
+position clean for anyone who wants to rely on it — every contribution
+needs to come with clear rights attached, not just an implicit "I put
+this in a pull request." The CLA below is what provides that.
 
 **Important:** this CLA covers contributions made *after* you agree to
 it. It does not retroactively apply to code already in the repository
@@ -29,12 +29,13 @@ NeuralOps Nexus project, you agree to the following terms:
    to use, reproduce, modify, prepare derivative works of, publicly
    display, publicly perform, sublicense, and distribute your
    contribution, and to relicense it — including under different terms
-   than AGPL-3.0, such as a commercial or proprietary license — at the
+   than the Project's current license, such as AGPL-3.0, a fully
+   permissive license, or a commercial/proprietary license — at the
    Maintainer's sole discretion. For clarity, this includes using your
    contribution in the Project's closed-source commercial offerings
    (including its hosted SaaS, Enterprise, and mobile applications),
    which are licensed separately from, and under different terms than,
-   the open-source release.
+   the Project's own release.
 
 2. **Copyright.** You retain copyright ownership of your contribution.
    This is a license grant, not an assignment: you're not giving up

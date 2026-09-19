@@ -1,19 +1,20 @@
-
-NOTICE
 NeuralOps Nexus
 Copyright (C) 2026 Noaman Faisal Bin
- 
-This product is licensed under the GNU Affero General Public License v3.0
-(AGPL-3.0-only). See the LICENSE file for the full license text.
- 
+
+This product is licensed under the NeuralOps Nexus Source Available
+License 1.0 (a source-available license, not an OSI-approved open
+source license — it permits use, modification, and distribution, but
+prohibits offering the software to third parties as a hosted or
+managed service). See the LICENSE file for the full license text.
+
 This product includes third-party software components, each governed by
 its own license. Their inclusion here does not imply endorsement by their
 respective copyright holders.
- 
+
 -------------------------------------------------------------------------
 THIRD-PARTY COMPONENTS
 -------------------------------------------------------------------------
- 
+
 The list below reflects what has been discussed and confirmed so far. It
 is a STARTING POINT, not a complete or verified inventory — before
 publishing, generate a full automated scan of every dependency actually
@@ -22,7 +23,7 @@ base images, since an incomplete NOTICE is one of the first things
 enterprise buyers' diligence will flag. Suggested tools: `pip-licenses`
 (Python), `license-checker` (Node/npm), and a manual check of each Docker
 base image's own licensing.
- 
+
 Component               | License          | Notes
 -------------------------|------------------|----------------------------------
 Django (nucleus)         | BSD-3-Clause     | AGPL-compatible
@@ -60,11 +61,11 @@ nginx                     | BSD-2-Clause     | AGPL-compatible
 LibreChat.ai              | N/A — inspiration| Confirmed no code copied; no
                           | only, no code    | attribution obligation
                           | copied           |
- 
+
 -------------------------------------------------------------------------
 HOW TO COMPLETE THIS FILE
 -------------------------------------------------------------------------
- 
+
 1. Run a license scanner against the actual pinned dependency manifests
    in the repository (Python, Node, and any Docker base images).
 2. Add every component found, with its exact license identifier (SPDX
@@ -74,4 +75,3 @@ HOW TO COMPLETE THIS FILE
    verbatim rather than summarizing them.
 4. Re-generate this file whenever dependencies change materially —
    treat it as living documentation, not a one-time task.
- 
