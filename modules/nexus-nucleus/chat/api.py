@@ -46,7 +46,7 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from chat.events import mention_refused_event
-from chat.schema import MessageOut, SendMessageIn, SendMessageOut
+from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut
 from chat import services as chat_svc
 from chat.services import MessageDirectives
 from workspace import services as ws_svc
@@ -416,5 +416,34 @@ async def _trigger_personas(
             )
 
 
-        
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/stop/",
+    response=StopMessageOut,
+)
+async def stop_message(request, project_id: str, channel_id: str, topic_id: str, message_id: str):
+    """
+    End a persona reply that is still streaming. Anyone who can read the topic
+    can stop a run in it -- a reply nobody can stop holds the topic hostage.
+    The relay keeps what has streamed so far and marks the message stopped;
+    the reader sees the effect on the bubble itself, not in a toast.
+    """
+    from .stop_signals import stop_signals
 
+    _company, _user, _project, _channel, topic = await _resolve_topic(
+        request, project_id, channel_id, topic_id
+    )
+    outcome = await sync_to_async(chat_svc.request_stop_for_message)(topic, message_id)
+    if outcome == "not_found":
+        raise HttpError(404, "Message not found.")
+    if outcome == "finished":
+        raise HttpError(409, "This reply has already finished.")
+    if outcome == "orphaned":
+        # No relay is running this reply (nucleus restarted mid-run). It has
+        # just been failed with that reason; tell everyone in the topic.
+        from .reasons import ORPHANED_RUN_REASON
+        await chat_svc.publish_async(chat_svc.topic_channel(topic_id), {
+            "type": "message_error", "id": message_id, "content": ORPHANED_RUN_REASON,
+        })
+        return {"stopping": True}
+    await stop_signals().request_stop(message_id)
+    return {"stopping": True}
