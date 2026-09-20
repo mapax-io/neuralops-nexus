@@ -28,8 +28,10 @@ class MessageOut(Schema):
     type: str
     message_type: Optional[str] = None
     content: str
-    render_as: str = "text"       # M7: "text" | "code" | "html" | "terminal"
+    render_as: str = "text"       # M7: "text" | "code" | "html" | "terminal" | "chart"
     output_type: str = "text"     # M7: "text" | "chart" | "code" | "table" | ...
+    stopped: bool = False         # the reader ended the reply; content is what streamed
+    status: str = "completed"     # pending | completed | failed — a failed reply's content is its reason
     sender_name: Optional[str] = None
     sender_id: Optional[str] = None
     sender_avatar: Optional[str] = None  # #148 -- absolute URL, or None
@@ -55,3 +57,7 @@ class SendMessageOut(Schema):
     channel: str
     # Only the AI reply is withheld -- the message above always posted.
     refusals: list[MentionRefusalOut] = []
+
+
+class StopMessageOut(Schema):
+    stopping: bool

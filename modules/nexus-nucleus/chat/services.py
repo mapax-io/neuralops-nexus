@@ -23,6 +23,8 @@ import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
 from .events import tool_activity_event
+from .stop_signals import StopRequested, stop_signals, stoppable, stoppable_lines
+from .reasons import ORPHANED_RUN_REASON, WORKER_ENDED_EARLY_REASON, explain_ai_error
 
 logger = logging.getLogger(__name__)
 
@@ -405,8 +407,9 @@ def update_ai_message(
     content: str,
     render_as: str = "text",
     output_type: str = "text",
+    stopped: bool = False,
 ) -> None:
-    """Update the AI message content and mark COMPLETED."""
+    """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
 
     msg = ChatMessage.objects.filter(id=message_id).first()
@@ -417,6 +420,8 @@ def update_ai_message(
     metadata = dict(msg.metadata or {})
     metadata["render_as"] = render_as
     metadata["output_type"] = output_type
+    if stopped:
+        metadata["stopped"] = True
 
     ChatMessage.objects.filter(id=message_id).update(
         content=content,
@@ -449,6 +454,23 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
         status=ChatMessage.Status.FAILED,
         metadata=metadata,
     )
+
+
+async def end_stopped_reply(channel: str, msg_id: str, content: str) -> None:
+    """The reader stopped the run: keep what streamed, tell the topic, drop the signal."""
+    try:
+        await sync_to_async(update_ai_message)(msg_id, content, stopped=True)
+    except Exception as exc:
+        logger.warning("[trigger] failed to save stopped message %s: %s", msg_id, exc)
+    await publish_async(channel, {
+        "type": "message_done",
+        "id": msg_id,
+        "content": content,
+        "output_type": "text",
+        "render_as": "text",
+        "stopped": True,  # the reader ended it; content is what streamed
+    })
+    await stop_signals().clear(msg_id)
 
 
 async def trigger_ai_response_async(
@@ -558,10 +580,14 @@ async def trigger_ai_response_async(
     embed_description: str | None = None
     ai_error: str | None = None
     ai_error_code: str | None = None
+    stopped = False
+
+    async def should_stop() -> bool:
+        return await stop_signals().is_stop_requested(msg_id)
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
+            request = client.build_request(
                 "POST",
                 f"{nexus_ai_url}/api/v1/trigger/",
                 json=job_payload,
@@ -569,14 +595,21 @@ async def trigger_ai_response_async(
                     "X-Internal-Key": internal_key,
                     "Content-Type": "application/json",
                 },
-            ) as response:
+            )
+            # The worker does its own setup before the first byte comes back;
+            # a Stop must land during that wait too, not only once lines flow.
+            response = await stoppable(client.send(request, stream=True), should_stop)
+            try:
                 if response.status_code != 200:
                     body = await response.aread()
                     raise RuntimeError(
                         f"nexus-ai /trigger/ returned {response.status_code}: {body.decode()[:300]}"
                     )
 
-                async for line in response.aiter_lines():
+                # The reader may click Stop at any moment, including while the
+                # worker is silent; leaving the stream closes the connection,
+                # which cancels the worker's generator and its model call.
+                async for line in stoppable_lines(response.aiter_lines(), should_stop):
                     if not line.startswith("data: "):
                         continue
                     raw = line[6:].strip()
@@ -627,9 +660,25 @@ async def trigger_ai_response_async(
 
                     except (json.JSONDecodeError, KeyError):
                         continue
+            finally:
+                await response.aclose()
 
+    except StopRequested:
+        stopped = True
     except Exception as exc:
-        logger.warning("[trigger] streaming error for msg %s: %s", msg_id, exc)
+        # Transport errors often carry no text (httpx.ReadError('')): the class
+        # name is what says "connection", both in the log and to the categoriser.
+        logger.warning("[trigger] streaming error for msg %s: %s: %s", msg_id, type(exc).__name__, exc)
+        ai_error = ai_error or f"streaming error: {type(exc).__name__}: {exc}"
+
+    if stopped:
+        await end_stopped_reply(channel, msg_id, "".join(streamed_content))
+        return  # nothing complete to embed
+
+    # The stream ended with neither message_done nor message_error: the worker
+    # went away mid-reply. Saying so beats a bubble that goes quiet forever.
+    if not ai_error and final_clean_content is None:
+        ai_error = "worker ended the stream before it finished"
 
     # Use nexus-ai's clean content if available, else fall back to streamed
     save_content = (
@@ -639,10 +688,12 @@ async def trigger_ai_response_async(
     )
 
     # 5. Save full content to DB + publish message_done (or FAILED + message_error)
+    # What the reader sees: the reauth prompt verbatim (it is written for
+    # them), otherwise the categorised sentence — never the raw error.
+    display_error = (ai_error if ai_error_code == "mcp_reauth_required" else explain_ai_error(ai_error)) if ai_error else None
     try:
         if ai_error:
-            display = ai_error if ai_error_code == "mcp_reauth_required" else None
-            await _fail_ai_message(msg_id, ai_error, display)
+            await _fail_ai_message(msg_id, ai_error, display_error)
         else:
             await _update_ai_message(
                 msg_id,
@@ -660,10 +711,10 @@ async def trigger_ai_response_async(
         # exception text (ai_error) stays server-side only (logged above +
         # stored in ChatMessage.metadata.error_detail), never shipped to
         # the browser over Centrifugo.
-            "content": (ai_error if ai_error_code == "mcp_reauth_required"
-                else "Something went wrong generating this response.") if ai_error else save_content,
+            "content": display_error if ai_error else save_content,
         "output_type": final_output_type,   # M7: e.g. "chart"
         "render_as": final_render_as,        # M7: e.g. "html"
+        "stopped": False,                    # a stopped run ends in end_stopped_reply()
     })
 
     # M8: Embed AI response — smart content selection
@@ -797,10 +848,17 @@ async def trigger_ai_swarm_response_async(
     active_msg_id = msg_id
     streamed_contents: dict[str, list[str]] = {msg_id: []}
     ai_error: str | None = None
+    stopped = False
+
+    async def should_stop() -> bool:
+        signals = stop_signals()
+        if await signals.is_stop_requested(active_msg_id):
+            return True
+        return active_msg_id != msg_id and await signals.is_stop_requested(msg_id)
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
+            request = client.build_request(
                 "POST",
                 f"{nexus_ai_url}/api/v1/trigger/swarm/",
                 json=job_payload,
@@ -808,14 +866,20 @@ async def trigger_ai_swarm_response_async(
                     "X-Internal-Key": internal_key,
                     "Content-Type": "application/json",
                 },
-            ) as response:
+            )
+            # The worker does its own setup before the first byte comes back;
+            # a Stop must land during that wait too, not only once lines flow.
+            response = await stoppable(client.send(request, stream=True), should_stop)
+            try:
                 if response.status_code != 200:
                     body = await response.aread()
                     raise RuntimeError(
                         f"nexus-ai /trigger/ returned {response.status_code}: {body.decode()[:300]}"
                     )
 
-                async for line in response.aiter_lines():
+                # As in the single relay. A Stop can land on the root bubble
+                # or on the delegate currently streaming; either ends the run.
+                async for line in stoppable_lines(response.aiter_lines(), should_stop):
                     if not line.startswith("data: "):
                         continue
                     raw = line[6:].strip()
@@ -933,9 +997,20 @@ async def trigger_ai_swarm_response_async(
 
                     except (json.JSONDecodeError, KeyError):
                         continue
+            finally:
+                await response.aclose()
 
+    except StopRequested:
+        stopped = True
     except Exception as exc:
-        logger.warning("[trigger] streaming error for msg %s: %s", active_msg_id, exc)
+        logger.warning("[trigger] streaming error for msg %s: %s: %s", active_msg_id, type(exc).__name__, exc)
+
+    if stopped:
+        await end_stopped_reply(channel, active_msg_id, "".join(streamed_contents.get(active_msg_id, [])))
+        if active_msg_id != msg_id:
+            await stop_signals().clear(msg_id)
+
+
 # ── Read messages ──────────────────────────────────────────────────────────────
 
 def list_messages(topic_id: str, limit: int = 100, before_sequence: int = None) -> list[dict]:
@@ -952,12 +1027,37 @@ def list_messages(topic_id: str, limit: int = 100, before_sequence: int = None) 
     """
     from nucleus.models import ChatMessage
 
+    reap_orphaned_replies(topic_id)
+
     qs = ChatMessage.objects.filter(topic_id=topic_id, is_active=True)
     if before_sequence is not None:
         qs = qs.filter(sequence__lt=before_sequence)
 
     qs = qs.select_related("sender").order_by("-sequence")[:limit]
     return [_serialise(m) for m in reversed(list(qs))]
+
+
+ORPHAN_AFTER_SECONDS = 180
+
+
+def reap_orphaned_replies(topic_id: str, older_than_seconds: int = ORPHAN_AFTER_SECONDS) -> list[str]:
+    """
+    A persona reply still PENDING minutes after it started has no relay left
+    to finish it -- nucleus restarted (or was redeployed) mid-run. Fail it
+    with that reason so a reader sees why instead of a bubble that never
+    ends. Done lazily, when history is read or a stop is asked for; returns
+    the ids it failed so the caller can publish message_error for each.
+    """
+    from nucleus.models import ChatMessage
+
+    cutoff = timezone.now() - timedelta(seconds=older_than_seconds)
+    orphans = list(
+        ChatMessage.objects.filter(topic_id=topic_id, status=ChatMessage.Status.PENDING, created_at__lt=cutoff, metadata__has_key="persona_id")
+        .values_list("id", flat=True)
+    )
+    for msg_id in orphans:
+        fail_ai_message(str(msg_id), "orphaned: no relay finished this reply", ORPHANED_RUN_REASON)
+    return [str(i) for i in orphans]
 
 
 # ── Write messages ─────────────────────────────────────────────────────────────
@@ -1064,6 +1164,8 @@ def _serialise(msg) -> dict:
         "content": msg.content or "",
         "render_as": metadata.get("render_as", "text"),    # M7: renderer hint for frontend
         "output_type": metadata.get("output_type", "text"), # M7: semantic type name
+        "stopped": bool(metadata.get("stopped")),           # ended by the reader; partial
+        "status": msg.status,                                # pending | completed | failed
         "sender_name": sender_name,
         "sender_id": str(msg.sender_id) if msg.sender_id else None,
         "sender_avatar": msg.sender.get_avatar_url() if msg.sender else None,  # #148
@@ -1076,3 +1178,22 @@ def _serialise(msg) -> dict:
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }
+
+
+def request_stop_for_message(topic, message_id: str) -> str:
+    """
+    Ask the relay to end a persona reply that is still streaming in this topic.
+    Returns "stopping", "not_found" (not in this topic / not a persona reply)
+    or "finished" (nothing to stop). Sync; the caller wraps it.
+    """
+    from nucleus.models import ChatMessage
+
+    msg = ChatMessage.objects.filter(id=message_id, topic=topic).first()
+    if not msg or not (msg.metadata or {}).get("persona_id"):
+        return "not_found"
+    if msg.status != ChatMessage.Status.PENDING:
+        return "finished"
+    if msg.created_at < timezone.now() - timedelta(seconds=ORPHAN_AFTER_SECONDS):
+        fail_ai_message(str(msg.id), "orphaned: no relay finished this reply", ORPHANED_RUN_REASON)
+        return "orphaned"
+    return "stopping"
