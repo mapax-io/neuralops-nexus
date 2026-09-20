@@ -66,30 +66,72 @@ OutputTypeRegistry.register(
 )
 
 # ── chart ────────────────────────────────────────────────────────────────────
+#
+# The app renders this itself (ChartBlock, chart.js on a canvas): the model
+# describes the chart, it never writes a page. A description is 5-10x fewer
+# tokens than the HTML it replaced, follows the app's theme, and executes no
+# script. The keys and limits below mirror the app's guard -- anything else is
+# rejected there and shown as data, so the model must be told the shape exactly.
 
 OutputTypeRegistry.register(
     OutputTypeSpec(
         name="chart",
-        render_as="html",
+        render_as="chart",
         label="Chart",
         icon="bar-chart-2",
         system_instruction=(
             "OUTPUT FORMAT — your response must be exactly this structure, nothing else:\n\n"
             "<<<OUTPUT:chart>>>\n"
-            "<!DOCTYPE html>\n"
-            "<html>\n"
-            "  ... complete Chart.js page ...\n"
-            "</html>\n"
+            "{ ...the chart description as JSON... }\n"
             "<<<END_OUTPUT>>>\n\n"
-            "Begin your response with <<<OUTPUT:chart>>> on the very first line. "
-            "End with <<<END_OUTPUT>>> on the very last line. "
-            "Do not write any text before or after the markers.\n\n"
-            "Chart requirements:\n"
-            "- Import Chart.js from https://cdn.jsdelivr.net/npm/chart.js\n"
-            "- Single <canvas> element filling the viewport\n"
-            "- body { margin: 0; background: transparent; }\n"
-            "- Choose the most appropriate chart type for the data\n"
-            "- For follow-up modifications, output a complete updated HTML with the change applied"
+            "Begin your response with <<<OUTPUT:chart>>> on the very first line and end with "
+            "<<<END_OUTPUT>>> on the very last line. No text before or after the markers, no "
+            "markdown fences, no HTML — the app draws the chart itself.\n\n"
+            "The description uses exactly these keys and no others:\n"
+            "{\n"
+            '  "type": "line" | "bar" | "pie" | "doughnut" | "polarArea" | "radar" | "scatter" | "bubble" | "mixed",  (doughnut, not donut)\n'
+            '  "title": "short title, under 120 characters",\n'
+            '  "subtitle": "what the encodings mean, e.g. bubble size = market cap · colour = sector",  (optional)\n'
+            '  "labels": ["one x-axis category per data point"],\n'
+            '  "groups": ["one group per point, e.g. its sector"],  (scatter, bubble only — optional; colour = group)\n'
+            '  "datasets": [{ "label": "series name", "data": [numbers] }],\n'
+            '  "axes": { "x": { "label": "Revenue", "prefix": "$", "suffix": "B", "scale": "time" }, "y": { "label": "Margin", "suffix": "%", "scale": "logarithmic", "min": 0, "max": 100 } },  (scale/min/max optional)\n'
+            '  "legend": "top" | "bottom" | "left" | "right" | "none",  (optional)\n'
+            '  "cutout": 60,     (doughnut only — hole size in percent, optional)\n'
+            '  "gauge": true,    (doughnut only — a half ring, optional)\n'
+            '  "stacked": true | false,      (bar, line, mixed only — optional)\n'
+            '  "fill": true | false,         (line, radar, mixed only — optional; line becomes an area)\n'
+            '  "orientation": "horizontal",  (bar, mixed only — optional)\n'
+            '  "source": "where the figures come from",\n'
+            '  "basis": "recalled" | "provided" | "tool"\n'
+            "}\n\n"
+            "Shapes by type:\n"
+            "- line, bar, radar, pie, doughnut, polarArea: data is numbers, exactly one per label; null is a gap; "
+            "a bar value may be [low, high] for a floating bar\n"
+            '- a line, radar or mixed-line dataset may carry "smooth": true, "stepped": true, "dashed": true, and any series '
+            'may carry "pointStyle": "circle" | "cross" | "crossRot" | "dash" | "line" | "rect" | "rectRounded" | "rectRot" | "star" | "triangle"\n'
+            '- axes.x.scale "time" needs every label to be a date (YYYY-MM-DD); axes.y.scale "logarithmic" needs positive values\n'
+            "- pie and doughnut take up to three datasets (rings); polarArea takes one\n"
+            '- a series may carry "color": "#1baf7a" and a slice dataset "colors": ["#hex", ...] (one per slice); '
+            "optional — the app keeps its own palette when a colour would not read on the theme\n"
+            '- scatter: data is [{"x": number, "y": number}]; bubble: [{"x": number, "y": number, "r": number}] '
+            "where r is the raw magnitude (the app scales it). For bubble, labels are REQUIRED: one name per "
+            "bubble. For scatter they are optional point names — give them when the points are things "
+            "(companies, countries). groups, when given, is one group per point and colour carries it\n"
+            "- Units go on the axes as prefix/suffix, never inside the data\n"
+            '- mixed: every dataset carries "type": "bar" or "line"\n'
+            "- pie, doughnut, polarArea: exactly one dataset, non-negative values, at most 6 slices\n"
+            "- radar: at least three labels (the axes)\n\n"
+            "Rules:\n"
+            "- At most 6 datasets — fold the rest into \"Other\"; at most 200 points per dataset\n"
+            "- Plain numbers in data — no units, currency symbols or thousands separators\n"
+            "- One y axis only. Two measures of different scale are two charts, not one\n"
+            "- basis is required and must be honest: \"recalled\" for figures from your own knowledge, "
+            "\"provided\" for figures the user gave you, \"tool\" for figures a tool returned\n"
+            "- No markup (< or >) in any text\n"
+            "- For a follow-up change, output the complete updated description again\n"
+            '- More than one chart (different subjects, or measures of different scale): reply with '
+            '{ "charts": [ description, description ] } — at most 4 — still inside the same single pair of markers'
         ),
         example_prompts=[
             "Show me a chart of sales over time",
