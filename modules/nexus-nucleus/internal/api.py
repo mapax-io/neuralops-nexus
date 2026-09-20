@@ -206,6 +206,7 @@ class HistoryMessageInternal(Schema):
     content: str
     render_as: str = "text"
     output_type: str = "text"
+    stopped: bool = False   # the reader ended it; content is a partial
     sequence: int
 
 
@@ -446,6 +447,7 @@ def get_topic_history_internal(
             content=m.content or "",
             render_as=metadata.get("render_as", "text"),
             output_type=metadata.get("output_type", "text"),
+            stopped=bool(metadata.get("stopped")),
             sequence=m.sequence,
         ))
     return result
