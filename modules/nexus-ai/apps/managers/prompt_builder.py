@@ -26,7 +26,6 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from apps.factories.context_source import ContextSourceFactory
-from apps.output_types.classifier import classify_output_type
 from apps.schemas.trigger import (
     HistoryMessage,
     PersonaConfig,
@@ -41,6 +40,7 @@ class NewImprovedPromptBuilder:
         job: TriggerJob | TriggerSwarmJob,
         persona: PersonaConfig,
         history: list[HistoryMessage],
+        output_type_instruction: str | None = None,
     ) -> Sequence[ModelMessage]:
         """
         Assemble messages array.
@@ -49,15 +49,14 @@ class NewImprovedPromptBuilder:
         persona/history are passed explicitly rather than read off `job`
         (#131) -- job only carries persona_id/topic_id; AgenticManager.run()
         resolves both via nucleus_client before calling this.
+
+        `output_type_instruction` is the resolved spec's system_instruction,
+        resolved by the manager (which needs the same spec for render_as) and
+        passed in -- never the type's name.
         """
         messages: list[ModelMessage] = []
         context_chunks: list[Chunk] = []
         system_content = persona.system_prompt
-
-        try:
-            output_type_instruction = await classify_output_type(job.message)
-        except Exception:
-            output_type_instruction = "text"
 
         for source in job.context_sources:
             plugin = ContextSourceFactory.get(source.type)
