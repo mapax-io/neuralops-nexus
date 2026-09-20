@@ -135,6 +135,8 @@ async def fetch_history(topic_id: str, exclude_message_id: str | None = None) ->
       - a reply whose output_type was visual (chart/table/diagram/html/
         form) but ended up rendered as plain text is dropped too --
         usually means the visual generation failed and fell back
+      - a reply the reader stopped is dropped: a cut-off partial (often
+        half a chart description) is not the persona's finished words
     """
     url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/topics/{topic_id}/history/"
     params: dict = {"limit": settings.HISTORY_DEPTH}
@@ -147,12 +149,15 @@ async def fetch_history(topic_id: str, exclude_message_id: str | None = None) ->
             headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY},
         )
         response.raise_for_status()
-    raw = response.json()
+    return shape_history(response.json())
 
+
+def shape_history(raw: list[dict]) -> list[HistoryMessage]:
+    """The filtering above, on rows already fetched -- pure, so it can be tested."""
     history: list[HistoryMessage] = []
     for m in raw:
         content = (m.get("content") or "").strip()
-        if not content:
+        if not content or m.get("stopped"):
             continue
 
         sender_type = m.get("sender_type")
