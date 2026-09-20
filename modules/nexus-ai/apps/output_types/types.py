@@ -243,3 +243,35 @@ OutputTypeRegistry.register(
         ],
     )
 )
+
+# ── code ─────────────────────────────────────────────────────────────────────
+#
+# Explicit-only: no example_prompts, so the classifier builds no centroid and
+# never picks this on its own. The app renders this type as a bare <pre> -- the
+# whole reply becomes a code block with no prose -- which is what someone who
+# typed @code wants, and the wrong answer to an ordinary "how do I ..." question.
+
+OutputTypeRegistry.register(
+    OutputTypeSpec(
+        name="code",
+        render_as="code",
+        label="Code",
+        icon="code",
+        system_instruction=(
+            "Respond with source code only. "
+            "Use this EXACT structure:\n\n"
+            "<<<EMBED>>>\n"
+            "One plain-English sentence describing what the code does.\n"
+            "<<<END_EMBED>>>\n"
+            "<<<OUTPUT:code>>>\n"
+            "the code, exactly as it should be pasted into a file\n"
+            "<<<END_OUTPUT>>>\n\n"
+            "Rules:\n"
+            "- Raw source only. No markdown, no fences -- the renderer shows the "
+            "content verbatim, so backticks would appear literally\n"
+            "- No prose before or after the code; explain inside it as comments\n"
+            "- Complete and runnable as given, not a fragment with ellipses\n"
+            "- For a follow-up change, output the complete updated file again"
+        ),
+    )
+)

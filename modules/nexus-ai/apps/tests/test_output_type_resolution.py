@@ -79,7 +79,7 @@ async def test_unknown_explicit_type_falls_back_to_classification(monkeypatch):
 async def test_classified_name_with_no_registered_spec_falls_back_to_text(monkeypatch):
     """A name we cannot hand the model an instruction for is not usable."""
     async def fake(_):
-        return "code"  # parsed by markers.py, but not a registered output type
+        return "spreadsheet"  # nothing registers this
     monkeypatch.setattr(CLASSIFIER, fake)
 
     name, spec = await resolve_output_spec(job())
@@ -117,3 +117,42 @@ async def test_builder_puts_the_contract_in_the_system_prompt():
     assert "<<<OUTPUT:chart>>>" in system
     # the bug shape: an OUTPUT FORMAT INSTRUCTION section whose body is one word
     assert "--- OUTPUT FORMAT INSTRUCTION ---\nchart" not in system
+
+
+# `@code` was offered by the composer and accepted by nucleus
+# (_OUTPUT_TYPE_KEYWORDS) but registered nowhere here, so it resolved to
+# unknown and silently fell back to classification.
+@pytest.mark.asyncio
+async def test_code_resolves_to_a_real_spec():
+    name, spec = await resolve_output_spec(job(output_type="code"))
+
+    assert name == "code"
+    assert spec.render_as == "code"
+    assert "<<<OUTPUT:code>>>" in spec.system_instruction
+
+
+def test_registry_covers_every_directive_the_other_side_offers():
+    """
+    nucleus's _OUTPUT_TYPE_KEYWORDS and the composer's OUTPUT_DIRECTIVES offer
+    exactly these eight. A name missing here resolves to unknown and the user's
+    directive silently does nothing.
+    """
+    assert set(OutputTypeRegistry.names()) == {
+        "text", "html", "chart", "table", "diagram", "form", "terminal", "code",
+    }
+
+
+def test_code_is_explicit_only_and_never_auto_classified():
+    """
+    The frontend renders this type as a bare <pre> -- the whole reply becomes a
+    code block with no prose. That is right when the user typed @code and wrong
+    for an ordinary "how do I..." question, so the spec carries no example
+    prompts and the classifier builds no centroid for it.
+    """
+    assert OutputTypeRegistry.get("code").example_prompts == []
+
+
+def test_code_forbids_markdown_fences():
+    """CodeBlock renders content raw; a fence would show as literal backticks."""
+    instruction = OutputTypeRegistry.get("code").system_instruction.lower()
+    assert "no markdown" in instruction
