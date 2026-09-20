@@ -106,9 +106,11 @@ class SetMemberAccessIn(Schema):
 
 class MemberOut(Schema):
     user_id: str
+    name: str  # display name, else the email local-part (User.get_display_name)
     email: str
     role: str
     invited_by: Optional[str] = None
+    invited_by_name: Optional[str] = None
     joined_at: str
     avatar: Optional[str] = None  # #148
 

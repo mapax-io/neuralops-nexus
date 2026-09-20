@@ -58,7 +58,8 @@ lookup is a secondary fallback only if the record happens to exist.
 `User.get_display_name()` returns `display_name` if set (assigned via
 `assign_display_name()` on first login), else derives from email local-part.
 
-**Files:** `workspace/services.py` → `_format_member()`
+**Files:** `workspace/services.py` → `_format_member()`, `list_members()` (server members carry `name`
+the same way — the app never derives a name from the email itself)
 
 ---
 

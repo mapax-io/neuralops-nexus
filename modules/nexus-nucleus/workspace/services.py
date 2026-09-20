@@ -598,9 +598,14 @@ def list_members(company) -> list:
     return [
         {
             "user_id": str(m.user.id),
+            # The same name rule as everywhere else (DECISIONS.md §3): the
+            # display name once set, else the email local-part. The app shows
+            # this and never derives a name from the email itself.
+            "name": m.user.get_display_name(),
             "email": m.user.email,
             "role": m.role,
             "invited_by": m.invited_by.email if m.invited_by else None,
+            "invited_by_name": m.invited_by.get_display_name() if m.invited_by else None,
             "joined_at": m.joined_at.isoformat(),
             "avatar": m.user.get_avatar_url(),  # #148
         }
