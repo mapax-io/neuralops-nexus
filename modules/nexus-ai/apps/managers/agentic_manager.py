@@ -33,7 +33,7 @@ from apps.schemas.trigger import (
     AgentEventType,
 )
 from apps.managers import nucleus_client
-from apps.output_types import OutputTypeRegistry
+from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.output_types.markers import parse_output_markers
 
 logger = logging.getLogger(__name__)
@@ -58,8 +58,17 @@ class NewImprovedAgenticManager:
             topic_id=job.topic_id, exclude_message_id=job.user_message_id
         )
 
+        # The type nucleus asked for (@chart) or, failing that, what the message
+        # looks like. The spec carries both the contract the model must follow
+        # and the renderer the frontend needs -- passing the name alone was the
+        # bug this replaced.
+        resolved_type, spec = await resolve_output_spec(job)
+
         messages = await self.prompt_builder.build(
-            job=job, persona=persona, history=history
+            job=job,
+            persona=persona,
+            history=history,
+            output_type_instruction=spec.system_instruction if spec else None,
         )
 
         # Signal the start to the frontend
@@ -85,14 +94,18 @@ class NewImprovedAgenticManager:
 
         full_response_content = "".join(accrued_text)
         clean_content = full_response_content
+        final_type = resolved_type
         render_as = "text"
         embed_description = None
         if full_response_content:
-            # TODO fix this code!!!
             clean_content, marker_type, embed_description = parse_output_markers(
                 full_response_content
             )
             final_spec = OutputTypeRegistry.get(marker_type)
+            # No markers means the model answered conversationally -- render it
+            # as text whatever was asked for, so a plain reply doesn't land in
+            # a chart box.
+            final_type = marker_type if final_spec else resolved_type
             render_as = getattr(final_spec, "render_as", None) or "text"
             embed_description = None if render_as == "text" else embed_description
 
@@ -101,6 +114,7 @@ class NewImprovedAgenticManager:
             type=AgentEventType.END,
             id=job.msg_id,
             content=clean_content,
+            output_type=final_type,
             render_as=render_as,
             embed_description=embed_description,
         )
@@ -221,37 +235,9 @@ class AgenticManager:
         )
 
     async def _resolve_output_type(self, job: TriggerJob) -> str:
-        """
-        Resolve the output type for this job.
-
-        Priority:
-        1. Explicit type from job (set by nexus-nucleus via @mention)
-        2. Cosine similarity classification (when output_type == "auto")
-        3. "text" default
-        """
-        from apps.output_types import OutputTypeRegistry
-
-        explicit = job.output_type
-
-        if explicit and explicit != "auto":
-            if OutputTypeRegistry.get(explicit):
-                logger.debug("[agentic] output type explicit: %s", explicit)
-                return explicit
-            logger.warning(
-                "[agentic] unknown explicit output type %r — falling back to auto",
-                explicit,
-            )
-
-        # Auto-classify
-        try:
-            from apps.output_types.classifier import classify_output_type
-
-            detected = await classify_output_type(job.message)
-            logger.debug("[agentic] output type classified: %s", detected)
-            return detected
-        except Exception as exc:
-            logger.warning("[agentic] classifier failed: %s", exc)
-            return "text"
+        """Delegates to apps.output_types.resolver — one implementation for every path."""
+        name, _ = await resolve_output_spec(job)
+        return name
 
 
 class AgenticSwarmManager:
@@ -267,32 +253,9 @@ class AgenticSwarmManager:
         self.prompt_builder = PromptBuilder()
 
     async def _resolve_output_type(self, job: TriggerSwarmJob) -> str:
-        """
-        Resolve the output type for this job.
-        """
-        from apps.output_types import OutputTypeRegistry
-
-        explicit = job.output_type
-
-        if explicit and explicit != "auto":
-            if OutputTypeRegistry.get(explicit):
-                logger.debug("[agentic] swarm output type explicit: %s", explicit)
-                return explicit
-            logger.warning(
-                "[agentic] unknown explicit output type %r — falling back to auto",
-                explicit,
-            )
-
-        # Auto-classify
-        try:
-            from apps.output_types.classifier import classify_output_type
-
-            detected = await classify_output_type(job.message)
-            logger.debug("[agentic] swarm output type classified: %s", detected)
-            return detected
-        except Exception as exc:
-            logger.warning("[agentic] classifier failed: %s", exc)
-            return "text"
+        """Delegates to apps.output_types.resolver — one implementation for every path."""
+        name, _ = await resolve_output_spec(job)
+        return name
 
     async def run(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]:
         history = await nucleus_client.fetch_history(
