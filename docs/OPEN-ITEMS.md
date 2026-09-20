@@ -598,39 +598,24 @@ deliberately not folded in:
 
 ---
 
-## `@code` is offered everywhere but registered nowhere
+## Output types are three hand-maintained lists
 
-**Where:** `modules/nexus-ai/apps/output_types/types.py` (registry),
+**Where:** `modules/nexus-ai/apps/output_types/types.py` (the registry),
 `modules/nexus-nucleus/chat/services.py` (`_OUTPUT_TYPE_KEYWORDS`),
 `modules/neuralops-web-app/src/lib/composer/directives.ts` (`OUTPUT_DIRECTIVES`).
 
-`code` is a first-class output type on every side except the one that has to act on it:
+The set of output types is written out by hand in three places, and the comment above
+`_OUTPUT_TYPE_KEYWORDS` — "Must match the types registered in nexus-ai/apps/output_types/types.py" — is an
+invariant nothing enforces.
 
-- the composer offers it — `{ name: "code", label: "Code", hint: "Highlighted code" }`;
-- nucleus accepts it — `_OUTPUT_TYPE_KEYWORDS` contains `"code"`, so `extract_output_type()`
-  matches `@code` and sends `output_type="code"` on the trigger;
-- the renderer for it already exists — `message-item.tsx` maps `renderAs === "code"` to `CodeBlock`;
-- **but the worker has no `code` spec.** `OutputTypeRegistry.names()` is
-  `text, html, chart, table, diagram, form, terminal`.
+It had already drifted: `code` was offered by the composer, accepted by nucleus, and rendered by the app
+(`message-item.tsx` maps `renderAs === "code"` to `CodeBlock`), but no `code` spec was registered in the
+worker. `@code` therefore resolved to an unknown type, logged `unknown explicit type 'code'`, and silently
+fell back to classification — the user picked a directive from a menu and got whatever the classifier felt
+like. Nothing errored, which is why it went unnoticed. That specific gap is now closed (the `code` spec is
+registered, and `test_registry_covers_every_directive_the_other_side_offers` pins the set), but the
+structure that produced it is unchanged: the next type added on one side can drift again.
 
-So `@code` resolves to an unknown type, logs `unknown explicit type 'code' — classifying instead`,
-and silently falls back to classification. The user picked a directive from a menu and got whatever
-the classifier felt like. Nothing errors, which is why it has gone unnoticed.
-
-The comment above `_OUTPUT_TYPE_KEYWORDS` says "Must match the types registered in
-nexus-ai/apps/output_types/types.py" — that invariant is currently false, and nothing enforces it.
-
-Two ways to close it, both small:
-
-1. **Register a `code` spec** (`render_as="code"`, an instruction to emit a single fenced block with a
-   language tag). The frontend and nucleus already support it end to end, so this is the option that
-   makes the menu entry do what it says.
-2. **Drop `code`** from `_OUTPUT_TYPE_KEYWORDS` and from `OUTPUT_DIRECTIVES`. Cheaper, but it removes a
-   capability the renderer already has.
-
-Worth doing either way: have the worker expose its registry (the `list_output_types` endpoint in
-`intelligence/api.py` already does) and have nucleus/the app read it, rather than each side keeping a
-hand-maintained copy of the list — the drift above is the predictable result of three copies.
-
-Noticed while fixing the output-type instruction bug (`@chart` produced ASCII art because the live
-path injected the type's *name* as the whole format instruction).
+The durable fix is one source of truth. The worker already exposes its registry — `list_output_types` in
+`intelligence/api.py` — so nucleus and the app could read it instead of each keeping a copy. Worth doing
+before a fourth surface needs the same list.
