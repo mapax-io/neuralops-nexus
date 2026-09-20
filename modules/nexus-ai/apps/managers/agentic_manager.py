@@ -35,6 +35,7 @@ from apps.schemas.trigger import (
 from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.output_types.markers import parse_output_markers
+from apps.output_types.recovery import finalise_reply
 
 logger = logging.getLogger(__name__)
 
@@ -98,16 +99,9 @@ class NewImprovedAgenticManager:
         render_as = "text"
         embed_description = None
         if full_response_content:
-            clean_content, marker_type, embed_description = parse_output_markers(
-                full_response_content
+            clean_content, final_type, render_as, embed_description = finalise_reply(
+                full_response_content, resolved_type
             )
-            final_spec = OutputTypeRegistry.get(marker_type)
-            # No markers means the model answered conversationally -- render it
-            # as text whatever was asked for, so a plain reply doesn't land in
-            # a chart box.
-            final_type = marker_type if final_spec else resolved_type
-            render_as = getattr(final_spec, "render_as", None) or "text"
-            embed_description = None if render_as == "text" else embed_description
 
         # Signal the end to the frontend
         yield AgentEvent(
@@ -466,17 +460,9 @@ class AgenticSwarmManager:
                     break
 
             raw_hop = "".join(agent_response_content)
-            clean_hop, marker_type, embed_description = parse_output_markers(raw_hop)
-
-            if marker_type and OutputTypeRegistry.get(marker_type):
-                final_type = marker_type
-                final_spec = OutputTypeRegistry.get(marker_type)
-                final_render_as = final_spec.render_as if final_spec else render_as
-            else:
-                final_type = resolved_type
-                final_render_as = "text"
-                clean_hop = raw_hop
-                embed_description = None
+            # Same ending as the single path, so an unmarked chart from a
+            # swarm hop is recovered the same way.
+            clean_hop, final_type, final_render_as, embed_description = finalise_reply(raw_hop, resolved_type)
 
             yield AgentEvent(
                 type=AgentEventType.END,

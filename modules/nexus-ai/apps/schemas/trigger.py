@@ -325,7 +325,7 @@ class AgentEvent(BaseModel):
 
     # M7: output type metadata — populated in message_done
     output_type: str | None = None  # resolved type: "chart", "terminal", "text", etc.
-    render_as: str | None = None  # renderer hint: "html" | "code" | "text" | "terminal"
+    render_as: str | None = None  # renderer hint: "html" | "code" | "text" | "terminal" | "chart"
 
     # M8: embed description — text inside <<<EMBED>>>...<<<END_EMBED>>> block
     # Only present for html/form/terminal render_as. Used instead of raw HTML for embedding.
