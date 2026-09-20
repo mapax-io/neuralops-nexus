@@ -563,7 +563,7 @@ ImportError: cannot import name 'AIModel' from 'nucleus.models'
 `AIModel` was renamed to `ModelConfig` in migration 0014 (noted in
 `nucleus/models/__init__.py:72`); this command was never updated, so it dies at
 import before running a single check. It is the one flow test that covers the
-chat hot path, and `readme.md` / `CLAUDE.md` both still list it as a gate.
+chat hot path.
 
 Pre-existing — last touched in `0d6ab07`, long before the scoped-permissions
 work. Noticed while running the backend gates for the `tool_activity` relay; not
