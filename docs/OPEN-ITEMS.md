@@ -364,6 +364,11 @@ web app cannot show because nothing is published:
   which the web app renders as an in-bubble "Thinking…" cue.
 - **Swarm failure.** The swarm relay marks the message FAILED but publishes no
   `message_error` (the single path does), so clients fall back to stall detection.
+  A transport exception in the swarm relay (`except Exception` at the end of
+  `trigger_ai_swarm_response_async`) only logs — the active message stays PENDING until
+  `reap_orphaned_replies` fails it 3 minutes later with the "server restarted" reason,
+  which is then the wrong reason. The single relay turns the same exception into a
+  FAILED message with a categorised reason at once; the swarm path should do the same.
 - **Workspace-level channel.** Nothing is published outside topic channels (no unread
   counts, invitations, new topics/channels), so those refresh by polling only.
 - **Dead path.** `chat/tasks.py generate_ai_response` (Celery) publishes `token` /
