@@ -18,7 +18,9 @@ from authn.services import auth_verify, my_permissions
 from nucleus.models import (
     ChatTopic, Channel, Company, CompanyAccess, Invitation, Project, ProjectMember, TopicParticipant,
 )
-from workspace.services import apply_grants, invite_to_project, invite_to_system, member_access, set_member_access
+from workspace.services import (
+    apply_grants, invite_to_project, invite_to_system, list_members, member_access, set_member_access,
+)
 
 User = get_user_model()
 
@@ -718,3 +720,26 @@ class TeamRouteGateTests(PeerFixture):
         apply_grants(self.company, pm, [self.whole(self.p1)], "admin", self.owner)
         self.assertEqual(self.call(pm, "post", f"/api/v1/projects/{self.p1.id}/team/", {"user_id": str(self.sara.id)}).status_code, 200)
         self.assertEqual(self.call(pm, "post", f"/api/v1/projects/{self.p2.id}/team/", {"user_id": str(self.sara.id)}).status_code, 404)
+
+
+class ListMembersTests(InviteGrantsFixture):
+    """The server-wide members list carries the name the rest of the app shows."""
+
+    def by_email(self, email):
+        return next(m for m in list_members(self.company) if m["email"] == email)
+
+    def test_a_member_is_listed_under_their_display_name(self):
+        self.sara.display_name = "Sara_K"
+        self.sara.save(update_fields=["display_name"])
+        self.assertEqual(self.by_email("sara@acme.test")["name"], "Sara_K")
+
+    def test_without_a_display_name_the_email_local_part_stands_in(self):
+        self.assertEqual(self.by_email("owner@acme.test")["name"], "owner")
+
+    def test_who_invited_them_is_named_the_same_way(self):
+        self.owner.display_name = "The_Boss"
+        self.owner.save(update_fields=["display_name"])
+        sara = self.by_email("sara@acme.test")
+        self.assertEqual(sara["invited_by"], "owner@acme.test")
+        self.assertEqual(sara["invited_by_name"], "The_Boss")
+        self.assertIsNone(self.by_email("owner@acme.test")["invited_by_name"])
