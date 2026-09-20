@@ -598,6 +598,18 @@ deliberately not folded in:
 
 ---
 
+## `AgenticManager` in nexus-ai is dead code
+
+**Where:** `modules/nexus-ai/apps/managers/agentic_manager.py` (`class AgenticManager`), imported but never
+instantiated by `apps/routers/trigger.py`, which runs `NewImprovedAgenticManager` for `/trigger/` and
+`AgenticSwarmManager` for `/trigger/swarm/`.
+
+Its `run()` still carries the pre-recovery marker handling (no unmarked-chart recovery, `raw_full` kept on a
+no-marker reply), so it drifts from the two live managers with every change to them. Delete it and the
+import, or say in a comment why it is kept.
+
+---
+
 ## Output types are three hand-maintained lists
 
 **Where:** `modules/nexus-ai/apps/output_types/types.py` (the registry),
@@ -619,3 +631,18 @@ structure that produced it is unchanged: the next type added on one side can dri
 The durable fix is one source of truth. The worker already exposes its registry — `list_output_types` in
 `intelligence/api.py` — so nucleus and the app could read it instead of each keeping a copy. Worth doing
 before a fourth surface needs the same list.
+
+---
+
+## Compose still bind-mounts the deleted `modules/neuralops-web-app`
+
+**Where:** `docker-compose.neuralops.yaml` — the `neuralops-web-app-dev` service (dev profile), and the
+commented-out copy further down.
+
+`dev` removed `modules/neuralops-web-app` in `58e1083`, but the compose file still defines a dev service that
+bind-mounts `./modules/neuralops-web-app:/app` and runs `npm ci && npm run dev` in it. On any `docker compose
+up` of the dev profile, Docker creates the mount source, so an empty `modules/neuralops-web-app/` (a bare
+`node_modules/` and a lockfile) reappears in every checkout — untracked, but exactly the path the app must
+never occupy again. The frontend now lives in its own repository (`mapax-io/neuralops-nexus-web-app`) and runs
+from there; this service has nothing to serve. Remove the service (and the commented copy) from the compose
+file.
