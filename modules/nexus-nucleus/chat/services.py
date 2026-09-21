@@ -397,8 +397,12 @@ async def embed_message_async(
 
 # ── AI trigger — fire-and-forget (M3 + M7) ────────────────────────────────────
 
-def create_ai_message(company, project, topic, persona, render_as: str = "text") -> dict:
-    """Pre-create a PENDING ChatMessage for the AI response."""
+def create_ai_message(company, project, topic, persona, render_as: str = "text", triggered_by=None) -> dict:
+    """
+    Pre-create a PENDING ChatMessage for the AI response. `triggered_by` is the
+    person who called the persona (the sender, a schedule's creator, the one who
+    asked before a plan was approved): the reply is theirs to stop (W22).
+    """
     from nucleus.models import ChatMessage
 
     max_seq = (
@@ -420,6 +424,7 @@ def create_ai_message(company, project, topic, persona, render_as: str = "text")
             "persona_id": str(persona.id),
             "persona_name": persona.name,   # display name for serializer
             "render_as": render_as,
+            **({"triggered_by_id": str(triggered_by.id), "triggered_by_name": triggered_by.get_display_name()} if triggered_by is not None else {}),
         },
     )
     return _serialise(msg)
@@ -536,6 +541,16 @@ class PreflightError(Exception):
         self.status = status
 
 
+def _message_in_topic(topic, message_id):
+    """The row for a message id in this topic, or None -- also for an id that is not a UUID (a scheduled fire's)."""
+    from nucleus.models import ChatMessage
+    try:
+        uuid.UUID(str(message_id))
+    except (ValueError, TypeError):
+        return None
+    return ChatMessage.objects.select_related("sender").filter(id=message_id, topic=topic).first()
+
+
 async def decide_preflight(*, topic, message_id: str, user, decision: str, note: str | None = None) -> dict:
     """
     Approve, adjust or decline a persona's proposal. Approve runs the plan with
@@ -574,8 +589,12 @@ async def decide_preflight(*, topic, message_id: str, user, decision: str, note:
     channel = topic_channel(str(topic.id))
     await publish_async(channel, preflight_decided_event(str(msg.id), preflight))
 
+    # The run is the asker's (W22): the sender of the message that asked, or the
+    # decider when that message cannot be found.
+    asked = await sync_to_async(_message_in_topic)(topic, preflight.get("user_message_id"))
     common = dict(company=msg.company, project=msg.project, topic=topic, persona=persona, topic_id=str(topic.id),
-                  user_message_id=preflight.get("user_message_id") or "", output_type="auto")
+                  user_message_id=preflight.get("user_message_id") or "", output_type="auto",
+                  triggered_by=(asked.sender if asked and asked.sender else user))
     if decision == "approve":
         asyncio.create_task(trigger_ai_response_async(user_message=preflight.get("user_message") or "", approved_plan=plan_text(preflight["plan"]), **common))
     elif decision == "adjust":
@@ -764,6 +783,7 @@ async def trigger_ai_response_async(
     approved_plan: str | None = None,
     interactive: bool = True,
     routine=None,
+    triggered_by=None,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -809,7 +829,7 @@ async def trigger_ai_response_async(
     _fail_ai_message = sync_to_async(fail_ai_message)
 
     try:
-        ai_msg = await _create_ai_message(company, project, topic, persona)
+        ai_msg = await _create_ai_message(company, project, topic, persona, triggered_by=triggered_by)
     except Exception as exc:
         logger.warning("[trigger] failed to create AI message: %s", exc)
         return
@@ -827,6 +847,8 @@ async def trigger_ai_response_async(
         "sender_avatar": ai_msg["sender_avatar"],  # #148 -- already in _serialise()'s dict
         "sequence": ai_msg["sequence"],
         "created_at": now,
+        "triggered_by_id": ai_msg.get("triggered_by_id"),  # whose reply this is (W22)
+        "triggered_by_name": ai_msg.get("triggered_by_name"),
     })
 
     # 3. Build the minimal TriggerJob payload -- nexus-ai resolves persona/
@@ -1077,6 +1099,7 @@ async def trigger_ai_swarm_response_async(
     user_message_id: str,
     topic_id: str,
     output_type: str = "auto",
+    triggered_by=None,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -1123,7 +1146,7 @@ async def trigger_ai_swarm_response_async(
 
     try:
         persona = personas[0]
-        ai_msg = await _create_ai_message(company, project, topic, persona)
+        ai_msg = await _create_ai_message(company, project, topic, persona, triggered_by=triggered_by)
     except Exception as exc:
         logger.warning("[trigger] failed to create AI message: %s", exc)
         return
@@ -1141,6 +1164,8 @@ async def trigger_ai_swarm_response_async(
         "sender_avatar": ai_msg["sender_avatar"],  # #148 -- already in _serialise()'s dict
         "sequence": ai_msg["sequence"],
         "created_at": now,
+        "triggered_by_id": ai_msg.get("triggered_by_id"),  # whose reply this is (W22)
+        "triggered_by_name": ai_msg.get("triggered_by_name"),
     })
 
     # 3. Build the minimal TriggerJob payload -- nexus-ai resolves persona/
@@ -1222,7 +1247,7 @@ async def trigger_ai_swarm_response_async(
                                 p_obj = await sync_to_async(lambda: Persona.objects.filter(id=persona_id).first())()
                                 if not p_obj:
                                     p_obj = personas[0]
-                                new_ai_msg = await _create_ai_message(company, project, topic, p_obj)
+                                new_ai_msg = await _create_ai_message(company, project, topic, p_obj, triggered_by=triggered_by)
                                 current_id = new_ai_msg["id"]
                                 event.update({
                                     "id": current_id,
@@ -1515,16 +1540,22 @@ def _serialise(msg) -> dict:
         # over time (e.g. a deleted-and-recreated "Nova") be told apart, even
         # though sender_name alone can't distinguish them.
         "persona_id": metadata.get("persona_id"),
+        # Whose reply this is -- the person who called the persona (W22); None
+        # for human/system messages and for replies from before it was recorded.
+        "triggered_by_id": metadata.get("triggered_by_id"),
+        "triggered_by_name": metadata.get("triggered_by_name"),
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }
 
 
-def request_stop_for_message(topic, message_id: str) -> str:
+def request_stop_for_message(topic, message_id: str, user=None) -> str:
     """
     Ask the relay to end a persona reply that is still streaming in this topic.
-    Returns "stopping", "not_found" (not in this topic / not a persona reply)
-    or "finished" (nothing to stop). Sync; the caller wraps it.
+    Returns "stopping", "not_found" (not in this topic / not a persona reply),
+    "finished" (nothing to stop), "orphaned", or "not_owner" -- a reply is its
+    caller's to stop (W22); one from before the caller was recorded keeps the
+    old rule (anyone who can read the topic). Sync; the caller wraps it.
     """
     from nucleus.models import ChatMessage
 
@@ -1533,6 +1564,9 @@ def request_stop_for_message(topic, message_id: str) -> str:
         return "not_found"
     if msg.status != ChatMessage.Status.PENDING:
         return "finished"
+    owner_id = (msg.metadata or {}).get("triggered_by_id")
+    if user is not None and owner_id and owner_id != str(user.id):
+        return "not_owner"
     if msg.created_at < timezone.now() - timedelta(seconds=ORPHAN_AFTER_SECONDS):
         fail_ai_message(str(msg.id), "orphaned: no relay finished this reply", ORPHANED_RUN_REASON)
         return "orphaned"

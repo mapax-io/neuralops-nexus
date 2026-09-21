@@ -42,6 +42,8 @@ class MessageOut(Schema):
     sender_id: Optional[str] = None
     sender_avatar: Optional[str] = None  # #148 -- absolute URL, or None
     sender_type: str
+    triggered_by_id: Optional[str] = None    # whose reply this is -- the caller, who alone may stop it (W22)
+    triggered_by_name: Optional[str] = None
     persona_id: Optional[str] = None  # frozen at send-time -- distinguishes two
                                        # personas that have shared the same name
                                        # over time (e.g. deleted + recreated "Nova")

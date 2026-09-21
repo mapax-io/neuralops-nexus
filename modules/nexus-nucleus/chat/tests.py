@@ -1050,3 +1050,64 @@ class RoutineRelayTests(RelayFixture):
         self.assertEqual(FakeClient.posted[-1]["routine_id"], str(digest.id))
         await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
         self.assertIsNone(FakeClient.posted[-1]["routine_id"])
+
+
+# ── W22 Run ownership ─────────────────────────────────────────────────────────
+class RunOwnershipTests(RelayFixture):
+    """A reply belongs to the person who called it: recorded on the row and the wire, and the only one who may stop it."""
+
+    DONE = {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"}
+
+    def setUp(self):
+        super().setUp()
+        FakeClient.posted = []
+
+    async def test_a_reply_records_its_caller_on_the_row_and_on_message_start(self):
+        FakeClient.response = FakeResponse(sse(self.DONE))
+        await trigger_ai_response_async(
+            company=self.company, project=self.p1, topic=self.t1, persona=self.persona_sara,
+            user_message="hi", user_message_id="u1", topic_id=str(self.t1.id), triggered_by=self.sara,
+        )
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual((row.metadata["triggered_by_id"], row.metadata["triggered_by_name"]), (str(self.sara.id), "sara"))
+        start = self.events("message_start")[0]
+        self.assertEqual((start["triggered_by_id"], start["triggered_by_name"]), (str(self.sara.id), "sara"))
+        from chat.services import _serialise
+        out = await sync_to_async(lambda: _serialise(ChatMessage.objects.select_related("sender").get(id=row.id)))()
+        self.assertEqual((out["triggered_by_id"], out["triggered_by_name"]), (str(self.sara.id), "sara"))
+
+    def test_only_the_caller_can_stop_and_a_reply_without_a_caller_keeps_the_old_rule(self):
+        from chat.services import create_ai_message, request_stop_for_message
+        mine = create_ai_message(self.company, self.p1, self.t1, self.persona_sara, triggered_by=self.sara)
+        legacy = create_ai_message(self.company, self.p1, self.t1, self.persona_sara)
+        self.assertEqual(request_stop_for_message(self.t1, mine["id"], user=self.owner), "not_owner")
+        self.assertEqual(request_stop_for_message(self.t1, mine["id"], user=self.sara), "stopping")
+        self.assertEqual(request_stop_for_message(self.t1, legacy["id"], user=self.owner), "stopping")
+        path = f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t1.id}/messages/{mine['id']}/stop/"
+        r = self.call("post", path, self.owner)
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertIn("called the persona", r.json()["detail"])
+
+    def test_a_send_names_the_sender_as_the_caller(self):
+        _r, trigger, _swarm, _publish = self.send(self.sara, "@Sara hi")
+        self.assertEqual(trigger.call_args.kwargs["triggered_by"].id, self.sara.id)
+
+    async def test_an_approved_plan_runs_for_the_person_who_asked(self):
+        from chat.services import decide_preflight
+        self.persona_sara.acts_after_approval = True
+        await sync_to_async(self.persona_sara.save)(update_fields=["acts_after_approval"])
+        # The asking message is a real row here, so the re-trigger belongs to its sender, not the approver.
+        asked = await sync_to_async(ChatMessage.objects.create)(company=self.company, project=self.p1, topic=self.t1, sender=self.sara, content="@Sara go", sequence=1)
+        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": json.dumps(PLAN), "output_type": "preflight", "render_as": "preflight"}))
+        await trigger_ai_response_async(
+            company=self.company, project=self.p1, topic=self.t1, persona=self.persona_sara,
+            user_message="go", user_message_id=str(asked.id), topic_id=str(self.t1.id), triggered_by=self.sara,
+        )
+        proposal = (await sync_to_async(self.reply_rows)())[0]
+        FakeClient.response = FakeResponse(sse(self.DONE))
+        await decide_preflight(topic=self.t1, message_id=str(proposal.id), user=self.owner, decision="approve")
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            await asyncio.gather(*pending)
+        run = (await sync_to_async(self.reply_rows)())[-1]
+        self.assertEqual(run.metadata["triggered_by_id"], str(self.sara.id))
