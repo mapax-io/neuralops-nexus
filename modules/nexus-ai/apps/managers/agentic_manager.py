@@ -36,6 +36,7 @@ from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.output_types.markers import parse_output_markers
 from apps.output_types.recovery import finalise_reply
+from apps.managers.model_info import context_window_for
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class NewImprovedAgenticManager:
         )
 
         accrued_text: list[str] = []
+        usage: dict = {}
         async for event in self.runner.run_stream(job, messages, persona):
             match event.type:
 
@@ -89,6 +91,7 @@ class NewImprovedAgenticManager:
                 # Persist the model's intneral state when all is said and done
                 case AgentEventType.PERSIST.value:
                     internal_model_state = event.metadata.get('internal_model_state') #type: ignore
+                    usage = (event.metadata or {}).get("usage") or {}
                     continue
 
             yield event
@@ -111,6 +114,9 @@ class NewImprovedAgenticManager:
             output_type=final_type,
             render_as=render_as,
             embed_description=embed_description,
+            prompt_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            context_window=context_window_for(persona.model),
         )
 
     async def swarm(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]: ...
@@ -354,6 +360,7 @@ class AgenticSwarmManager:
             )
 
             agent_response_content = []
+            hop_usage: dict = {}
 
             async for event in self.runner.run_stream(
                 job=job,
@@ -365,6 +372,8 @@ class AgenticSwarmManager:
 
                 if event.type == "message_delta" and event.delta:
                     agent_response_content.append(event.delta)
+                if event.type == AgentEventType.PERSIST.value:
+                    hop_usage = (event.metadata or {}).get("usage") or {}
 
                 yield event
 
@@ -471,6 +480,9 @@ class AgenticSwarmManager:
                 output_type=final_type,
                 render_as=final_render_as,
                 embed_description=embed_description,
+                prompt_tokens=hop_usage.get("prompt_tokens"),
+                output_tokens=hop_usage.get("output_tokens"),
+                context_window=context_window_for(persona.model),
             )
 
             if agent_response_content:
