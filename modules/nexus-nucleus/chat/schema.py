@@ -107,3 +107,18 @@ class NudgeIn(Schema):
         if len(v) > 2000:
             raise ValueError("A nudge is at most 2,000 characters.")
         return v
+
+
+class MessageSearchOut(Schema):
+    """One hit: enough to show it and to jump to it (W19)."""
+    message_id: str
+    topic_id: str
+    topic_title: str
+    channel_id: str
+    channel_name: str
+    project_id: str
+    project_name: str
+    sender_name: Optional[str] = None
+    sender_type: str
+    preview: str
+    created_at: str

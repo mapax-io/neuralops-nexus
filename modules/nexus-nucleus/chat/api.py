@@ -46,13 +46,15 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from chat.events import mention_refused_event
-from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut, ToolApprovalDecisionIn, ToolApprovalDecisionOut, NudgeIn
+from chat.schema import MessageSearchOut, MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut, ToolApprovalDecisionIn, ToolApprovalDecisionOut, NudgeIn
 from chat import services as chat_svc
 from chat.services import MessageDirectives
 from workspace import services as ws_svc
 from intelligence import services as intel_svc
 
 router = Router(tags=["Chat"], auth=SupabaseBearer())
+# Search is not under a project: it looks across every chat a person can see.
+search_router = Router(tags=["Search"], auth=SupabaseBearer())
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -513,6 +515,46 @@ async def stop_message(request, project_id: str, channel_id: str, topic_id: str,
         return {"stopping": True}
     await stop_signals().request_stop(message_id)
     return {"stopping": True}
+
+
+@search_router.get("/messages/", response=List[MessageSearchOut])
+async def search_messages(request, q: str, limit: int = 20):
+    """
+    Find a message across every chat this person can see (W19).
+
+    The worker ranks by meaning; this filters by what the person may see and
+    builds each result from our own rows. When the worker cannot answer, the
+    same visible messages are searched literally instead of failing.
+    """
+    from chat import search as search_svc
+
+    user = request.auth
+    query = (q or "").strip()[:search_svc.QUERY_MAX]
+    if not query:
+        return []
+    limit = max(1, min(int(limit or 20), search_svc.RESULTS_MAX))
+    company = await sync_to_async(ws_svc.get_company)()
+    if not company:
+        raise HttpError(503, "Server not initialised.")
+
+    topic_ids = await sync_to_async(search_svc.visible_topic_ids)(user, company)
+    if not topic_ids:
+        return []
+    project_ids = await sync_to_async(lambda: [str(p.id) for p in ws_svc.list_projects(company, user)])()
+
+    try:
+        ranked = await search_svc.semantic_ids(company, query, project_ids, limit)
+    except Exception:  # noqa: BLE001 -- a search box must never answer with a 500
+        logger.warning("[search] the ranking step failed; searching the rows instead", exc_info=True)
+        ranked = []
+    if ranked:
+        rows = await sync_to_async(lambda: list(search_svc._rows(ranked, topic_ids)))()
+        ordered = search_svc.order_by(ranked, rows)
+        if ordered:
+            return [search_svc._result(m, query) for m in ordered[:limit]]
+    # Nothing from the worker, or nothing of it visible: search the rows directly.
+    rows = await sync_to_async(search_svc.literal)(query, topic_ids, limit)
+    return [search_svc._result(m, query) for m in rows]
 
 
 @router.post(

@@ -1353,3 +1353,107 @@ class SwarmSafetyTests(MentionRightFixture):
         swarm.assert_not_awaited()
         self.assertEqual(trigger.await_count, 1)
         self.assertEqual(r.json()["refusals"], [])
+
+
+class MessageSearchTests(MentionRightFixture):
+    """W19: find a message across the chats a person can see — and only those."""
+
+    def setUp(self):
+        super().setUp()
+        from nucleus.models import ChatMessage
+        self.mine = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1, sender=self.sara,
+            content="the warehouse runs on Postgres 16 and the report goes out on Tuesday",
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=1,
+            metadata={"role": "user"},
+        )
+        self.elsewhere = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t3, sender=self.owner,
+            content="the warehouse secret nobody else should find",
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=1,
+            metadata={"role": "user"},
+        )
+        self.system = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1,
+            content="Session with @Sara opened — warehouse",
+            message_type=ChatMessage.MessageType.SYSTEM, status=ChatMessage.Status.COMPLETED, sequence=2,
+        )
+
+    def search(self, user, q):
+        with patch("chat.search.semantic_ids", new_callable=AsyncMock, return_value=[]):
+            return self.call("get", f"/api/v1/search/messages/?q={q}", user)
+
+    def test_it_finds_a_message_and_says_where_it_is(self):
+        r = self.search(self.owner, "postgres")
+        self.assertEqual(r.status_code, 200, r.content)
+        hits = r.json()
+        self.assertEqual([h["message_id"] for h in hits], [str(self.mine.id)])
+        hit = hits[0]
+        self.assertEqual((hit["topic_title"], hit["channel_name"], hit["project_name"]), (self.t1.title, self.c1.name, self.p1.name))
+        self.assertEqual(hit["sender_name"], self.sara.get_display_name())
+        self.assertIn("Postgres 16", hit["preview"])
+
+    def test_a_system_line_is_not_a_search_result(self):
+        hits = self.search(self.owner, "warehouse").json()
+        self.assertNotIn(str(self.system.id), [h["message_id"] for h in hits])
+
+    def test_a_chat_a_person_cannot_see_is_not_searchable(self):
+        # Someone granted one topic only: the other chat is not theirs to find.
+        from workspace.services import apply_grants
+        from authn.permissions.models import RoleAssignment
+        RoleAssignment.objects.filter(user=self.vera).delete()
+        apply_grants(self.company, self.vera, [{"project_id": str(self.p1.id), "topic_ids": [str(self.t1.id)]}], "member", self.owner)
+        ids = [h["message_id"] for h in self.search(self.owner, "warehouse").json()]
+        self.assertIn(str(self.elsewhere.id), ids)  # the owner sees every chat
+        hits = self.search(self.vera, "warehouse").json()
+        self.assertEqual([h["message_id"] for h in hits], [str(self.mine.id)])
+
+    def test_visibility_is_answered_in_a_fixed_handful_of_queries(self):
+        # The walk it replaced asked can() -- three queries -- once per project
+        # and once per channel; twenty projects of ten channels was 884 queries
+        # for one keystroke (audit, 2026-09-21). rights_for_many answers a level
+        # at once, so the count must not move with the workspace's size.
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from nucleus.models import Channel, ChatTopic
+        from chat import search
+
+        before = set(search.visible_topic_ids(self.owner, self.company))
+        with CaptureQueriesContext(connection) as small:
+            search.visible_topic_ids(self.owner, self.company)
+        for i in range(6):
+            ch = Channel.objects.create(company=self.company, project=self.p1, name=f"c{i}", slug=f"c{i}-x")
+            ChatTopic.objects.create(company=self.company, project=self.p1, channel=ch, title=f"t{i}", slug=f"t{i}-x")
+        with CaptureQueriesContext(connection) as bigger:
+            after = set(search.visible_topic_ids(self.owner, self.company))
+        self.assertEqual(len(bigger.captured_queries), len(small.captured_queries))
+        self.assertLessEqual(len(small.captured_queries), 10)
+        self.assertEqual(len(after - before), 6)
+
+    def test_an_empty_query_asks_nothing_of_anyone(self):
+        with patch("chat.search.semantic_ids", new_callable=AsyncMock) as semantic:
+            r = self.call("get", "/api/v1/search/messages/?q=%20%20", self.owner)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), [])
+        semantic.assert_not_awaited()
+
+    def test_the_worker_s_ranking_is_kept_and_its_invisible_hits_are_dropped(self):
+        from workspace.services import apply_grants
+        from authn.permissions.models import RoleAssignment
+        RoleAssignment.objects.filter(user=self.vera).delete()
+        apply_grants(self.company, self.vera, [{"project_id": str(self.p1.id), "topic_ids": [str(self.t1.id)]}], "member", self.owner)
+        ranked = [str(self.elsewhere.id), str(self.mine.id)]
+        with patch("chat.search.semantic_ids", new_callable=AsyncMock, return_value=ranked):
+            owner_hits = self.call("get", "/api/v1/search/messages/?q=warehouse", self.owner).json()
+            narrow_hits = self.call("get", "/api/v1/search/messages/?q=warehouse", self.vera).json()
+        # The owner sees both, in the order the worker gave.
+        self.assertEqual([h["message_id"] for h in owner_hits], ranked)
+        # The narrow reader cannot see the first; ranking does not let it through.
+        self.assertEqual([h["message_id"] for h in narrow_hits], [str(self.mine.id)])
+
+    def test_when_the_worker_cannot_answer_the_search_still_does(self):
+        with patch("chat.search.semantic_ids", new_callable=AsyncMock, side_effect=RuntimeError("worker down")):
+            r = self.call("get", "/api/v1/search/messages/?q=postgres", self.owner)
+        # A search box must answer. The rows are searched directly instead.
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual([h["message_id"] for h in r.json()], [str(self.mine.id)])
