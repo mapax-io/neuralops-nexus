@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     TERMINAL_MAX_SESSIONS: int = 20
     # How long a model check (apps/managers/model_check.py) waits for the model.
     MODEL_CHECK_TIMEOUT_SECONDS: float = 20
+    # Recall (W5): entries retrieved per turn, and how long the remember pass may take.
+    RECALL_TOP_K: int = 8
+    RECALL_REMEMBER_TIMEOUT_SECONDS: float = 15
 
     class Config:
         env_file = ".env"

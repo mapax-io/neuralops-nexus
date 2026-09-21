@@ -149,6 +149,7 @@ def persona_from(data: dict) -> PersonaConfig:
         tool_levels=data.get("tool_levels") or {},
         # Absent on an older nucleus: no fallbacks.
         fallback_models=[model_from(m) for m in data.get("fallback_models") or []],
+        recall_enabled=bool(data.get("recall_enabled", True)),
     )
 
 
@@ -161,6 +162,18 @@ async def resolve_routine(routine_id: str):
         response = await client.get(url, headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY})
         response.raise_for_status()
     return routine_from(response.json())
+
+
+async def record_recall(project_id: str, persona_id: str, message_id: str, entries: list[dict]) -> int:
+    """Hand what a reply learnt to nucleus's Recall (W5); returns how many entries it kept."""
+    url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/recall/"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            url, json={"project_id": project_id, "persona_id": persona_id, "message_id": message_id, "entries": entries},
+            headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY},
+        )
+        response.raise_for_status()
+    return int(response.json().get("created") or 0)
 
 
 async def fetch_history(topic_id: str, exclude_message_id: str | None = None) -> list[HistoryMessage]:

@@ -237,6 +237,8 @@ class PersonaConfig(BaseModel):
     tool_levels: dict[str, str] = Field(default_factory=dict)
     # Models to answer with when `model` cannot, in order (apps/managers/fallbacks.py).
     fallback_models: list[ModelConfig] = Field(default_factory=list)
+    # Recall (W5): whether the persona records what it learns after a reply.
+    recall_enabled: bool = True
 
 
 class HistoryMessage(BaseModel):
@@ -402,6 +404,8 @@ class AgentEvent(BaseModel):
     # message_done only: "<model name> (fallback)" when a fallback model answered
     # because the persona's own could not; None otherwise.
     answered_by_model: str | None = None
+    # message_done only: how many entries the reply recorded in the project's Recall (W5).
+    recalled: int | None = None
 
     # message_error only -- see apps/routers/trigger.py:_event_stream. Emitted
     # when anything in AgenticManager.run() raises (persona resolve, history

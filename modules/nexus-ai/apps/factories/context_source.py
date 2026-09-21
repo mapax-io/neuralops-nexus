@@ -58,6 +58,8 @@ class ContextSourceFactory:
 
 from apps.implementations.context_sources.chat.chat_context_source import ChatContextSource          # noqa: E402
 from apps.implementations.context_sources.document.document_context_source import DocumentContextSource  # noqa: E402
+from apps.implementations.context_sources.recall.recall_context_source import RecallContextSource  # noqa: E402
 
 ContextSourceFactory.register(ChatContextSource)
 ContextSourceFactory.register(DocumentContextSource)
+ContextSourceFactory.register(RecallContextSource)

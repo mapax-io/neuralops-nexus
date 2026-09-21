@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security.api_key import APIKeyHeader
 
 from apps.core.config import settings
-from apps.schemas.embed import EmbedRequest, EmbedResponse, MessageEmbedRequest, MessageEmbedResponse
+from apps.schemas.embed import EmbedRequest, EmbedResponse, MessageEmbedRequest, MessageEmbedResponse, RecallEmbedRequest, RecallEmbedResponse
 from apps.factories.context_source import ContextSourceFactory
 
 router = APIRouter(prefix="/api/v1", tags=["embed"])
@@ -68,6 +68,19 @@ async def delete_message_vector(
         store=VectorStoreFactory.get(),
     )
     await chat_source.delete_message(message_id, company_id)
+    return {"ok": True}
+
+
+@router.post("/embed/recall/", response_model=RecallEmbedResponse)
+async def embed_recall_entry(req: RecallEmbedRequest, _: str = Depends(_verify_key)) -> RecallEmbedResponse:
+    """Embed one Recall entry (W5) -- nucleus calls this on create and on edit."""
+    return await ContextSourceFactory.get("recall").ingest(req)
+
+
+@router.delete("/embed/recall/{entry_id}/")
+async def delete_recall_vector(entry_id: str, company_id: str, _: str = Depends(_verify_key)) -> dict:
+    """Drop one Recall entry's vector -- nucleus calls this when the entry is removed."""
+    await ContextSourceFactory.get("recall").delete_entry(entry_id, company_id)
     return {"ok": True}
 
 
