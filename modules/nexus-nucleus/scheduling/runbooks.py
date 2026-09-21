@@ -265,8 +265,12 @@ def stop_run(run, user) -> str:
 # ── Execution (the Celery task's body) ────────────────────────────────────────
 
 def skipped_count(run) -> int:
-    """How many steps the run did not actually complete -- it finished, but not cleanly."""
-    return sum(1 for s in (run.step_results or []) if s.get("status") != "done")
+    """
+    How many steps were SKIPPED (their `skip` rule carried the run past a
+    failure) -- a run that finished with one did not finish cleanly. Only
+    skipped: a failed or stopped step ends the run, and its own status says so.
+    """
+    return sum(1 for s in (run.step_results or []) if s.get("status") == "skipped")
 
 
 def _end(run, status: str, *, error: str = "", line: str) -> None:

@@ -307,6 +307,7 @@ class RunbookExecutionTests(RunbookFixture):
         run.refresh_from_db()
         self.assertEqual((run.status, run.current_step), ("failed", 0))
         self.assertEqual([s["status"] for s in run.step_results], ["failed"])
+        self.assertEqual(runbooks.serialise_run(run)["skipped_count"], 0)  # failed, not skipped
         self.assertIn("step 1 of 3", run.error)
         self.assertEqual(self.lines()[-1], "Runbook: Weekly ops update failed at step 1 of 3 — The model provider refused the key.")
         # retry: one more attempt, then the step counts as failed under the stop rule.
@@ -332,6 +333,8 @@ class RunbookExecutionTests(RunbookFixture):
         run.refresh_from_db()
         self.assertEqual((run.status, [s["status"] for s in run.step_results]), ("stopped", ["done", "stopped"]))
         self.assertEqual(self.lines()[-1], "Runbook: Weekly ops update stopped at step 2 of 3.")
+        # A stopped step is not a skipped one -- the count means what it says.
+        self.assertEqual(runbooks.serialise_run(run)["skipped_count"], 0)
         # Marked stopped from outside between steps: the loop does not start the next one.
         run = RunbookRun.objects.get(id=self.start(rb, self.sara)[0].json()["id"])
         original = execute_run.__globals__["_after_step"]
