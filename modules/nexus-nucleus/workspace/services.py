@@ -2,10 +2,14 @@
 Business logic for Workspace (Projects, Channels, Topics), Members, and Team.
 All queries are scoped to company — safe for multi-tenant use.
 """
+import base64
 import copy
 import hashlib
+import hmac
+import json
 import logging
 import secrets
+import time
 import uuid
 from datetime import timedelta
 
@@ -70,6 +74,60 @@ _PROJECT_SCOPED_KEYS = {
     "filesystem": "root_dir",
     "shell": "cwd",
 }
+
+
+# ── Terminal (W21) ────────────────────────────────────────────────────────────
+TERMINAL_TICKET_TTL = 60
+TERMINAL_WS_PATH = "/terminal/ws"
+
+
+class TerminalError(Exception):
+    """A session that cannot be opened; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def sign_terminal_ticket(claims: dict, secret: str, ttl: int = TERMINAL_TICKET_TTL) -> str:
+    """
+    `<base64url claims>.<hmac-sha256>` under the internal key -- the worker's
+    apps/managers/terminal.py verify_ticket() is the other half of this format.
+    """
+    body = {**claims, "exp": int(time.time()) + ttl}
+    payload = _b64url(json.dumps(body, separators=(",", ":"), sort_keys=True).encode())
+    return f"{payload}.{hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()}"
+
+
+def terminal_cwd(project) -> str:
+    """Where a shell for this project starts: its shell capability's cwd, else its provisioned folder."""
+    from nucleus.models import MCPServer
+    row = MCPServer.objects.filter(project=project, is_internal=True, is_active=True).first()
+    shell = (row.capability_config or {}).get("shell") if row else None
+    return (shell or {}).get("cwd") or os.path.join(settings.PROJECTS_ROOT, get_project_folder_name(project))
+
+
+def open_terminal_session(project, user) -> dict:
+    """
+    A ticket for one shell session in the project's folder on the server. The
+    worker starts the shell when the app connects to the WebSocket with it;
+    nothing runs here. Logged, never posted to the chat.
+    """
+    if not getattr(settings, "INTERNAL_API_KEY", ""):
+        raise TerminalError(503, "The worker is not configured on this server.")
+    cwd = terminal_cwd(project)
+    if not os.path.isdir(cwd):
+        raise TerminalError(409, "This project has no folder on the server, so there is nowhere to open a shell.")
+    logger.info("[terminal] session user=%s project=%s cwd=%s", user.id, project.id, cwd)
+    ticket = sign_terminal_ticket(
+        {"project_id": str(project.id), "project_name": project.name, "user_id": str(user.id), "cwd": cwd},
+        settings.INTERNAL_API_KEY,
+    )
+    return {"ticket": ticket, "path": TERMINAL_WS_PATH, "expires_in": TERMINAL_TICKET_TTL}
 
 
 def provision_project_folder_and_mcp(project):

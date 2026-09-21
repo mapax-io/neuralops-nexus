@@ -803,3 +803,53 @@ class ProjectBriefTests(InviteGrantsFixture):
         r = self.patch(self.owner, self.p1, {"brief": "x" * (PROJECT_BRIEF_MAX + 1)})
         self.assertEqual(r.status_code, 400, r.content)
         self.assertIn("8,000", r.json()["detail"])
+
+
+# ── W21 Terminal ──────────────────────────────────────────────────────────────
+from chat.tests import MentionRightFixture as _MentionRightFixture  # noqa: E402
+
+
+class TerminalTests(_MentionRightFixture):
+    """A shell session in the project folder, for whoever holds project.terminal: the server hands out a signed ticket."""
+
+    def setUp(self):
+        super().setUp()
+        from workspace.services import provision_project_folder_and_mcp
+        # The real capability row -- its shell cwd is the folder this creates on disk.
+        self.row = provision_project_folder_and_mcp(self.p1)
+
+    def open_session(self, user, project):
+        return self.call("post", f"/api/v1/projects/{project.id}/terminal/session/", user)
+
+    @staticmethod
+    def claims_of(ticket):
+        import base64, json
+        payload = ticket.rsplit(".", 1)[0]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+    def test_the_right_is_checked_and_the_ticket_names_the_project_folder(self):
+        import hashlib, hmac
+        from django.conf import settings
+        r = self.open_session(self.sara, self.p1)
+        self.assertEqual(r.status_code, 403, r.content)  # a member reads the project; a shell on the server is an admin's act
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 200, r.content)
+        body = r.json()
+        self.assertEqual((body["path"], body["expires_in"]), ("/terminal/ws", 60))
+        payload, signature = body["ticket"].rsplit(".", 1)
+        self.assertEqual(signature, hmac.new(b"shared-secret", payload.encode(), hashlib.sha256).hexdigest())
+        claims = self.claims_of(body["ticket"])
+        self.assertEqual(claims["cwd"], self.row.capability_config["shell"]["cwd"])
+        self.assertEqual((claims["project_id"], claims["user_id"], claims["project_name"]), (str(self.p1.id), str(self.owner.id), self.p1.name))
+        self.assertGreater(claims["exp"], 0)
+
+    def test_a_project_without_a_folder_on_the_server_says_so(self):
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.open_session(self.owner, self.p2)
+        self.assertEqual(r.status_code, 409, r.content)
+
+    def test_a_server_without_the_worker_key_says_so(self):
+        with self.settings(INTERNAL_API_KEY=""):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 503, r.content)

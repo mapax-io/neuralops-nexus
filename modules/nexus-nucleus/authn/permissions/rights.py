@@ -59,6 +59,10 @@ REGISTRY = [
      "COMPANY-only). Reachable by a Project-scoped Admin, unlike "
      "model_config.create/delete. This is the right that lets a company "
      "Owner/Admin share one set of credentials across projects."),
+    ("project.terminal", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Open a shell session in the project's folder on the server from the "
+     "Terminal pane. Admin-tier: a person with a shell on the server is an "
+     "admin's act; the container is the boundary, not the personas' allow-list."),
     ("project.archive", ObjectType.PROJECT, ScopeType.PROJECT,
      "Archive (soft-delete) a project, or view it once archived. Reversible in "
      "principle via Project.restore() -- there's just no endpoint for that yet. "
@@ -200,7 +204,7 @@ DEFAULT_ROLE_RIGHTS = {
 
     "Admin": [
         "company.invite_member", "company.remove_member",
-        "project.create", "project.list", "project.view", "project.archive", "project.update",
+        "project.create", "project.list", "project.view", "project.archive", "project.update", "project.terminal",
         "channel.create", "channel.list", "channel.update", "channel.archive",
         "topic.create", "topic.list", "topic.update", "topic.mark_read", "topic.archive",
         "session.create", "session.close",
