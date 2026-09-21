@@ -219,3 +219,37 @@ class JwksClientTests(SimpleTestCase):
 
     def test_the_one_fetch_left_cannot_hold_a_request_for_long(self):
         self.assertLessEqual(jwks_client.timeout, 10)
+
+
+# ── team AI operations: the rights land in the right bundles ─────────────────
+# Seeded once by `seed_permissions`; every later capability only USES them.
+from authn.permissions.models import Right, Role, RoleRight  # noqa: E402
+from workspace.tests import InviteGrantsFixture  # noqa: E402
+
+TEAM_OPS_RIGHTS = {
+    # code: roles that hold it by default (Owner always does)
+    "persona.approve_run": {"Admin", "Member"},
+    "routine.manage": {"Admin"},
+    "runbook.manage": {"Admin"},
+    "runbook.run": {"Admin", "Member"},
+    "hook.manage": {"Admin"},
+    "recall.manage": {"Admin", "Member"},
+    "deliverable.manage": {"Admin", "Member"},
+}
+
+
+class TeamOperationsRightsTests(InviteGrantsFixture):
+    def holders(self, code: str) -> set:
+        return set(RoleRight.objects.filter(role__company=self.company, right__code=code).values_list("role__name", flat=True))
+
+    def test_every_right_exists_after_seeding(self):
+        for code in TEAM_OPS_RIGHTS:
+            self.assertTrue(Right.objects.filter(code=code).exists(), code)
+
+    def test_default_bundles_hold_exactly_the_intended_roles(self):
+        for code, roles in TEAM_OPS_RIGHTS.items():
+            self.assertEqual(self.holders(code), roles | {"Owner"}, code)
+
+    def test_a_viewer_holds_none_of_them(self):
+        viewer = Role.objects.get(company=self.company, name="Viewer")
+        self.assertFalse(RoleRight.objects.filter(role=viewer, right__code__in=list(TEAM_OPS_RIGHTS)).exists())

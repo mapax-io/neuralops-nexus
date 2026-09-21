@@ -60,6 +60,13 @@ class ObjectType(models.TextChoices):
     MODEL_CONFIG = "model_config", "Model Config"
     COMPANY = "company", "Company"
     SCHEDULE = "schedule", "Persona Schedule"
+    # Team AI operations (plan-implementation-master.md): each a project-scoped
+    # resource with its own manage right, seeded before its capability ships.
+    ROUTINE = "routine", "Routine"
+    RUNBOOK = "runbook", "Runbook"
+    HOOK = "hook", "Inbound Hook"
+    RECALL = "recall", "Recall Entry"
+    DELIVERABLE = "deliverable", "Deliverable"
     # REMOVED: AGENT -- AIAgent is gone; Persona absorbed it.
     # RENAMED:  AI_MODEL -> MODEL_CONFIG, matching the model rename.
 
