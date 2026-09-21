@@ -106,6 +106,7 @@ def fire_persona_schedule(schedule_id: str) -> None:
             topic_id=str(topic.id),
             output_type="auto",
             interactive=False,  # a schedule has nobody waiting to approve a plan
+            triggered_by=schedule.created_by,  # the reply is the creator's to stop (W22)
         )
 
         PersonaSchedule.objects.filter(id=schedule.id).update(

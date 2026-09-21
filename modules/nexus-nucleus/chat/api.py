@@ -320,13 +320,13 @@ async def send_message(
         if directives.message_without_mentions():
             await _trigger_personas(mentioned_personas, company, project, topic,
                                      topic_id, msg, directives.clean_message,
-                                     directives.output_type, directives.swarm, routine)
+                                     directives.output_type, directives.swarm, routine, user)
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
         await _trigger_personas(mentioned_personas, company, project, topic,
                                  topic_id, msg, directives.clean_message,
-                                 directives.output_type, directives.swarm, routine)
+                                 directives.output_type, directives.swarm, routine, user)
 
     else:
         # Rules 4 + 5: no explicit mention — check session
@@ -347,7 +347,7 @@ async def send_message(
                 )
                 await _trigger_personas(session_personas, company, project, topic,
                                          topic_id, msg, directives.clean_message,
-                                         directives.output_type, directives.swarm, routine)
+                                         directives.output_type, directives.swarm, routine, user)
         # Rule 5: no mention, no session — human-only message, nothing to do
 
     if refusals:
@@ -374,6 +374,7 @@ async def _trigger_personas(
     output_type: str,
     swarm: bool,
     routine=None,
+    triggered_by=None,
 ) -> None:
     """
     Fire AI trigger tasks for each persona in parallel.
@@ -402,6 +403,7 @@ async def _trigger_personas(
                 user_message_id=msg["id"],
                 topic_id=topic_id,
                 output_type=output_type,
+                triggered_by=triggered_by,
             )
         )
 
@@ -427,6 +429,7 @@ async def _trigger_personas(
                     topic_id=topic_id,
                     output_type=output_type,
                     routine=routine,  # a swarm run ignores routines (documented)
+                    triggered_by=triggered_by,
                 )
             )
 
@@ -471,19 +474,22 @@ async def decide_tool_approval(request, project_id: str, channel_id: str, topic_
 )
 async def stop_message(request, project_id: str, channel_id: str, topic_id: str, message_id: str):
     """
-    End a persona reply that is still streaming. Anyone who can read the topic
-    can stop a run in it -- a reply nobody can stop holds the topic hostage.
-    The relay keeps what has streamed so far and marks the message stopped;
-    the reader sees the effect on the bubble itself, not in a toast.
+    End a persona reply that is still streaming. The reply is its caller's to
+    stop (W22, the owner's rule); a reply from before the caller was recorded
+    keeps the earlier rule -- anyone who can read the topic. The relay keeps
+    what has streamed so far and marks the message stopped; the reader sees
+    the effect on the bubble itself, not in a toast.
     """
     from .stop_signals import stop_signals
 
-    _company, _user, _project, _channel, topic = await _resolve_topic(
+    _company, user, _project, _channel, topic = await _resolve_topic(
         request, project_id, channel_id, topic_id
     )
-    outcome = await sync_to_async(chat_svc.request_stop_for_message)(topic, message_id)
+    outcome = await sync_to_async(chat_svc.request_stop_for_message)(topic, message_id, user)
     if outcome == "not_found":
         raise HttpError(404, "Message not found.")
+    if outcome == "not_owner":
+        raise HttpError(403, "Only the person who called the persona can stop this reply.")
     if outcome == "finished":
         raise HttpError(409, "This reply has already finished.")
     if outcome == "orphaned":

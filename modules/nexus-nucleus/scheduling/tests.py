@@ -63,6 +63,12 @@ class ScheduleMentionRightTests(MentionRightFixture):
         self.assertEqual(skipped.count(), 1)
         self.assertEqual(publish.call_count, 1)  # the skip notice, nothing else
 
+    def test_a_fire_belongs_to_the_schedule_s_creator(self):
+        """W22: the creator is the caller — the only one who may stop the scheduled reply."""
+        self.assertEqual(self.create(self.sara).status_code, 200)
+        trigger, _ = self.fire(PersonaSchedule.objects.get().id)
+        self.assertEqual(trigger.call_args.kwargs["triggered_by"], self.sara)
+
     def test_a_fire_whose_creator_is_gone_is_skipped(self):
         self.assertEqual(self.create(self.sara).status_code, 200)
         schedule = PersonaSchedule.objects.get()

@@ -673,6 +673,16 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   routine (`GET /internal/routines/{id}/`, key decrypted there) and applies it for that turn only: instructions as
   their own block after brief + persona prompt, `allowed_capabilities` INTERSECTS the persona's tools (never widens),
   `model_config` replaces the model. Swarm runs ignore routines. Server `0.5.1` (additive).
+- **Run ownership (W22, owner's rule, 2026-09-21).** A persona reply belongs to the person who called it:
+  `create_ai_message` records `metadata.triggered_by_id` / `triggered_by_name` (the sender; a schedule's creator; on a
+  preflight approve/adjust the person who ASKED, resolved from the asking message, else the decider; a swarm and its
+  delegate replies the sender), and `MessageOut` + `message_start` carry `triggered_by_id`. **Only the caller may stop
+  the reply** — `request_stop_for_message(topic, id, user)` answers `not_owner` → 403 — which replaces the earlier
+  "anyone who can read the topic can stop a run in it"; a reply with no recorded caller (created before this) keeps
+  that earlier rule so nothing running becomes unstoppable, and the worker's own timeouts still end a stuck run. No
+  owner/admin override, by the owner's word. The app applies the same rule to a choice card (only the person the
+  persona asked may pick; everyone else sees "Waiting for <name> to choose"). Preflight decisions and tool approvals
+  stay team-decidable under `persona.approve_run` — a second person deciding is their point. Server `0.5.2`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).
