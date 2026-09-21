@@ -119,6 +119,8 @@ def persona_from(data: dict) -> PersonaConfig:
                 else:
                     token = secrets.get('client_secret')
                 mcp_servers.append(MCPArgs(
+                    id=_mcp_server.get('id'),
+                    name=_mcp_server.get('name'),
                     url=network_url,
                     authorization_token=token,
                 ))
@@ -126,6 +128,8 @@ def persona_from(data: dict) -> PersonaConfig:
                 # Route B: Local Server
                 parts = shlex.split(local_cmd)
                 mcp_servers.append(MCPArgs(
+                    id=_mcp_server.get('id'),
+                    name=_mcp_server.get('name'),
                     url=None,
                     command=parts[0],
                     args=parts[1:],
@@ -140,6 +144,7 @@ def persona_from(data: dict) -> PersonaConfig:
         mcp_servers=mcp_servers,
         capabilities=capabilities,
         utility_model=utility_model,
+        tool_levels=data.get("tool_levels") or {},
     )
 
 

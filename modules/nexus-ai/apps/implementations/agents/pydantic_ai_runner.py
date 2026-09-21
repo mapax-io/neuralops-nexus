@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import AsyncIterator, Sequence
@@ -49,8 +50,11 @@ from pydantic_ai_harness import (
     ClearToolResults,
 )
 
+from apps.core.config import settings
 from apps.interfaces.agent import AgentRunner
+from apps.implementations.agents.stream_merge import merge_events
 from apps.implementations.agents.tool_events import tool_end_event
+from apps.managers.approvals import NucleusApprovals, ToolApprovalGate, nucleus_poll
 from apps.schemas.trigger import (
     AgentEvent,
     AgentEventType,
@@ -104,7 +108,18 @@ class PydanticAIRunner(AgentRunner):
         persona: PersonaConfig,
         tools: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        agent = PydanticAIRunner.build_agent(persona)
+        # Tool approvals: the gate hides Off tools and holds Ask tools until a
+        # person decides; its requests and the keepalives ride the same stream
+        # as the model's own events (stream_merge).
+        side: asyncio.Queue = asyncio.Queue()
+        gate = ToolApprovalGate(
+            levels=persona.tool_levels,
+            ask=NucleusApprovals(job.msg_id, poll=nucleus_poll(job.msg_id), emit=side.put_nowait),
+            # A swarm job carries no flag: nobody stores its requests, so it
+            # refuses Ask tools at once rather than waiting on a poll.
+            interactive=getattr(job, "interactive", False),
+        )
+        agent = PydanticAIRunner.build_agent(persona, gate)
 
         buffer: list[str] = []
         previous_flush_time = time.monotonic()
@@ -115,7 +130,10 @@ class PydanticAIRunner(AgentRunner):
 
         try:
             async with agent.run_stream_events(message_history=messages) as events:
-                async for event in events:
+                async for event in merge_events(events, side, keepalive_seconds=settings.STREAM_KEEPALIVE_SECONDS, msg_id=job.msg_id):
+                    if isinstance(event, AgentEvent):
+                        yield event  # an approval request or a keepalive, ready as it is
+                        continue
                     match event:
                         case PartStartEvent(part=TextPart() as text_part):
                             buffer.append(text_part.content)
@@ -167,7 +185,8 @@ class PydanticAIRunner(AgentRunner):
                                 job.msg_id,
                                 result_part.tool_name or "",
                                 ok=ok,
-                                started_at=tool_started_at.pop(result_part.tool_call_id, time.monotonic()),
+                                # A call that waited for a person is timed from the decision, not the request.
+                                started_at=tool_started_at.pop(result_part.tool_call_id, time.monotonic()) + gate.waits.pop(result_part.tool_call_id, 0.0),
                                 content=result_part.content if ok else None,
                                 error=None if ok else str(result_part.content),
                             )
@@ -208,11 +227,12 @@ class PydanticAIRunner(AgentRunner):
             )
 
     @staticmethod
-    def build_agent(persona: PersonaConfig) -> Agent:
+    def build_agent(persona: PersonaConfig, gate: ToolApprovalGate | None = None) -> Agent:
+        capabilities = PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers, persona.model.max_tokens)
         return Agent(
             model=PydanticAIRunner._resolve_model(persona),
             instructions=persona.system_prompt,
-            capabilities=PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers, persona.model.max_tokens),
+            capabilities=capabilities + ([gate] if gate is not None else []),
             retries={
                 "tools": 3,
                 "output": 3,
@@ -242,16 +262,19 @@ class PydanticAIRunner(AgentRunner):
             )
         )
 
+        # Explicit ids: every tool definition then names its source
+        # (ToolDefinition.capability_id), which is what a tool level is keyed by.
         if capabilities.filesystem is not None:
-            resolved.append(FileSystem(**capabilities.filesystem.model_dump(exclude_none=True)))
+            resolved.append(FileSystem(id="filesystem", **capabilities.filesystem.model_dump(exclude_none=True)))
         if capabilities.web_search is not None:
             resolved.append(WebSearch(**capabilities.web_search.model_dump(exclude_none=True)))
         if capabilities.shell is not None:
-            resolved.append(Shell(**capabilities.shell.model_dump(exclude_none=True)))
-        
+            resolved.append(Shell(id="shell", **capabilities.shell.model_dump(exclude_none=True)))
+
         for mcp_server in mcp_servers:
+            mcp_id = {"id": f"mcp:{mcp_server.id}"} if mcp_server.id else {}
             if mcp_server.url:
-                mcp_kwargs = {"url": mcp_server.url}
+                mcp_kwargs = {"url": mcp_server.url, **mcp_id}
                 if mcp_server.authorization_token:
                     mcp_kwargs["headers"] = {
                         "Authorization": f"Bearer {mcp_server.authorization_token}"
@@ -264,7 +287,7 @@ class PydanticAIRunner(AgentRunner):
                     args=mcp_server.args,
                     env=mcp_server.env if mcp_server.env else None
                 )
-                resolved.append(MCP(local=transport, defer_loading=True))
+                resolved.append(MCP(local=transport, defer_loading=True, **mcp_id))
 
         return resolved
 

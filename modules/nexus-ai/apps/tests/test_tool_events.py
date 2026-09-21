@@ -88,7 +88,7 @@ def test_pydantic_runner_closes_each_tool_call_and_reports_usage(monkeypatch):
         FunctionToolResultEvent(part=RetryPromptPart(content="command not allowed", tool_name="shell", tool_call_id="c2")),
         PartStartEvent(index=3, part=TextPart(content="Done.")),
     ]
-    monkeypatch.setattr(PydanticAIRunner, "build_agent", staticmethod(lambda p: _FakeAgent(events, RunUsage(input_tokens=1200, output_tokens=40))))
+    monkeypatch.setattr(PydanticAIRunner, "build_agent", staticmethod(lambda p, gate=None: _FakeAgent(events, RunUsage(input_tokens=1200, output_tokens=40))))
     out = collect(PydanticAIRunner().run_stream(job(), [], persona()))
 
     kinds = [e.type for e in out]

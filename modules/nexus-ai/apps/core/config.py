@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # a nexus-nucleus deploy.
     HISTORY_DEPTH: int = 20
 
+    # ── Tool approvals (apps/managers/approvals.py) ───────────────────────────
+    # How long an Ask tool waits for a person before it is skipped, and how
+    # often the worker asks nucleus whether someone decided.
+    APPROVAL_TIMEOUT_SECONDS: float = 600
+    APPROVAL_POLL_SECONDS: float = 1.0
+    # A keepalive goes out after this much silence on the event stream; the
+    # relay reads with a two-minute idle timeout.
+    STREAM_KEEPALIVE_SECONDS: float = 30
+
     class Config:
         env_file = ".env"
         extra = "ignore"
