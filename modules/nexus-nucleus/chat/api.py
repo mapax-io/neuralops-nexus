@@ -46,7 +46,7 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from chat.events import mention_refused_event
-from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut
+from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut, ToolApprovalDecisionIn, ToolApprovalDecisionOut
 from chat import services as chat_svc
 from chat.services import MessageDirectives
 from workspace import services as ws_svc
@@ -430,6 +430,23 @@ async def decide_preflight(request, project_id: str, channel_id: str, topic_id: 
     try:
         return await chat_svc.decide_preflight(topic=topic, message_id=message_id, user=user, decision=payload.decision, note=payload.note)
     except chat_svc.PreflightError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/approvals/{call_id}/",
+    response=ToolApprovalDecisionOut,
+)
+async def decide_tool_approval(request, project_id: str, channel_id: str, topic_id: str, message_id: str, call_id: str, payload: ToolApprovalDecisionIn):
+    """
+    Allow or deny a tool call a persona holds for approval (chat/services.py
+    decide_tool_approval): persona.approve_run at the topic, plus
+    persona.update on the project when `always` changes the persona.
+    """
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    try:
+        return await chat_svc.decide_tool_approval(topic=topic, message_id=message_id, call_id=call_id, user=user, decision=payload.decision, always=payload.always)
+    except chat_svc.ApprovalError as exc:
         raise HttpError(exc.status, str(exc))
 
 

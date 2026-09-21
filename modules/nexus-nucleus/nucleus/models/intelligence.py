@@ -460,6 +460,10 @@ class Persona(TenantBaseModel):
     # never reads capability configs). Off by default; never for scheduled
     # or swarm runs, which have nobody waiting to answer.
     acts_after_approval = models.BooleanField(default=False)
+    # Tool approvals: {capability id or "<capability>/<tool>": "auto"|"ask"|"off"}.
+    # Nucleus stores and validates the shape (intelligence/services.py);
+    # the worker owns the defaults for anything unset and applies them.
+    tool_levels = models.JSONField(default=dict, blank=True)
 
     max_steps = models.PositiveIntegerField(
         default=10,

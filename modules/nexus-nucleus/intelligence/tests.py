@@ -246,3 +246,28 @@ class PersonaGateTests(MentionRightFixture):
         self.persona_sara.refresh_from_db()
         self.assertTrue(self.persona_sara.acts_after_approval)
         self.assertTrue(_persona_out(self.persona_sara).acts_after_approval)
+
+
+class ToolLevelsTests(MentionRightFixture):
+    """`tool_levels` -- Auto / Ask / Off per capability or tool -- round-trips and is validated."""
+
+    def test_levels_are_empty_by_default_patch_through_and_reach_the_worker(self):
+        from intelligence.api import _persona_out
+        from intelligence.services import patch_persona
+        from internal.api import get_persona_internal
+        self.assertEqual(_persona_out(self.persona_sara).tool_levels, {})
+        patch_persona(self.company, str(self.persona_sara.id), {"tool_levels": {"shell": "off", "filesystem/write_file": "ask", "mcp:abc": "auto"}})
+        self.persona_sara.refresh_from_db()
+        self.assertEqual(_persona_out(self.persona_sara).tool_levels, {"shell": "off", "filesystem/write_file": "ask", "mcp:abc": "auto"})
+        from nucleus.models import Prompt
+        Prompt.objects.create(company=self.company, persona=self.persona_sara, system_prompt="You are Sara.")
+        payload = get_persona_internal(None, str(self.persona_sara.id)).model_dump()
+        self.assertEqual(payload["tool_levels"], {"shell": "off", "filesystem/write_file": "ask", "mcp:abc": "auto"})
+
+    def test_a_level_that_is_not_auto_ask_or_off_is_refused(self):
+        from intelligence.services import patch_persona
+        for bad in ({"shell": "sometimes"}, {"": "auto"}, {"shell": 1}):
+            with self.assertRaises(ValueError):
+                patch_persona(self.company, str(self.persona_sara.id), {"tool_levels": bad})
+        self.persona_sara.refresh_from_db()
+        self.assertEqual(self.persona_sara.tool_levels, {})

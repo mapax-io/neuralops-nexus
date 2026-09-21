@@ -35,6 +35,7 @@ class MessageOut(Schema):
     # Team AI operations (additive; the app feature-detects each):
     activity_trail: list = []                 # [{tool, ok, duration_ms, preview}] — what the persona did
     preflight: Optional[dict] = None          # a proposed run awaiting a decision, and the decision
+    approvals: list = []                      # [{call_id, tool, args_preview, status, decided_by_name, …}] — held tool calls
     answered_by_model: Optional[str] = None   # set when a fallback model answered
     usage: Optional[dict] = None              # {prompt_tokens, output_tokens, context_window} from the worker
     sender_name: Optional[str] = None
@@ -76,3 +77,13 @@ class PreflightDecisionIn(Schema):
 class PreflightDecisionOut(Schema):
     status: str
     preflight: dict
+
+
+class ToolApprovalDecisionIn(Schema):
+    decision: str  # allow | deny
+    always: bool = False  # allow, and set that tool to Auto on the persona
+
+
+class ToolApprovalDecisionOut(Schema):
+    status: str
+    approval: dict

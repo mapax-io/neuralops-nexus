@@ -23,7 +23,7 @@ import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
 from authn.permissions.checker import PermissionChecker
-from .events import preflight_decided_event, tool_activity_end_event, tool_activity_event
+from .events import preflight_decided_event, tool_activity_end_event, tool_activity_event, tool_approval_decided_event, tool_approval_event
 from .stop_signals import StopRequested, stop_signals, stoppable, stoppable_lines
 from .reasons import ORPHANED_RUN_REASON, WORKER_ENDED_EARLY_REASON, explain_ai_error
 
@@ -424,6 +424,7 @@ def update_ai_message(
     metadata = dict(msg.metadata or {})
     metadata["render_as"] = render_as
     metadata["output_type"] = output_type
+    expire_open_approvals(metadata)
     if stopped:
         metadata["stopped"] = True
     if usage:
@@ -459,6 +460,7 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
         return
     metadata = dict(msg.metadata or {})
     metadata["error_detail"] = error
+    expire_open_approvals(metadata)
     if activity_trail:
         metadata["activity_trail"] = activity_trail
     ChatMessage.objects.filter(id=message_id).update(
@@ -560,6 +562,126 @@ async def decide_preflight(*, topic, message_id: str, user, decision: str, note:
         line = await sync_to_async(save_system_message)(msg.company, msg.project, topic, f"@{persona.name}'s plan was declined by {user.get_display_name()}.")
         await publish_async(channel, line)
     return {"status": status, "preflight": preflight}
+
+
+# ── Tool approvals (W16) ──────────────────────────────────────────────────────
+# A tool call the worker holds for a person lives on the reply row under
+# metadata.approvals -- stored the moment the worker asks (it polls nucleus
+# for the answer while the run stays open), decided under persona.approve_run
+# at the topic, and expired with the reply if nobody answered in time.
+APPROVALS_MAX = 20
+APPROVAL_PREVIEW_CHARS = 300
+
+
+class ApprovalError(Exception):
+    """A decision that cannot be applied; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def approval_record(approval: dict) -> dict | None:
+    """The row's record for a worker approval_requested payload; None when it names no call."""
+    call_id = (approval.get("call_id") or "").strip()
+    tool = (approval.get("tool") or "").strip()
+    if not call_id or not tool:
+        return None
+    return {
+        "call_id": call_id,
+        "tool": tool,
+        "capability_id": (approval.get("capability_id") or "").strip(),
+        "args_preview": (approval.get("args_preview") or "")[:APPROVAL_PREVIEW_CHARS],
+        "status": "pending",
+        "requested_at": timezone.now().isoformat(),
+    }
+
+
+def record_approval_request(message_id: str, approval: dict) -> dict | None:
+    """Store a pending approval on the reply row NOW, mid-run, so the worker's poll can find it."""
+    from nucleus.models import ChatMessage
+    record = approval_record(approval)
+    if not record:
+        return None
+    msg = ChatMessage.objects.filter(id=message_id).first()
+    if not msg:
+        return None
+    metadata = dict(msg.metadata or {})
+    approvals = [a for a in (metadata.get("approvals") or []) if a.get("call_id") != record["call_id"]]
+    approvals.append(record)
+    metadata["approvals"] = approvals[-APPROVALS_MAX:]
+    ChatMessage.objects.filter(id=message_id).update(metadata=metadata)
+    return record
+
+
+def expire_open_approvals(metadata: dict) -> None:
+    """A reply that ended leaves no call waiting: pending becomes expired, decisions stay."""
+    approvals = metadata.get("approvals")
+    if approvals:
+        metadata["approvals"] = [{**a, "status": "expired"} if a.get("status") == "pending" else a for a in approvals]
+
+
+async def approval_state(message_id: str, call_id: str) -> dict:
+    """
+    What the worker's poll is told: allowed / denied once someone decided,
+    stopped once the reader ended the reply, pending otherwise -- including
+    for a call the relay has not stored yet, which is a race, not an answer.
+    """
+    from nucleus.models import ChatMessage
+    if await stop_signals().is_stop_requested(message_id):
+        return {"status": "stopped", "always": False}
+    msg = await sync_to_async(lambda: ChatMessage.objects.filter(id=message_id).only("metadata").first())()
+    for record in ((msg.metadata or {}).get("approvals") or []) if msg else []:
+        if record.get("call_id") == call_id and record.get("status") in ("allowed", "denied"):
+            return {"status": record["status"], "always": bool(record.get("always"))}
+    return {"status": "pending", "always": False}
+
+
+async def decide_tool_approval(*, topic, message_id: str, call_id: str, user, decision: str, always: bool = False) -> dict:
+    """
+    Allow or deny a held tool call, under persona.approve_run at the topic.
+    `always` also writes "<capability>/<tool>": "auto" onto the persona, which
+    is persona configuration and so needs persona.update on the project too.
+    Once decided, a call stays decided.
+    """
+    from nucleus.models import ChatMessage, Persona
+
+    if decision not in ("allow", "deny"):
+        raise ApprovalError(400, "Decision must be allow or deny.")
+    msg = await sync_to_async(lambda: ChatMessage.objects.select_related("project").filter(id=message_id, topic=topic).first())()
+    if not msg:
+        raise ApprovalError(404, "Message not found.")
+    metadata = dict(msg.metadata or {})
+    approvals = list(metadata.get("approvals") or [])
+    record = next((a for a in approvals if a.get("call_id") == call_id), None)
+    if not record:
+        raise ApprovalError(404, "This message holds no such tool call.")
+    if record.get("status") != "pending":
+        raise ApprovalError(409, "This call has already been decided.")
+    if not await sync_to_async(PermissionChecker.can)(user, "persona.approve_run", obj=topic):
+        raise ApprovalError(403, "You don't have permission to decide a persona's tool calls here.")
+    if always and not await sync_to_async(PermissionChecker.can)(user, "persona.update", obj=msg.project):
+        raise ApprovalError(403, "Allowing a tool always changes the persona, which needs the right to edit personas.")
+
+    if always and decision == "allow":
+        persona = await sync_to_async(lambda: Persona.objects.filter(id=metadata.get("persona_id"), is_active=True).first())()
+        if persona:
+            levels = dict(persona.tool_levels or {})
+            levels[f"{record.get('capability_id') or ''}/{record['tool']}"] = "auto"
+            persona.tool_levels = levels
+            await sync_to_async(persona.save)(update_fields=["tool_levels"])
+
+    record.update({
+        "status": "allowed" if decision == "allow" else "denied",
+        "always": bool(always and decision == "allow"),
+        "decided_by_id": str(user.id),
+        "decided_by_name": user.get_display_name(),
+        "decided_at": timezone.now().isoformat(),
+    })
+    metadata["approvals"] = [record if a.get("call_id") == call_id else a for a in approvals]
+    await sync_to_async(ChatMessage.objects.filter(id=msg.id).update)(metadata=metadata)
+    await publish_async(topic_channel(str(topic.id)), tool_approval_decided_event(str(msg.id), record))
+    return {"status": record["status"], "approval": record}
 
 
 def remember_tool_call(trail: list, event: dict) -> None:
@@ -710,6 +832,9 @@ async def trigger_ai_response_async(
         # yet -- only for interactive turns (a schedule has nobody to ask).
         "preflight": bool(interactive and persona.acts_after_approval and not approved_plan),
         "approved_plan": approved_plan,
+        # Tool approvals: an Ask tool may wait for a person only when one is
+        # watching (a chat turn); a schedule refuses it at once.
+        "interactive": bool(interactive),
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
@@ -776,6 +901,13 @@ async def trigger_ai_response_async(
                             if ended:
                                 await publish_async(channel, ended)
                             remember_tool_call(activity_trail, event)
+
+                        elif event_type == "approval_requested":
+                            # The worker holds a tool call for a person and
+                            # polls for the answer: store it now, tell the topic.
+                            record = await sync_to_async(record_approval_request)(msg_id, event.get("approval") or {})
+                            if record:
+                                await publish_async(channel, tool_approval_event(msg_id, record))
 
                         elif event_type == "message_delta":
                             delta = event.get("delta") or ""
@@ -1345,6 +1477,7 @@ def _serialise(msg) -> dict:
         # Team AI operations -- reserved with defaults, filled as each lands.
         "activity_trail": metadata.get("activity_trail") or [],
         "preflight": metadata.get("preflight"),
+        "approvals": metadata.get("approvals") or [],
         "answered_by_model": metadata.get("answered_by_model"),
         "usage": metadata.get("usage"),
         "sender_name": sender_name,

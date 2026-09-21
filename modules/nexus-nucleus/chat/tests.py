@@ -600,6 +600,7 @@ class WireFieldDefaultsTests(MentionRightFixture):
     def test_defaults_when_nothing_has_filled_them(self):
         out = _serialise(self.message())
         self.assertEqual(out["activity_trail"], [])
+        self.assertEqual(out["approvals"], [])
         self.assertIsNone(out["preflight"])
         self.assertIsNone(out["answered_by_model"])
         self.assertIsNone(out["usage"])
@@ -612,6 +613,7 @@ class WireFieldDefaultsTests(MentionRightFixture):
         ))
         self.assertEqual(out["activity_trail"][0]["tool"], "web_search")
         self.assertEqual(out["preflight"]["status"], "proposed")
+        self.assertEqual(_serialise(self.message(approvals=[{"call_id": "c1", "tool": "run_command", "status": "denied"}]))["approvals"][0]["status"], "denied")
         self.assertEqual(out["answered_by_model"], "gpt-4o-mini (fallback)")
         self.assertEqual(out["usage"]["context_window"], 200000)
 
@@ -827,3 +829,127 @@ class PreflightDecisionTests(RelayFixture):
         with self.assertRaises(PreflightError) as ctx:
             await self.decide(type("Row", (), {"id": "00000000-0000-0000-0000-000000000000"})(), self.owner, "approve")
         self.assertEqual(ctx.exception.status, 404)
+
+
+# ── W16 Tool approvals ────────────────────────────────────────────────────────
+APPROVAL = {"call_id": "c1", "tool": "run_command", "capability_id": "shell", "args_preview": 'command: "git push"'}
+
+
+class ToolApprovalRelayTests(RelayFixture):
+    """A tool call the worker holds lands on the row at once, is told to the topic, and expires with the reply."""
+
+    def setUp(self):
+        super().setUp()
+        FakeClient.posted = []
+
+    async def test_a_chat_turn_is_interactive_and_a_scheduled_one_is_not(self):
+        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
+        self.assertTrue(FakeClient.posted[-1]["interactive"])
+        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"}))
+        await trigger_ai_response_async(
+            company=self.company, project=self.p1, topic=self.t1, persona=self.persona_sara,
+            user_message="chart please", user_message_id="u1", topic_id=str(self.t1.id), interactive=False,
+        )
+        self.assertFalse(FakeClient.posted[-1]["interactive"])
+
+    async def test_a_request_is_stored_pending_and_published_then_expires_when_the_reply_ends(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "approval_requested", "id": "m", "approval": APPROVAL},
+            {"type": "message_done", "content": "I could not push.", "output_type": "text", "render_as": "text"},
+        )))
+        published = self.events("tool_approval")
+        self.assertEqual(len(published), 1)
+        self.assertEqual((published[0]["approval"]["call_id"], published[0]["approval"]["tool"], published[0]["approval"]["status"]), ("c1", "run_command", "pending"))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["approvals"][0]["status"], "expired")  # nobody decided before the reply ended
+        self.assertEqual(row.metadata["approvals"][0]["args_preview"], 'command: "git push"')
+
+    async def test_a_keepalive_is_ignored_and_a_request_without_a_call_id_is_dropped(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "keepalive", "id": "m"},
+            {"type": "approval_requested", "id": "m", "approval": {"tool": "x"}},
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"},
+        )))
+        self.assertEqual(self.events("tool_approval"), [])
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertNotIn("approvals", row.metadata)
+        self.assertEqual(row.metadata["render_as"], "text")
+
+
+class ToolApprovalDecisionTests(RelayFixture):
+    """Allow, deny, or allow always -- under persona.approve_run; always also needs persona.update."""
+
+    def setUp(self):
+        super().setUp()
+        FakeClient.posted = []
+
+    async def pending_row(self):
+        from chat.services import record_approval_request
+        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"}))
+        await self.run_single(FakeClient.response)
+        row = (await sync_to_async(self.reply_rows)())[0]
+        await sync_to_async(record_approval_request)(str(row.id), APPROVAL)
+        return row
+
+    async def decide(self, row, user, decision, always=False, call_id="c1"):
+        from chat.services import decide_tool_approval
+        return await decide_tool_approval(topic=self.t1, message_id=str(row.id), call_id=call_id, user=user, decision=decision, always=always)
+
+    async def state(self, row, call_id="c1"):
+        from chat.services import approval_state
+        return await approval_state(str(row.id), call_id)
+
+    async def test_pending_then_allowed_by_a_member_and_the_worker_sees_it(self):
+        row = await self.pending_row()
+        self.assertEqual(await self.state(row), {"status": "pending", "always": False})
+        outcome = await self.decide(row, self.sara, "allow")
+        self.assertEqual((outcome["status"], outcome["approval"]["decided_by_name"]), ("allowed", "sara"))
+        self.assertEqual(await self.state(row), {"status": "allowed", "always": False})
+        self.assertEqual(len(self.events("tool_approval_decided")), 1)
+        await sync_to_async(row.refresh_from_db)()
+        self.assertEqual(row.metadata["approvals"][0]["status"], "allowed")
+
+    async def test_denied_and_the_worker_sees_it(self):
+        row = await self.pending_row()
+        await self.decide(row, self.owner, "deny")
+        self.assertEqual((await self.state(row))["status"], "denied")
+
+    async def test_always_writes_the_level_onto_the_persona_and_needs_persona_update(self):
+        from chat.services import ApprovalError
+        row = await self.pending_row()
+        with self.assertRaises(ApprovalError) as ctx:
+            await self.decide(row, self.sara, "allow", always=True)  # a member may allow, not change the persona
+        self.assertEqual(ctx.exception.status, 403)
+        self.assertEqual((await self.state(row))["status"], "pending")
+        outcome = await self.decide(row, self.owner, "allow", always=True)
+        self.assertTrue(outcome["approval"]["always"])
+        self.assertEqual(await self.state(row), {"status": "allowed", "always": True})
+        await sync_to_async(self.persona_sara.refresh_from_db)()
+        self.assertEqual(self.persona_sara.tool_levels, {"shell/run_command": "auto"})
+
+    async def test_a_viewer_cannot_decide_and_a_decision_is_final(self):
+        from chat.services import ApprovalError
+        row = await self.pending_row()
+        with self.assertRaises(ApprovalError) as ctx:
+            await self.decide(row, self.vera, "allow")
+        self.assertEqual(ctx.exception.status, 403)
+        await self.decide(row, self.owner, "deny")
+        with self.assertRaises(ApprovalError) as ctx:
+            await self.decide(row, self.owner, "allow")
+        self.assertEqual(ctx.exception.status, 409)
+        with self.assertRaises(ApprovalError) as ctx:
+            await self.decide(row, self.owner, "allow", call_id="nope")
+        self.assertEqual(ctx.exception.status, 404)
+        with self.assertRaises(ApprovalError) as ctx:
+            await self.decide(row, self.owner, "maybe")
+        self.assertEqual(ctx.exception.status, 400)
+
+    async def test_a_stopped_reply_answers_the_worker_with_stopped(self):
+        row = await self.pending_row()
+        await self.signals.request_stop(str(row.id))
+        self.assertEqual((await self.state(row))["status"], "stopped")
+        self.assertEqual((await self.state(row, "unknown"))["status"], "stopped")
+
+    async def test_an_unknown_call_is_pending_until_the_relay_has_stored_it(self):
+        row = await self.pending_row()
+        self.assertEqual((await self.state(row, "not-yet"))["status"], "pending")

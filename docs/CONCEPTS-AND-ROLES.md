@@ -412,7 +412,7 @@ left) — the same shape as `topic.archive` being separate from `topic.create`.
 | MCP Server | **Project** | Same reasoning as Agent |
 | Persona | **Company only** | Not yet revisited since the AI-resource permission redesign — see Part 5 |
 | Schedule | **Topic** | Member-tier action; `schedule.manage` gates only other people's schedules |
-| Preflight / tool approval (`persona.approve_run`) | **Topic** | Member-tier, like calling a persona: whoever can talk to it can approve what it proposes |
+| Preflight / tool approval (`persona.approve_run`) | **Topic** | Member-tier, like calling a persona: whoever can talk to it can approve what it proposes, and allow or deny a tool call it holds; "always allow" also edits the persona, so it needs `persona.update` too |
 | Routine, Runbook, Inbound hook (`*.manage`) | **Project** | Definitions shared by the project; Admin-tier. `runbook.run` is Member-tier |
 | Project brief and description (`project.update`) | **Project** | The instructions every persona in the project follows; Admin-tier like the other project-wide definitions |
 | Recall entry, Deliverable (`*.manage`) | **Project** | Team-curated content written by personas or kept from replies; Member-tier |
