@@ -294,6 +294,8 @@ class TriggerJob(BaseModel):
     interactive: bool = True
     # Routines (W4): the team method this reply runs with, fetched like the persona.
     routine_id: str | None = None
+    # Runbooks (W6): the previous step's reply, for this step to build on.
+    step_context: str | None = None
 
 
 class TriggerSwarmJob(BaseModel):

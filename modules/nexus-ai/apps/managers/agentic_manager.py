@@ -36,6 +36,7 @@ from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.managers.preflight import plan_turn
 from apps.managers.routines import apply_routine
+from apps.managers.runbooks import apply_step_context
 from apps.managers.fallbacks import FallbackRun
 from apps.managers.recall import remember
 from apps.output_types.markers import parse_output_markers
@@ -69,6 +70,9 @@ class NewImprovedAgenticManager:
         # preflight turn plans with the routine in view.
         if job.routine_id:
             persona = apply_routine(persona, await nucleus_client.resolve_routine(job.routine_id))
+        # A runbook step reads the previous step's reply (apps/managers/runbooks.py).
+        if job.step_context:
+            persona = apply_step_context(persona, job.step_context)
 
         history = await nucleus_client.fetch_history(
             topic_id=job.topic_id, exclude_message_id=job.user_message_id
