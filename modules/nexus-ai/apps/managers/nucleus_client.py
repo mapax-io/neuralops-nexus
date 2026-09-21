@@ -49,20 +49,31 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
     return persona_from(response.json())
 
 
-def persona_from(data: dict) -> PersonaConfig:
-    """
-    Shape nucleus's persona payload into the worker's PersonaConfig. The
-    project brief (absent on an older nucleus) is composed into the system
-    prompt here, so every runner and prompt path sees one string, brief first.
-    """
-    model_data = data.get("model")
-    model = ModelConfig(
+def model_from(model_data: dict | None) -> ModelConfig:
+    """One model endpoint as nucleus sends it; the worker's defaults when it sends none."""
+    return ModelConfig(
         provider=model_data["provider"] if model_data else "litellm",
         model_id=model_data["model_id"] if model_data else settings.LLM_MODEL,
         api_key=model_data.get("api_key") if model_data else None,
         max_tokens=model_data.get("max_tokens", 4096) if model_data else 4096,
         temperature=model_data.get("temperature", 0.7) if model_data else 0.7,
     )
+
+
+def utility_model_for(persona: PersonaConfig) -> ModelConfig:
+    """The model a small internal pass should run on: the server's utility model, else the persona's own."""
+    return persona.utility_model or persona.model
+
+
+def persona_from(data: dict) -> PersonaConfig:
+    """
+    Shape nucleus's persona payload into the worker's PersonaConfig. The
+    project brief (absent on an older nucleus) is composed into the system
+    prompt here, so every runner and prompt path sees one string, brief first.
+    """
+    model = model_from(data.get("model"))
+    utility_data = data.get("utility_model")
+    utility_model = model_from(utility_data) if utility_data else None
     
     if data['capabilities']:
         capabilities = PersonaCapabilities.model_validate(data['capabilities'][0]['capability_config'])
@@ -128,6 +139,7 @@ def persona_from(data: dict) -> PersonaConfig:
         model=model,
         mcp_servers=mcp_servers,
         capabilities=capabilities,
+        utility_model=utility_model,
     )
 
 
