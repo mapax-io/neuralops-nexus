@@ -56,6 +56,7 @@ from apps.implementations.agents.stream_merge import merge_events
 from apps.implementations.agents.tool_events import tool_end_event, url_of
 from apps.managers.approvals import NucleusApprovals, ToolApprovalGate, nucleus_poll
 from apps.managers.fallbacks import MODEL_FAILURE, is_model_failure
+from apps.managers.nudges import NudgeGate, nucleus_nudges
 from apps.schemas.trigger import (
     ModelConfig,
     AgentEvent,
@@ -121,7 +122,9 @@ class PydanticAIRunner(AgentRunner):
             # refuses Ask tools at once rather than waiting on a poll.
             interactive=getattr(job, "interactive", False),
         )
-        agent = PydanticAIRunner.build_agent(persona, gate)
+        # Nudges (W8): only a run someone can steer polls for them.
+        nudges = NudgeGate(job.msg_id, poll=nucleus_nudges(job.msg_id), emit=side.put_nowait) if getattr(job, "interactive", False) else None
+        agent = PydanticAIRunner.build_agent(persona, gate, nudges=nudges)
 
         buffer: list[str] = []
         previous_flush_time = time.monotonic()
@@ -234,12 +237,12 @@ class PydanticAIRunner(AgentRunner):
             )
 
     @staticmethod
-    def build_agent(persona: PersonaConfig, gate: ToolApprovalGate | None = None) -> Agent:
+    def build_agent(persona: PersonaConfig, gate: ToolApprovalGate | None = None, nudges: NudgeGate | None = None) -> Agent:
         capabilities = PydanticAIRunner._resolve_capabilities(persona.capabilities, persona.mcp_servers, persona.model.max_tokens)
         return Agent(
             model=PydanticAIRunner._resolve_model(persona),
             instructions=persona.system_prompt,
-            capabilities=capabilities + ([gate] if gate is not None else []),
+            capabilities=capabilities + ([gate] if gate is not None else []) + ([nudges] if nudges is not None else []),
             retries={
                 "tools": 3,
                 "output": 3,
