@@ -28,6 +28,7 @@ from nucleus.models import Project, Persona, AIRequestLog
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from .schema import (
+    ModelCheckIn, ModelCheckOut,
     ModelConfigIn, ModelConfigPatchIn, ModelConfigOut, ModelConfigRef,
     MCPServerIn, MCPServerPatchIn, MCPServerOut, MCPServerRef,
     MCPOAuthAuthorizeOut,
@@ -206,6 +207,24 @@ def create_model_config(request, payload: ModelConfigIn):
     except ValueError as e:
         raise HttpError(400, str(e))
     return _model_config_out(config)
+
+
+@router.post("/model-configs/check/", response=ModelCheckOut)
+def check_model_config(request, payload: ModelCheckIn):
+    """
+    Verify a model with the provider before the dialog saves it: one tiny
+    call through the worker. Whoever may register or edit models may check.
+    """
+    company = _company(request)
+    if not (PermissionChecker.can(request.auth, "model_config.create", company=company)
+            or PermissionChecker.can(request.auth, "model_config.update", company=company)):
+        raise HttpError(403, "You don't have permission to check model configs.")
+    try:
+        return svc.check_model_config(company, payload.dict())
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    except svc.WorkerUnavailable as e:
+        raise HttpError(e.status, str(e))
 
 
 @router.patch("/model-configs/{config_id}/", response=ModelConfigOut)

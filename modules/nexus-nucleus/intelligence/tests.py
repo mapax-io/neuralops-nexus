@@ -416,3 +416,72 @@ class FallbackModelTests(MentionRightFixture):
         self.small.soft_delete()
         payload = get_persona_internal(None, str(self.persona_sara.id)).model_dump()
         self.assertEqual([m["name"] for m in payload["fallback_models"]], ["Tiny"])
+
+
+# ── Model check on register / edit ──────────────────────────────────────────
+class ModelCheckTests(MentionRightFixture):
+    """The dialogs verify a model with the worker before saving; the answer is a reason the reader can act on."""
+
+    def check(self, user, body, worker=None, side_effect=None):
+        from unittest.mock import MagicMock, patch
+        response = MagicMock(status_code=200)
+        response.json.return_value = worker or {"ok": True, "latency_ms": 321}
+        response.raise_for_status.return_value = None
+        with patch("intelligence.services.httpx.post", return_value=response, side_effect=side_effect) as post:
+            with self.settings(NEXUS_AI_URL="http://worker.test", INTERNAL_API_KEY="k"):
+                r = self.call("post", "/api/v1/model-configs/check/", user, body)
+        return r, post
+
+    def test_the_right_is_checked_and_a_passing_model_answers_ok_with_its_latency(self):
+        body = {"provider": "openai", "model_id": "gpt-4o-mini", "api_key": "sk-new"}
+        r, post = self.check(self.sara, body)
+        self.assertEqual(r.status_code, 403, r.content)
+        r, post = self.check(self.owner, body)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {"ok": True, "reason": None, "latency_ms": 321})
+        sent = post.call_args.kwargs["json"]
+        self.assertEqual(sent, {"provider": "openai", "model_id": "gpt-4o-mini", "api_key": "sk-new", "api_base": None})
+        self.assertEqual(post.call_args.kwargs["headers"]["X-Internal-Key"], "k")
+
+    def test_a_failing_model_gets_the_categorised_reason_never_the_raw_text(self):
+        body = {"provider": "openai", "model_id": "gpt-4o-mini", "api_key": "sk-bad"}
+        r, _ = self.check(self.owner, body, worker={"ok": False, "error_code": "model_failure", "status_code": 401,
+                                                    "error": "status_code: 401, body: Incorrect API key provided: sk-bad***"})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertFalse(r.json()["ok"])
+        self.assertEqual(r.json()["reason"], "The model provider rejected this model's API key.")  # no pointer to the page the reader is on
+        self.assertNotIn("sk-bad", r.json()["reason"])
+        r, _ = self.check(self.owner, body, worker={"ok": False, "error_code": "unsupported_provider", "error": "provider 'google' is not supported"})
+        self.assertIn("cannot run openai models", r.json()["reason"])
+        r, _ = self.check(self.owner, body, worker={"ok": False, "error_code": "timeout", "error": "the model did not answer within 20s (timed out)"})
+        self.assertIn("timed out", r.json()["reason"])
+        # DeepSeek's unknown-model wording, and a text no category knows.
+        r, _ = self.check(self.owner, body, worker={"ok": False, "error_code": "error", "status_code": 400, "error": "status_code: 400, body: {'error': {'message': 'Model Not Exist'}}"})
+        self.assertIn("does not know this model id", r.json()["reason"])
+        r, _ = self.check(self.owner, body, worker={"ok": False, "error_code": "error", "status_code": 400, "error": "body: {'message': 'The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed deepseek-x.'}"})
+        self.assertIn("does not know this model id", r.json()["reason"])
+        r, _ = self.check(self.owner, body, worker={"ok": False, "error_code": "error", "status_code": 418, "error": "teapot"})
+        self.assertEqual(r.json()["reason"], "The model provider did not accept this model with this key (HTTP 418).")
+
+    def test_an_edit_without_a_new_key_checks_with_the_stored_one(self):
+        self.model_config.set_api_key("sk-stored")
+        self.model_config.save(update_fields=["api_key_encrypted"])
+        body = {"provider": "openai", "model_id": "gpt-4.1", "config_id": str(self.model_config.id)}
+        r, post = self.check(self.owner, body)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(post.call_args.kwargs["json"]["api_key"], "sk-stored")
+        body["api_key"] = "sk-rotated"  # a new key wins over the stored one
+        r, post = self.check(self.owner, body)
+        self.assertEqual(post.call_args.kwargs["json"]["api_key"], "sk-rotated")
+
+    def test_bad_input_and_a_missing_worker_are_told_apart(self):
+        r, _ = self.check(self.owner, {"provider": "openai", "model_id": "openai/gpt-4o-mini", "api_key": "k"})
+        self.assertEqual(r.status_code, 400, r.content)
+        r, _ = self.check(self.owner, {"provider": "nope", "model_id": "x", "api_key": "k"})
+        self.assertEqual(r.status_code, 400, r.content)
+        import httpx
+        r, _ = self.check(self.owner, {"provider": "openai", "model_id": "gpt-4o-mini", "api_key": "k"}, side_effect=httpx.ConnectError("refused"))
+        self.assertEqual(r.status_code, 502, r.content)
+        with self.settings(NEXUS_AI_URL=""):
+            r = self.call("post", "/api/v1/model-configs/check/", self.owner, {"provider": "openai", "model_id": "gpt-4o-mini", "api_key": "k"})
+        self.assertEqual(r.status_code, 503, r.content)

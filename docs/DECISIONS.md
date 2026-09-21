@@ -714,6 +714,18 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   (serialised since Wave 0) and republishes; the app shows "Answered by <name> · fallback" under the bubble.
   `chat/reasons.py` decides the wording of a failure, the worker decides the retry — two small classifiers on
   purpose. Server `0.5.4`.
+- **Model check on register / edit (owner's ask, 2026-09-21).** The Register and Edit model dialogs verify a model
+  with the provider BEFORE saving it, and show what is wrong otherwise: `POST /model-configs/check/`
+  (`model_config.create` or `.update`; `intelligence/services.py check_model_config`) asks the worker's
+  `POST /api/v1/models/check/` (`apps/managers/model_check.py`: one tiny call, `max_tokens` 5, built by the same
+  `PydanticAIRunner.build_model` a persona runs on, `MODEL_CHECK_TIMEOUT_SECONDS` 20) and answers `{ok, reason,
+  latency_ms}` — the reason is the `chat/reasons.py` sentence (bad key, no credit, rate limit, unknown model,
+  unreachable, timeout), or "This server's AI worker cannot run <provider> models yet" when the worker has no
+  runner for the provider; never the provider's raw text (it can carry the key). An edit without a new key checks
+  with the stored one (`config_id`). The API create/patch stay unguarded (scripts and tests register models offline);
+  the dialogs are where the rule lives; an older server (404 on the check) saves as before. Side fix: the worker
+  now passes `api_base` to OpenAI-shaped providers (it was dropped, so compatible endpoints never worked).
+  Server `0.5.5`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

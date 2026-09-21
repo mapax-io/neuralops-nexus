@@ -62,6 +62,21 @@ class ModelConfigPatchIn(Schema):
     config: Optional[dict] = None
 
 
+class ModelCheckIn(Schema):
+    """What the Register / Edit model dialogs verify before saving. `config_id`: use that row's stored key when none is given."""
+    provider: str
+    model_id: str
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    config_id: Optional[str] = None
+
+
+class ModelCheckOut(Schema):
+    ok: bool
+    reason: Optional[str] = None    # why it cannot be used, in the reader's words; None when ok
+    latency_ms: Optional[int] = None
+
+
 class ModelConfigOut(Schema):
     id: str
     name: str

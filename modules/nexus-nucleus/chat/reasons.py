@@ -21,7 +21,7 @@ _CATEGORIES: list[tuple[re.Pattern[str], str]] = [
      "The model provider reports no remaining credit for this model's key."),
     (re.compile(r"rate.?limit|\b429\b|too many requests", re.I),
      "The model provider rate-limited this request. Try again in a moment."),
-    (re.compile(r"model_not_found|does not exist|\b404\b.*model|unknown model", re.I),
+    (re.compile(r"model_not_found|model not exist|does not exist|no such model|\b404\b.*model|unknown model|not a valid model|invalid model|supported (api )?model names|but you passed", re.I),
      "The model provider does not know this model id. Check the model on the AI models page."),
     (re.compile(r"context.?length|maximum context|too many tokens|token limit", re.I),
      "The conversation is longer than this model can take in. Start a new chat or use a larger model."),
