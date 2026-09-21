@@ -46,7 +46,16 @@ PRIVATE_MESSAGE = "That address is inside the server's own network, which this b
 
 _SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):")
 # Metadata services are the classic target of a server-side browser.
-_ALWAYS_BLOCKED_HOSTS = {"metadata.google.internal", "metadata.goog", "instance-data"}
+_ALWAYS_BLOCKED_HOSTS = {
+    "metadata.google.internal", "metadata.goog", "instance-data",
+    "metadata.tencentyun.com",
+}
+# Ranges Python's own flags do not call private, but a deployment's network very
+# much does: carrier-grade NAT is what Tailscale hands out, and 100.100.100.100
+# is Alibaba's metadata endpoint inside it.
+_EXTRA_PRIVATE_NETS = tuple(
+    ipaddress.ip_network(cidr) for cidr in ("100.64.0.0/10", "fc00::/7", "2001:db8::/32")
+)
 
 
 def is_available() -> bool:
@@ -117,16 +126,20 @@ def is_private_host(host: str) -> bool:
         try:
             for info in socket.getaddrinfo(name, None):
                 candidates.append(info[4][0])
-        except OSError:
-            # A name that does not resolve here cannot be checked; Chromium will
-            # fail to reach it too, so let it try and report its own error.
-            return False
+        except Exception:  # noqa: BLE001
+            # getaddrinfo raises UnicodeError (not OSError) for an over-long
+            # label, which used to escape this check entirely. A name this
+            # process cannot resolve is a name it cannot vouch for, so it is
+            # refused rather than waved through (audit, 2026-09-21).
+            return True
     for address in candidates:
         try:
             ip = ipaddress.ip_address(address)
         except ValueError:
             continue
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return True
+        if any(ip in net for net in _EXTRA_PRIVATE_NETS if ip.version == net.version):
             return True
     return False
 
@@ -225,24 +238,31 @@ class BrowserSession:
             viewport={"width": self.width, "height": self.height},
             user_agent=settings.BROWSER_USER_AGENT or None,
             locale="en-US",
+            # A service worker's requests do not pass through context.route, so
+            # it would be a way round the guard below; downloads would write to
+            # the worker's own disk. Neither is wanted here.
+            service_workers="block",
+            accept_downloads=False,
         )
         if not settings.BROWSER_ALLOW_PRIVATE_NETWORK:
             await self.context.route("**/*", self._guard)
         await self.open_tab(url or settings.BROWSER_HOME)
 
     async def _guard(self, route: Any, request: Any) -> None:
-        """Every request, not just the address bar: a page may not fetch the private network either."""
+        """
+        Every request, not just the address bar: a page may not fetch the private
+        network either. If the check itself fails, the request is refused -- a
+        guard that opens when it breaks is not a guard (audit, 2026-09-21).
+        """
         try:
             host = urlparse(request.url).hostname or ""
-            if is_private_host(host):
-                await route.abort("blockedbyclient")
-                return
-            await route.continue_()
+            allowed = not is_private_host(host)
         except Exception:  # noqa: BLE001
-            try:
-                await route.continue_()
-            except Exception:  # noqa: BLE001
-                pass
+            allowed = False
+        try:
+            await (route.continue_() if allowed else route.abort("blockedbyclient"))
+        except Exception:  # noqa: BLE001
+            pass
 
     async def close(self) -> None:
         self._closed = True
@@ -283,6 +303,10 @@ class BrowserSession:
         """A page that opens a popup opens a tab, as a browser does."""
         def on_popup(page: Any) -> None:
             if self._closed or len(self.tabs) >= settings.BROWSER_MAX_TABS:
+                # Left open it would still be a live renderer nobody can see or
+                # close — a page calling window.open in a loop would fill the
+                # container with them.
+                asyncio.create_task(_close_quietly(page))
                 return
             popup = Tab(page)
             self.tabs.append(popup)
@@ -377,15 +401,20 @@ class BrowserSession:
         tab._cdp = None
 
     async def _frame(self, tab: Tab, event: dict) -> None:
-        """One painted frame. Chromium waits for the ack before sending the next."""
+        """
+        One painted frame. Chromium sends the next only after the ack, so the ack
+        goes first: a frame that arrives just after its tab stopped being the one
+        in front would otherwise wedge that tab's screencast until it is switched
+        to again.
+        """
+        try:
+            await tab._cdp.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+        except Exception:  # noqa: BLE001
+            pass
         if self._closed or tab.id != self.active:
             return
         try:
             await self.on_frame(base64.b64decode(event["data"]))
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            await tab._cdp.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
         except Exception:  # noqa: BLE001
             pass
 
@@ -502,6 +531,13 @@ class BrowserSession:
         """Typed characters, IME and paste all arrive as text to insert."""
         if self.current and value:
             await self.current.page.keyboard.insert_text(value)
+
+
+async def _close_quietly(page: Any) -> None:
+    try:
+        await page.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class BrowserError(Exception):
