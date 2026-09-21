@@ -451,11 +451,17 @@ def sse(*events: dict) -> list[str]:
 class FakeResponse:
     """The worker's side: SSE lines, then the end, silence, or a broken pipe."""
 
-    def __init__(self, lines, status_code=200, hang=False, boom: Exception | None = None):
+    def __init__(self, lines, status_code=200, hang=False, boom: Exception | None = None, before=None):
         self.lines, self.status_code, self.hang, self.boom = lines, status_code, hang, boom
+        # Awaited once the relay starts reading, i.e. after the reply row exists:
+        # a test that needs something to happen MID-run hooks it here rather than
+        # racing the relay with sleeps.
+        self.before = before
         self.closed = False
 
     async def aiter_lines(self):
+        if self.before:
+            await self.before()
         for line in self.lines:
             yield line
         if self.boom:
@@ -1271,21 +1277,17 @@ class NudgeRelayTests(RelayFixture):
         self.assertEqual(row.metadata["nudges"], ["also the 2023 figure"])
 
     async def test_an_untaken_nudge_is_posted_as_a_message_when_the_reply_ends(self):
-        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "Done.", "output_type": "text", "render_as": "text"}))
+        # The nudge is queued from the stream hook -- the reply row exists by then
+        # and the run has not ended, which is the case under test, with no race.
+        async def nudge_mid_run():
+            pending = await sync_to_async(lambda: ChatMessage.objects.filter(topic=self.t1, status="pending").first())()
+            self.assertIsNotNone(pending)
+            await self.signals.add_nudge(str(pending.id), {"text": "and cite it", "user_id": str(self.owner.id), "name": "Owner"})
 
-        async def nudge_meanwhile():
-            pending = None
-            for _ in range(50):
-                await asyncio.sleep(0.01)
-                pending = await sync_to_async(lambda: ChatMessage.objects.filter(topic=self.t1, status="pending").first())()
-                if pending:
-                    break
-            if pending:
-                await self.signals.add_nudge(str(pending.id), {"text": "and cite it", "user_id": str(self.owner.id), "name": "Owner"})
-        task = asyncio.create_task(nudge_meanwhile())
-        await asyncio.sleep(0.02)
-        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "Done.", "output_type": "text", "render_as": "text"})))
-        await task
+        await self.run_single(FakeResponse(
+            sse({"type": "message_done", "content": "Done.", "output_type": "text", "render_as": "text"}),
+            before=nudge_mid_run,
+        ))
         rows = await sync_to_async(lambda: list(ChatMessage.objects.filter(topic=self.t1).order_by("sequence")))()
         human = [r for r in rows if (r.metadata or {}).get("role") == "user"]
         self.assertEqual([r.content for r in human], ["and cite it"])
