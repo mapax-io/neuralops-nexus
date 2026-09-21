@@ -760,6 +760,29 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   (`MessageOut.nudges`). Never lost: when the reply ends or is stopped, `repost_untaken_nudges` posts what the
   persona never reached as an ordinary message from the nudger. A run without tool calls therefore never takes a
   nudge (it arrives as a message). pydantic-ai only (the LiteLLM runner is unmaintained, OPEN-ITEMS). Server `0.5.8`.
+- **Runbooks (W6 phase 1, 2026-09-21).** `Runbook(project, title ≤ 120, description ≤ 500, steps JSON 1–12 of
+  {persona_id, prompt ≤ 4000, routine_id|null, output_type, on_failure stop|skip|retry})` and
+  `RunbookRun(runbook, topic, started_by, status queued|running|done|failed|stopped, current_step, step_results,
+  started_at, ended_at, error)` in `nucleus/models/scheduling.py` (migration 0026, which also makes
+  `PersonaSchedule.persona` nullable and adds `PersonaSchedule.runbook`: a schedule runs a persona OR starts a
+  runbook, `scheduling/services.py` refuses both or neither). Routes under `/projects/{id}/runbooks/`
+  (`scheduling/api.py`; the fixed `runs/` paths register before `{runbook_id}/`): reading needs `topic.list` at the
+  project, defining `runbook.manage` (Admin), starting and stopping `runbook.run` (Member) PLUS `persona.mention` in
+  the topic — a run is the starter's series of mentions — and `topic.create` on the channel when "Run now" makes a
+  new topic. Execution is the Celery task `scheduling.tasks.run_runbook` → `scheduling/runbooks.py execute_run`:
+  the starter's mention right is re-checked (as a schedule's creator is); every step goes through the ONE trigger,
+  `trigger_ai_response_async(..., interactive=False, routine=, output_type=, step_context=<previous reply>,
+  runbook_run={id, title, step, of}, triggered_by=starter)`, which now returns the reply's id; the row decides:
+  completed → its content is the next step's context, failed → `on_failure` (stop: run failed and the line says
+  which step and why; skip: recorded, context unchanged; retry: one more attempt, then the stop rule), a stopped
+  reply or a run marked stopped → run stopped. A step's model override comes through its routine (one mechanism;
+  the plan's per-step `model_config_id` was dropped as a second path to the same thing). Every transition
+  publishes `{type: "runbook_run", id, run}` on the topic and posts system lines (started / finished / failed at
+  step n / stopped …); the reply rows carry `metadata.runbook_run` (`MessageOut.runbook_run`, `message_start`
+  too). The worker puts `TriggerJob.step_context` into the persona prompt as its own block after the routine's
+  (`apps/managers/runbooks.py`, clipped to `RUNBOOK_STEP_CONTEXT_MAX` = 12 000 chars). Phase 2 (condition/output
+  steps, Describe, evidence, catch-up) stays in the master plan. Server `0.6.0` (MINOR: new tables and a
+  schedule field).
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

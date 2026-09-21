@@ -46,6 +46,7 @@ class MessageOut(Schema):
     sender_type: str
     triggered_by_id: Optional[str] = None    # whose reply this is -- the caller, who alone may stop it (W22)
     triggered_by_name: Optional[str] = None
+    runbook_run: Optional[dict] = None       # {id, title, step, of} when the reply is a runbook step (W6)
     persona_id: Optional[str] = None  # frozen at send-time -- distinguishes two
                                        # personas that have shared the same name
                                        # over time (e.g. deleted + recreated "Nova")

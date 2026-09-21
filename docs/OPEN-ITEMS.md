@@ -709,3 +709,23 @@ in the chat: "remember that…"), a nightly consolidation task (dedupe/merge/sta
 ceiling, per-project exclusions (topics or patterns never recorded), and a Routine proposal when a method
 repeats. The first cut ships the entry model, the embedding/retrieval path, the end-of-reply remember pass, the
 pane and the persona switch.
+
+## Worker cold start can outlast the relay's read timeout
+
+Seen 2026-09-21 on the dev stack: the first `auto` output-type run after a worker reload rebuilt the output-type
+classifier's centroids (`[classifier] built centroids for 7 output types`, ~70 s on the local embedding model)
+before the model was even called, and nucleus's relay (`httpx.AsyncClient(timeout=120)` around the SSE stream in
+`chat/services.py`) gave up: the reply failed with "The AI worker took too long to answer and the request timed
+out." while the worker was still warming up. The next run was fine. Options: build the centroids at worker
+startup (or lazily off the request path), send keepalive events while the prompt is being prepared, or make the
+relay's read timeout apply only after the first byte. Until then the first reply after a worker restart may fail.
+
+## A reply produced off the request path may not be embedded
+
+`chat/services.py:trigger_ai_response_async` ends with `asyncio.create_task(embed_message_async(...))` —
+fire-and-forget, which is right on the HTTP path (the response returns and the loop keeps running). Called
+through `async_to_sync` from Celery (a schedule's fire, every step of a runbook, W6), the loop closes as soon as
+the coroutine returns, so that task can be cancelled before it runs: the reply is saved and published, but never
+embedded, and so never found by chat retrieval. Pre-existing for schedules; runbooks inherit it. Fix by awaiting
+the embed when the caller is synchronous (a flag on the trigger, or `interactive=False` implying it), or by
+handing the embed to its own Celery task.

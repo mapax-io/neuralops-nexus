@@ -53,8 +53,22 @@ class PersonaSchedule(ProjectBaseModel):
     persona = models.ForeignKey(
         "nucleus.Persona",
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name="schedules",
-        help_text="Existing persona to run the query against -- old or new, no restriction.",
+        help_text="Existing persona to run the query against -- old or new, no restriction. "
+                   "Null when the schedule starts a runbook instead (W6).",
+    )
+
+    # W6: a schedule may start a runbook instead of one persona -- exactly one
+    # of persona / runbook is set (enforced in scheduling/services.py).
+    runbook = models.ForeignKey(
+        "nucleus.Runbook",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="schedules",
+        help_text="The runbook this schedule starts each fire; the query_text is unused then.",
     )
 
     query_text = models.TextField(
@@ -184,4 +198,65 @@ class PersonaSchedule(ProjectBaseModel):
         ]
 
     def __str__(self):
-        return f"{self.persona.name} @ {self.topic.title} ({self.schedule_kind})"
+        what = self.persona.name if self.persona_id else f"runbook {self.runbook.title if self.runbook_id else '?'}"
+        return f"{what} @ {self.topic.title} ({self.schedule_kind})"
+
+
+class Runbook(ProjectBaseModel):
+    """
+    An ordered list of persona steps a project runs as one unit (W6). Each
+    step names a persona and a prompt, optionally a routine (its instructions,
+    tool narrowing and model) and an output type, and what to do when it
+    fails. The steps are a JSON list validated in scheduling/runbooks.py --
+    a runbook is edited as one document, never step by step.
+    """
+
+    title = models.CharField(max_length=120)
+    description = models.CharField(max_length=500, blank=True, default="")
+    # [{persona_id, prompt, routine_id | null, output_type, on_failure}] -- 1 to 12 steps.
+    steps = models.JSONField(default=list)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_runbooks",
+    )
+
+    class Meta:
+        ordering = ["title"]
+        indexes = [models.Index(fields=["project", "is_active"])]
+
+    def __str__(self) -> str:
+        return f"{self.title} ({len(self.steps or [])} steps)"
+
+
+class RunbookRun(ProjectBaseModel):
+    """
+    One execution of a runbook in one topic: which step is running, how each
+    step went, and who started it (the actor of every step's mention).
+    """
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        DONE = "done", "Done"
+        FAILED = "failed", "Failed"
+        STOPPED = "stopped", "Stopped"
+
+    runbook = models.ForeignKey(Runbook, on_delete=models.CASCADE, related_name="runs")
+    topic = models.ForeignKey("nucleus.ChatTopic", on_delete=models.CASCADE, related_name="runbook_runs")
+    started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="started_runbook_runs",
+    )
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    # 0-based index of the step in progress; -1 before the first starts.
+    current_step = models.IntegerField(default=-1)
+    # [{index, persona_id, persona_name, message_id, status, started_at, ended_at, error}] in step order.
+    step_results = models.JSONField(default=list)
+    started_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["runbook", "status"]), models.Index(fields=["topic", "status"])]
+
+    def __str__(self) -> str:
+        return f"{self.runbook.title} run ({self.status})"
