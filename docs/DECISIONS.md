@@ -699,6 +699,21 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   boundary and the container (uid 1000, the project folder as HOME) the hard one; the shell gets a sanitized
   environment (PATH/LANG/LC_ALL/TZ only — the worker's own env holds the secrets), never the worker's. Nothing a
   terminal does is posted to the chat. Server `0.5.3`.
+- **Model fallbacks (W7, 2026-09-21).** A persona names up to three fallback models, in order
+  (`Persona.fallback_models` through `PersonaFallbackModel(position)`, migration `nucleus 0024`;
+  `fallback_model_config_ids` on create/patch — `[]` clears, unsent leaves; ≤ 3, no repeats, never the primary,
+  attached to the project, enforced in `_validate_persona_wiring`; the model detach/delete guards count fallback use).
+  The WORKER retries (`apps/managers/fallbacks.py FallbackRun`, one place for the single-persona manager and the
+  swarm loop): when the runner's exception is a model failure (`is_model_failure`: HTTP 401/402/403/404/408/409/425/429
+  or ≥ 500, or the litellm/pydantic-ai classes for a revoked key, no credit, rate limit, unknown model, provider
+  down/unreachable/timeout — NOT 400/422, context length, content policy or `UnexpectedModelBehavior`, which are the
+  model answering) and NOTHING has reached the reader yet (no delta, tool call or approval request), the same turn
+  runs again on the next model; a failure after text streamed is reported, never silently restarted; the last
+  candidate's error passes through unchanged so `chat/reasons.py` words it as today. The reply then carries
+  `message_done.answered_by_model = "<model name> (fallback)"`, which nucleus keeps in `metadata.answered_by_model`
+  (serialised since Wave 0) and republishes; the app shows "Answered by <name> · fallback" under the bubble.
+  `chat/reasons.py` decides the wording of a failure, the worker decides the retry — two small classifiers on
+  purpose. Server `0.5.4`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

@@ -335,3 +335,84 @@ class RoutineTests(MentionRightFixture):
         self.assertEqual((payload["name"], payload["instructions"], payload["allowed_capabilities"]), ("keyed", "Use the small model.", None))
         self.assertEqual(payload["model"]["id"], str(self.model_config.id))
         self.assertIn("api_key", payload["model"])
+
+
+# ── W7 Model fallbacks ───────────────────────────────────────────────────────
+class FallbackModelTests(MentionRightFixture):
+    """A persona names up to three fallback models, in order; the worker gets them with their keys."""
+
+    def setUp(self):
+        super().setUp()
+        from nucleus.models import ModelConfig
+        self.small = ModelConfig.objects.create(company=self.company, name="Small", provider="openai", model_id="gpt-4o-mini")
+        self.small.set_api_key("k-small")
+        self.small.save(update_fields=["api_key_encrypted"])
+        self.tiny = ModelConfig.objects.create(company=self.company, name="Tiny", provider="anthropic", model_id="claude-haiku-4-5-20251001")
+        self.spare = ModelConfig.objects.create(company=self.company, name="Spare", provider="openai", model_id="gpt-4.1-nano")
+        self.elsewhere = ModelConfig.objects.create(company=self.company, name="Elsewhere", provider="openai", model_id="o3")
+        for m in (self.small, self.tiny, self.spare):
+            m.projects.add(self.p1)
+
+    def names(self, persona):
+        from intelligence.api import _persona_out
+        return [m.name for m in _persona_out(persona).fallback_models]
+
+    def test_fallbacks_round_trip_in_order_reorder_and_clear(self):
+        from intelligence.services import patch_persona
+        self.assertEqual(self.names(self.persona_sara), [])
+        patch_persona(self.company, str(self.persona_sara.id), {"fallback_model_config_ids": [str(self.small.id), str(self.tiny.id)]})
+        self.assertEqual(self.names(self.persona_sara), ["Small", "Tiny"])
+        patch_persona(self.company, str(self.persona_sara.id), {"fallback_model_config_ids": [str(self.tiny.id), str(self.small.id)]})
+        self.assertEqual(self.names(self.persona_sara), ["Tiny", "Small"])
+        patch_persona(self.company, str(self.persona_sara.id), {"name": "Sara"})  # not sent: untouched
+        self.assertEqual(self.names(self.persona_sara), ["Tiny", "Small"])
+        patch_persona(self.company, str(self.persona_sara.id), {"fallback_model_config_ids": []})
+        self.assertEqual(self.names(self.persona_sara), [])
+
+    def test_a_persona_is_created_with_its_fallbacks_over_the_api(self):
+        body = {"name": "Nova", "project_id": str(self.p1.id), "model_config_id": str(self.model_config.id),
+                "fallback_model_config_ids": [str(self.small.id), str(self.small.id), str(self.tiny.id)],  # a repeat collapses
+                "prompt": {"system_prompt": "You are Nova."}}
+        r = self.call("post", "/api/v1/personas/", self.owner, body)
+        self.assertEqual(r.status_code, 201 if r.status_code == 201 else 200, r.content)
+        self.assertEqual([m["name"] for m in r.json()["fallback_models"]], ["Small", "Tiny"])
+        r = self.call("patch", f"/api/v1/personas/{r.json()['id']}/", self.owner, {"fallback_model_config_ids": []})
+        self.assertEqual(r.json()["fallback_models"], [])
+
+    def test_the_wiring_rules_apply_to_fallbacks(self):
+        from intelligence.services import patch_persona
+        pid = str(self.persona_sara.id)
+        with self.assertRaisesRegex(ValueError, "three"):
+            patch_persona(self.company, pid, {"fallback_model_config_ids": [str(self.small.id), str(self.tiny.id), str(self.spare.id), str(self.elsewhere.id)]})
+        with self.assertRaisesRegex(ValueError, "different model from the primary"):
+            patch_persona(self.company, pid, {"fallback_model_config_ids": [str(self.model_config.id)]})
+        with self.assertRaisesRegex(ValueError, "not attached to this project"):
+            patch_persona(self.company, pid, {"fallback_model_config_ids": [str(self.elsewhere.id)]})
+        with self.assertRaisesRegex(ValueError, "not found"):
+            patch_persona(self.company, pid, {"fallback_model_config_ids": ["00000000-0000-0000-0000-000000000000"]})
+        # A primary swapped onto a current fallback is refused too.
+        patch_persona(self.company, pid, {"fallback_model_config_ids": [str(self.small.id)]})
+        with self.assertRaisesRegex(ValueError, "different model from the primary"):
+            patch_persona(self.company, pid, {"model_config_id": str(self.small.id)})
+
+    def test_a_model_in_use_as_a_fallback_cannot_be_deleted_or_detached(self):
+        from intelligence.services import delete_model_config, detach_model_config_from_project, patch_persona
+        patch_persona(self.company, str(self.persona_sara.id), {"fallback_model_config_ids": [str(self.small.id)]})
+        with self.assertRaisesRegex(ValueError, "Sara"):
+            delete_model_config(self.company, str(self.small.id))
+        with self.assertRaisesRegex(ValueError, "Sara"):
+            detach_model_config_from_project(self.company, str(self.small.id), str(self.p1.id))
+        self.assertTrue(delete_model_config(self.company, str(self.spare.id)))  # unused: fine
+
+    def test_the_worker_payload_carries_the_fallbacks_with_their_keys_and_skips_a_retired_one(self):
+        from intelligence.services import patch_persona
+        from internal.api import get_persona_internal
+        from nucleus.models import Prompt
+        Prompt.objects.create(company=self.company, persona=self.persona_sara, system_prompt="You are Sara.")
+        patch_persona(self.company, str(self.persona_sara.id), {"fallback_model_config_ids": [str(self.small.id), str(self.tiny.id)]})
+        payload = get_persona_internal(None, str(self.persona_sara.id)).model_dump()
+        self.assertEqual([(m["name"], m["model_id"], m["api_key"]) for m in payload["fallback_models"]],
+                         [("Small", "gpt-4o-mini", "k-small"), ("Tiny", "claude-haiku-4-5-20251001", None)])
+        self.small.soft_delete()
+        payload = get_persona_internal(None, str(self.persona_sara.id)).model_dump()
+        self.assertEqual([m["name"] for m in payload["fallback_models"]], ["Tiny"])

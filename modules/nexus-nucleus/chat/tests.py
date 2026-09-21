@@ -637,6 +637,21 @@ class RelayUsageTests(RelayFixture):
         done = self.events("message_done")[0]
         self.assertEqual((done["prompt_tokens"], done["output_tokens"], done["context_window"]), (7366, 104, 1000000))
 
+    async def test_the_fallback_that_answered_is_kept_and_republished(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_delta", "delta": "hi"},
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text", "answered_by_model": "Small (fallback)"},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["answered_by_model"], "Small (fallback)")
+        self.assertEqual(self.events("message_done")[0]["answered_by_model"], "Small (fallback)")
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[-1]
+        self.assertNotIn("answered_by_model", row.metadata)
+        self.assertIsNone(self.events("message_done")[-1]["answered_by_model"])
+
     async def test_a_done_without_usage_stores_none(self):
         await self.run_single(FakeResponse(sse(
             {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"},

@@ -169,6 +169,9 @@ class PersonaInternal(Schema):
     utility_model: Optional[ModelInternal] = None
     # Tool approvals: the persona's levels; the worker applies the defaults.
     tool_levels: dict = Field(default_factory=dict)
+    # In order, keys decrypted like the primary's: what the worker tries when
+    # `model` cannot answer (W7). Retired configs are left out.
+    fallback_models: list[ModelInternal] = Field(default_factory=list)
 
 
 class RoutineInternal(Schema):
@@ -297,7 +300,7 @@ def get_persona_internal(request, persona_id: str):
     """
     from nucleus.models import Persona
     from intelligence import oauth_client
-    from intelligence.services import utility_model_of
+    from intelligence.services import fallback_models_of, utility_model_of
 
     persona = (
         Persona.objects.filter(id=persona_id, is_active=True)
@@ -366,6 +369,7 @@ def get_persona_internal(request, persona_id: str):
         utility_model=_model_internal(utility) if (utility := utility_model_of(persona.company)) else None,
         max_steps=persona.max_steps,
         tool_levels=persona.tool_levels or {},
+        fallback_models=[_model_internal(m) for m in fallback_models_of(persona)],
     )
 
 

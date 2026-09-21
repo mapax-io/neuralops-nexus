@@ -232,6 +232,7 @@ class PersonaIn(Schema):
     project_id: str
     model_config_id: str                            # REQUIRED
     advisor_model_config_id: Optional[str] = None   # 0..1
+    fallback_model_config_ids: list[str] = Field(default_factory=list)   # 0..3, in order
     mcp_server_ids: list[str] = Field(default_factory=list)   # 0..N
     temperature: float = 0.7
     max_tokens: int = 4096
@@ -259,6 +260,7 @@ class PersonaPatchIn(Schema):
     model_config_id: Optional[str] = None
     advisor_model_config_id: Optional[str] = None
     clear_advisor: bool = False
+    fallback_model_config_ids: Optional[list[str]] = None   # [] clears all; None: not sent
     mcp_server_ids: Optional[list[str]] = None      # [] clears all
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -276,6 +278,8 @@ class PersonaOut(Schema):
     # Named `model` / `advisor_model`, NOT `model_config` -- see module docstring.
     model: ModelConfigRef
     advisor_model: Optional[ModelConfigRef] = None
+    # In order: what answers when `model` cannot (W7).
+    fallback_models: list[ModelConfigRef] = Field(default_factory=list)
     mcp_servers: list[MCPServerRef] = Field(default_factory=list)
     temperature: float
     max_tokens: int
