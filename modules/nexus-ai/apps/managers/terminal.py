@@ -39,8 +39,14 @@ DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
 # The ticket itself is generic and shared with the live browser; a terminal's
 # ticket must also name the folder the shell opens in.
 def verify_ticket(ticket: str | None, secret: str, now: float | None = None) -> dict[str, Any] | None:
-    """The claims when the signature holds and the ticket is live; None otherwise."""
-    return _verify(ticket, secret, require=("project_id", "cwd"), now=now)
+    """The claims when the signature holds, the ticket is live, and it is a TERMINAL ticket."""
+    claims = _verify(ticket, secret, require=("project_id", "cwd"), now=now)
+    # A ticket minted for the live browser is signed with the same key; only its
+    # own kind may open a shell. Tickets from before this claim existed are
+    # accepted on their required claims, as they always were.
+    if claims and claims.get("kind") not in (None, "terminal"):
+        return None
+    return claims
 
 
 # ── The session ──────────────────────────────────────────────────────────────

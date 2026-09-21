@@ -41,8 +41,23 @@ def test_is_private_host_reads_literals_and_names():
     assert is_private_host("0.0.0.0") is True
     assert is_private_host("") is True
     assert is_private_host("8.8.8.8") is False
-    # A name nobody can resolve is left to Chromium to fail on, not blocked here.
-    assert is_private_host("no-such-host.invalid") is False
+    # A name this process cannot resolve is one it cannot vouch for: refused,
+    # rather than handed to Chromium to resolve differently.
+    assert is_private_host("no-such-host.invalid") is True
+    # An over-long DNS label makes getaddrinfo raise UnicodeError, not OSError —
+    # that used to escape the check entirely.
+    assert is_private_host("a" * 64 + ".example.com") is True
+
+
+def test_the_ranges_python_does_not_call_private_are_still_the_deployment_s():
+    # Carrier-grade NAT is what Tailscale hands out, and 100.100.100.100 is
+    # Alibaba's metadata endpoint inside it; neither is "private" to ipaddress.
+    import ipaddress
+    assert ipaddress.ip_address("100.64.1.5").is_private is False
+    assert is_private_host("100.64.1.5") is True
+    assert is_private_host("100.100.100.100") is True
+    assert is_private_host("metadata.tencentyun.com") is True
+    assert is_private_host("fd00::1") is True
 
 
 @pytest.mark.asyncio

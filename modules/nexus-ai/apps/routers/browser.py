@@ -45,8 +45,10 @@ async def browser_ws(ws: WebSocket) -> None:
     # Accept first: a close before the handshake reaches the app as a bare 1006
     # and it could not say why.
     await ws.accept()
-    claims = verify_ticket(ws.query_params.get("ticket"), settings.INTERNAL_API_KEY)
-    if not claims:
+    # kind is required here: a terminal's ticket carries the same signature, and
+    # the two rights are separate, so one must not open the other.
+    claims = verify_ticket(ws.query_params.get("ticket"), settings.INTERNAL_API_KEY, require=("project_id", "kind"))
+    if not claims or claims.get("kind") != "browser":
         await ws.close(code=CLOSE_BAD_TICKET)
         return
     if not (settings.BROWSER_ENABLED and is_available()):
@@ -57,15 +59,18 @@ async def browser_ws(ws: WebSocket) -> None:
         await ws.close(code=CLOSE_TOO_MANY)
         return
 
-    _open_sessions += 1
+    # Built before the slot is taken, so nothing between the two can leak one.
     session = BrowserSession(
         on_frame=ws.send_bytes,
         on_state=lambda state: _say(ws, state),
         width=int(claims.get("width") or 1280),
         height=int(claims.get("height") or 800),
     )
+    _open_sessions += 1
     log.info("[browser] open user=%s project=%s", claims.get("user_id"), claims.get("project_id"))
-    idle = asyncio.get_event_loop().time()
+    # Two clocks: `idle` moves with every message and drives the timeout, so it
+    # cannot also measure how long the session lasted (audit, 2026-09-21).
+    started = idle = asyncio.get_event_loop().time()
     try:
         try:
             await session.start(claims.get("url") or None)
