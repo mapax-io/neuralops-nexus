@@ -15,6 +15,9 @@ from fastmcp.client.transports import StdioTransport
 class ModelConfig(BaseModel):
     provider: str  # "litellm" | "local"
     model_id: str  # "anthropic/claude-haiku-4-5-20251001"
+    # The name the team gave this model on the AI models page -- what a reply
+    # says when a fallback answered. None when nucleus did not send one.
+    name: str | None = None
     api_key: str | None = None  # decrypted key from AIModel — passed per-call
     max_tokens: int = 4096
     temperature: float = 0.7
@@ -230,6 +233,8 @@ class PersonaConfig(BaseModel):
     # Tool approvals: {capability id or "<capability>/<tool>": "auto"|"ask"|"off"};
     # the defaults for anything unset live in apps/managers/approvals.py.
     tool_levels: dict[str, str] = Field(default_factory=dict)
+    # Models to answer with when `model` cannot, in order (apps/managers/fallbacks.py).
+    fallback_models: list[ModelConfig] = Field(default_factory=list)
 
 
 class HistoryMessage(BaseModel):
@@ -391,6 +396,10 @@ class AgentEvent(BaseModel):
     # M8: embed description — text inside <<<EMBED>>>...<<<END_EMBED>>> block
     # Only present for html/form/terminal render_as. Used instead of raw HTML for embedding.
     embed_description: str | None = None
+
+    # message_done only: "<model name> (fallback)" when a fallback model answered
+    # because the persona's own could not; None otherwise.
+    answered_by_model: str | None = None
 
     # message_error only -- see apps/routers/trigger.py:_event_stream. Emitted
     # when anything in AgenticManager.run() raises (persona resolve, history
