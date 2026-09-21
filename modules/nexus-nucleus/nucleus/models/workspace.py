@@ -178,6 +178,51 @@ class KnowledgeFile(BaseModel):
     class Meta:
         db_table = "intelligence_knowledge_file"
 
+class Deliverable(ProjectBaseModel):
+    """
+    Something a persona produced that the team decided to keep (W10): a chart, a
+    page, a table, a form. A reply scrolls away; a deliverable does not.
+
+    Kept by title, versioned: keeping the same title again adds a version rather
+    than overwriting, so a number that was signed off last week is still there
+    next to the one that replaced it. The source message is remembered when it
+    is still around, and forgotten (SET_NULL) rather than taking the deliverable
+    with it.
+    """
+
+    class Kind(models.TextChoices):
+        HTML = "html", "Page"
+        CHART = "chart", "Chart"
+        TABLE = "table", "Table"
+        FORM = "form", "Form"
+        TEXT = "text", "Text"
+
+    title = models.CharField(max_length=120)
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.TEXT)
+    version = models.PositiveIntegerField(default=1)
+    content = models.TextField(help_text="Exactly what the reply carried -- the chart's JSON, the page's HTML.")
+    source_message = models.ForeignKey(
+        "nucleus.ChatMessage", on_delete=models.SET_NULL, null=True, blank=True, related_name="deliverables",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="kept_deliverables",
+    )
+
+    class Meta:
+        ordering = ["title", "-version"]
+        indexes = [models.Index(fields=["project", "is_active"])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "title", "version"],
+                condition=models.Q(is_active=True),
+                name="one_version_per_title_per_project",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.title} v{self.version}"
+
+
 class ChatMessage(ProjectBaseModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
