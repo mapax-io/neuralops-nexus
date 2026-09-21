@@ -64,8 +64,10 @@ def _serialise(schedule) -> dict:
     return {
         "id": str(schedule.id),
         "topic_id": str(schedule.topic_id),
-        "persona_id": str(schedule.persona_id),
-        "persona_name": schedule.persona.name,
+        "persona_id": str(schedule.persona_id) if schedule.persona_id else None,
+        "persona_name": schedule.persona.name if schedule.persona_id else "",
+        "runbook_id": str(schedule.runbook_id) if schedule.runbook_id else None,
+        "runbook_title": schedule.runbook.title if schedule.runbook_id else None,
         "query_text": schedule.query_text,
         "label": schedule.label,
         "schedule_kind": schedule.schedule_kind,
@@ -82,17 +84,22 @@ def _serialise(schedule) -> dict:
     }
 
 
-def create_schedule(*, company, project, topic, user, persona, payload) -> dict:
+def create_schedule(*, company, project, topic, user, persona=None, runbook=None, payload) -> dict:
     """
     payload is a scheduling.schema.ScheduleCreateIn (already validated by
     Ninja). Creates the PersonaSchedule row, the matching django-celery-beat
     schedule object (Interval/Crontab/Clocked -- exactly one, based on
     schedule_kind), and the PeriodicTask that links them, in that order,
-    inside a transaction.
+    inside a transaction. Exactly one of persona / runbook (W6) is set.
     """
     from django.db import transaction
     from nucleus.models import PersonaSchedule
     from django_celery_beat.models import PeriodicTask
+
+    if (persona is None) == (runbook is None):
+        raise ValueError("A schedule runs a persona or starts a runbook -- one of the two.")
+    if persona is not None and not (payload.query_text or "").strip():
+        raise ValueError("Say what the persona should do each run.")
 
     kind = payload.schedule_kind
     if kind not in (
@@ -122,8 +129,9 @@ def create_schedule(*, company, project, topic, user, persona, payload) -> dict:
             project=project,
             topic=topic,
             persona=persona,
+            runbook=runbook,
             created_by=user,
-            query_text=payload.query_text,
+            query_text=(payload.query_text or "").strip() if persona is not None else "",
             label=payload.label,
             schedule_kind=kind,
             interval_every=payload.interval_every,
@@ -167,7 +175,7 @@ def list_schedules(topic) -> list[dict]:
     from nucleus.models import PersonaSchedule
     schedules = (
         PersonaSchedule.objects.filter(topic=topic, is_active=True)
-        .select_related("persona")
+        .select_related("persona", "runbook")
         .order_by("-created_at")
     )
     return [_serialise(s) for s in schedules]
@@ -178,7 +186,7 @@ def get_schedule_object(topic, schedule_id: str):
     from nucleus.models import PersonaSchedule
     return PersonaSchedule.objects.filter(
         topic=topic, id=schedule_id, is_active=True
-    ).select_related("persona", "periodic_task").first()
+    ).select_related("persona", "runbook", "periodic_task").first()
 
 
 def update_schedule(schedule, payload) -> dict:

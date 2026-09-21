@@ -397,7 +397,7 @@ async def embed_message_async(
 
 # ── AI trigger — fire-and-forget (M3 + M7) ────────────────────────────────────
 
-def create_ai_message(company, project, topic, persona, render_as: str = "text", triggered_by=None) -> dict:
+def create_ai_message(company, project, topic, persona, render_as: str = "text", triggered_by=None, runbook_run: dict | None = None) -> dict:
     """
     Pre-create a PENDING ChatMessage for the AI response. `triggered_by` is the
     person who called the persona (the sender, a schedule's creator, the one who
@@ -425,6 +425,8 @@ def create_ai_message(company, project, topic, persona, render_as: str = "text",
             "persona_name": persona.name,   # display name for serializer
             "render_as": render_as,
             **({"triggered_by_id": str(triggered_by.id), "triggered_by_name": triggered_by.get_display_name()} if triggered_by is not None else {}),
+            # W6: which runbook step this reply is ({id, title, step, of}).
+            **({"runbook_run": runbook_run} if runbook_run else {}),
         },
     )
     return _serialise(msg)
@@ -795,9 +797,13 @@ async def trigger_ai_response_async(
     interactive: bool = True,
     routine=None,
     triggered_by=None,
-) -> None:
+    step_context: str | None = None,
+    runbook_run: dict | None = None,
+) -> str | None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
+    Returns the reply's message id (None when no reply row could be made) --
+    a runbook (W6) awaits it and reads the row for the step's outcome.
 
     nexus-nucleus's job here is orchestration only -- create the placeholder
     message, tell nexus-ai which persona + topic + message to respond to,
@@ -840,10 +846,10 @@ async def trigger_ai_response_async(
     _fail_ai_message = sync_to_async(fail_ai_message)
 
     try:
-        ai_msg = await _create_ai_message(company, project, topic, persona, triggered_by=triggered_by)
+        ai_msg = await _create_ai_message(company, project, topic, persona, triggered_by=triggered_by, runbook_run=runbook_run)
     except Exception as exc:
         logger.warning("[trigger] failed to create AI message: %s", exc)
-        return
+        return None
 
     msg_id = ai_msg["id"]
     channel = topic_channel(topic_id)
@@ -860,6 +866,7 @@ async def trigger_ai_response_async(
         "created_at": now,
         "triggered_by_id": ai_msg.get("triggered_by_id"),  # whose reply this is (W22)
         "triggered_by_name": ai_msg.get("triggered_by_name"),
+        "runbook_run": ai_msg.get("runbook_run"),  # which runbook step this is (W6)
     })
 
     # 3. Build the minimal TriggerJob payload -- nexus-ai resolves persona/
@@ -894,6 +901,8 @@ async def trigger_ai_response_async(
         # Routines (W4): the team method this reply runs with; the worker
         # fetches it and applies its instructions, tool narrowing and model.
         "routine_id": str(routine.id) if routine is not None else None,
+        # Runbooks (W6): the previous step's reply, for this step to build on.
+        "step_context": step_context,
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
@@ -1031,7 +1040,7 @@ async def trigger_ai_response_async(
     if stopped:
         await end_stopped_reply(channel, msg_id, "".join(streamed_content), activity_trail, nudges=nudges_taken)
         await repost_untaken_nudges(company, project, topic, msg_id, channel)
-        return  # nothing complete to embed
+        return msg_id  # nothing complete to embed
 
     # The stream ended with neither message_done nor message_error: the worker
     # went away mid-reply. Saying so beats a bubble that goes quiet forever.
@@ -1122,6 +1131,7 @@ async def trigger_ai_response_async(
             content=embed_content,
             created_at=now,
         ))
+    return msg_id
 
 async def trigger_ai_swarm_response_async(
     *,
@@ -1200,6 +1210,7 @@ async def trigger_ai_swarm_response_async(
         "created_at": now,
         "triggered_by_id": ai_msg.get("triggered_by_id"),  # whose reply this is (W22)
         "triggered_by_name": ai_msg.get("triggered_by_name"),
+        "runbook_run": ai_msg.get("runbook_run"),  # which runbook step this is (W6)
     })
 
     # 3. Build the minimal TriggerJob payload -- nexus-ai resolves persona/
@@ -1592,6 +1603,8 @@ def _serialise(msg) -> dict:
         # for human/system messages and for replies from before it was recorded.
         "triggered_by_id": metadata.get("triggered_by_id"),
         "triggered_by_name": metadata.get("triggered_by_name"),
+        # Which runbook step this reply is -- {id, title, step, of} -- or None (W6).
+        "runbook_run": metadata.get("runbook_run"),
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }

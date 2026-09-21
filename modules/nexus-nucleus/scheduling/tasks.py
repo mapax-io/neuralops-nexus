@@ -25,7 +25,15 @@ from asgiref.sync import async_to_sync
 from celery import shared_task
 from django.utils import timezone
 
+from scheduling import runbooks
+
 logger = logging.getLogger(__name__)
+
+
+@shared_task(name="scheduling.tasks.run_runbook")
+def run_runbook(run_id: str) -> None:
+    """Drive one queued RunbookRun to its end (W6) -- see scheduling/runbooks.py."""
+    runbooks.execute_run(run_id)
 
 
 @shared_task(name="scheduling.tasks.fire_persona_schedule")
@@ -55,6 +63,7 @@ def fire_persona_schedule(schedule_id: str) -> None:
     project = schedule.project
     company = schedule.company
     persona = schedule.persona
+    what = f"@{persona.name}" if persona is not None else f"runbook {schedule.runbook.title}" if schedule.runbook_id else "runbook"
 
     channel_name = chat_svc.topic_channel(str(topic.id))
 
@@ -73,7 +82,7 @@ def fire_persona_schedule(schedule_id: str) -> None:
         logger.warning("[scheduling] fire_persona_schedule: schedule %s skipped: %s", schedule_id, skip)
         sys_msg = chat_svc.save_system_message(
             company=company, project=project, topic=topic,
-            content=f"Scheduled run of @{persona.name} skipped: {skip}.",
+            content=f"Scheduled run of {what} skipped: {skip}.",
         )
         chat_svc.publish(channel_name, {**sys_msg, "type": "message"})
         PersonaSchedule.objects.filter(id=schedule.id).update(
@@ -84,6 +93,20 @@ def fire_persona_schedule(schedule_id: str) -> None:
         return
 
     try:
+        if persona is None:
+            # W6: the schedule starts a runbook -- the run announces itself and
+            # executes here, in this task, step after step.
+            if not schedule.runbook_id or not schedule.runbook.is_active:
+                raise RuntimeError("the runbook this schedule starts no longer exists")
+            run = runbooks.start_run(company, project, schedule.runbook, actor, topic)
+            runbooks.execute_run(str(run.id))
+            PersonaSchedule.objects.filter(id=schedule.id).update(
+                last_run_at=timezone.now(),
+                last_status=PersonaSchedule.RunStatus.SUCCESS,
+                last_error=None,
+            )
+            return
+
         if schedule.trigger_visible:
             label = f" ({schedule.label})" if schedule.label else ""
             sys_msg = chat_svc.save_system_message(
