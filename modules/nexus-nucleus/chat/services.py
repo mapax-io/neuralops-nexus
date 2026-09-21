@@ -201,6 +201,23 @@ def extract_output_type(message: str) -> tuple[str, str]:
 
 # ── Every @directive, parsed once, up front ─────────────────────────────────
 
+# A routine token: the FIRST standalone /name (lowercase letters, digits,
+# hyphens) -- "/etc/hosts" and "50/50" are not, and /swarm was stripped first.
+_ROUTINE_RE = re.compile(r"(?:(?<=\s)|^)/([a-z0-9-]+)(?=\s|$)")
+
+
+def extract_routine(message: str) -> tuple[str | None, str]:
+    """(routine name, message without that token) -- one token, the first; the rest of the text is untouched."""
+    m = _ROUTINE_RE.search(message)
+    if not m:
+        return None, message
+    before, after = message[: m.start()], message[m.end():]
+    # Only the token and one of the spaces around it go; the rest of the text stays as typed.
+    if before.endswith(" ") and after.startswith(" "):
+        after = after[1:]
+    return m.group(1), (before + after).strip()
+
+
 class MessageDirectives:
     """
     Every @directive a chat message can contain, parsed once, in one
@@ -217,6 +234,9 @@ class MessageDirectives:
         @session close/end  -- close the active session, no AI trigger
         @output_type        -- e.g. @chart, @html -- how the AI should
                                 format its reply
+        /routine-name       -- the first standalone /token (W4 Routines);
+                                resolved against the topic's project by
+                                send_message
         @PersonaName         -- one or more persona mentions (anything
                                 left over that isn't a reserved keyword)
 
@@ -235,6 +255,8 @@ class MessageDirectives:
         raw = re.sub(r'\s*/swarm\s*', ' ', raw).strip() if self.swarm else raw
         self.has_session_open, self.is_session_close, after_session = extract_session_directive(raw)
         self.output_type, self.clean_message = extract_output_type(after_session)
+        # /routine-name -- resolved by send_message in the topic's project.
+        self.routine_name, self.clean_message = extract_routine(self.clean_message)
 
         names = _MENTION_RE.findall(self.clean_message)
         self.mention_names = [n for n in names if n.lower() not in _RESERVED_MENTIONS]
@@ -741,6 +763,7 @@ async def trigger_ai_response_async(
     output_type: str = "auto",
     approved_plan: str | None = None,
     interactive: bool = True,
+    routine=None,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -835,6 +858,9 @@ async def trigger_ai_response_async(
         # Tool approvals: an Ask tool may wait for a person only when one is
         # watching (a chat turn); a schedule refuses it at once.
         "interactive": bool(interactive),
+        # Routines (W4): the team method this reply runs with; the worker
+        # fetches it and applies its instructions, tool narrowing and model.
+        "routine_id": str(routine.id) if routine is not None else None,
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo

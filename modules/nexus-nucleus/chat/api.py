@@ -93,6 +93,7 @@ _resolve_topic = sync_to_async(_resolve_topic_sync)
 _list_messages = sync_to_async(chat_svc.list_messages)
 _save_user_message = sync_to_async(chat_svc.save_user_message)
 _get_persona_by_mention = sync_to_async(intel_svc.get_persona_by_mention)
+_get_routine_by_name = sync_to_async(intel_svc.get_routine_by_name)
 _get_active_session = sync_to_async(chat_svc.get_active_session)
 _create_session = sync_to_async(chat_svc.create_session)
 _close_session = sync_to_async(chat_svc.close_session)
@@ -258,6 +259,16 @@ async def send_message(
         logger.warning("[chat/api] mention refused user=%s topic=%s personas=%s", user.id, topic_id, [p.name for p in mentioned_personas])
         mentioned_personas = []
 
+    # 5c. A /routine token names a team method in this project. Unknown here,
+    #     the personas it was aimed at do not answer (the message still posts).
+    routine = None
+    if directives.routine_name:
+        routine = await _get_routine_by_name(project, directives.routine_name)
+    unknown_routine = directives.routine_name is not None and routine is None
+    if unknown_routine and mentioned_personas:
+        refusals = _refuse(mentioned_personas, "unknown_routine", f"No routine called /{directives.routine_name} in this project.")
+        mentioned_personas = []
+
     # 6. Apply session routing priority
 
     if directives.is_session_close:
@@ -308,14 +319,14 @@ async def send_message(
         # Only trigger personas if there is actual content beyond the @mention
         if directives.message_without_mentions():
             await _trigger_personas(mentioned_personas, company, project, topic,
-                                     topic_id, msg, directives.clean_message, 
-                                     directives.output_type, directives.swarm)
+                                     topic_id, msg, directives.clean_message,
+                                     directives.output_type, directives.swarm, routine)
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
         await _trigger_personas(mentioned_personas, company, project, topic,
                                  topic_id, msg, directives.clean_message,
-                                 directives.output_type, directives.swarm)
+                                 directives.output_type, directives.swarm, routine)
 
     else:
         # Rules 4 + 5: no explicit mention — check session
@@ -327,6 +338,8 @@ async def send_message(
             if session_personas and not await _can(user, "persona.mention", obj=topic):
                 refusals = _refuse(session_personas, "no_right", "You can't call personas in this topic.")
                 logger.warning("[chat/api] session auto-trigger refused user=%s topic=%s", user.id, topic_id)
+            elif session_personas and unknown_routine:
+                refusals = _refuse(session_personas, "unknown_routine", f"No routine called /{directives.routine_name} in this project.")
             else:
                 logger.warning(
                     "[chat/api] session auto-trigger personas=%s",
@@ -334,7 +347,7 @@ async def send_message(
                 )
                 await _trigger_personas(session_personas, company, project, topic,
                                          topic_id, msg, directives.clean_message,
-                                         directives.output_type, directives.swarm)
+                                         directives.output_type, directives.swarm, routine)
         # Rule 5: no mention, no session — human-only message, nothing to do
 
     if refusals:
@@ -359,7 +372,8 @@ async def _trigger_personas(
     msg: dict,
     clean_message: str,
     output_type: str,
-    swarm: bool
+    swarm: bool,
+    routine=None,
 ) -> None:
     """
     Fire AI trigger tasks for each persona in parallel.
@@ -412,6 +426,7 @@ async def _trigger_personas(
                     user_message_id=msg["id"],
                     topic_id=topic_id,
                     output_type=output_type,
+                    routine=routine,  # a swarm run ignores routines (documented)
                 )
             )
 

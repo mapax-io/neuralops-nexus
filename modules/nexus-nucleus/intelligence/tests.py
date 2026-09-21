@@ -172,11 +172,6 @@ class UtilityModelTests(MentionRightFixture):
             company=self.company, name="Small", provider="openai", model_id="gpt-4o-mini", context_window=128000,
         )
 
-    def call(self, method, path, user, body=None):
-        from django.test import Client
-        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
-            return getattr(Client(), method)(path, data=body, content_type="application/json", HTTP_AUTHORIZATION="Bearer t")
-
     def test_owner_sets_and_clears_the_utility_model_and_the_list_marks_it(self):
         r = self.call("post", f"/api/v1/model-configs/{self.small.id}/utility/", self.owner)
         self.assertEqual(r.status_code, 200, r.content)
@@ -271,3 +266,72 @@ class ToolLevelsTests(MentionRightFixture):
                 patch_persona(self.company, str(self.persona_sara.id), {"tool_levels": bad})
         self.persona_sara.refresh_from_db()
         self.assertEqual(self.persona_sara.tool_levels, {})
+
+
+class RoutineTests(MentionRightFixture):
+    """W4: team-shared methods invoked with `/` -- four built-ins per project, CRUD under routine.manage."""
+
+    BUILTINS = {"pr-description", "incident-summary", "weekly-digest", "meeting-notes"}
+
+    def routines(self, project):
+        from nucleus.models import Routine
+        return Routine.objects.filter(project=project, is_active=True)
+
+    def test_seeding_creates_the_four_built_ins_once(self):
+        from intelligence.services import seed_builtin_routines
+        seed_builtin_routines(self.p1)
+        seed_builtin_routines(self.p1)
+        rows = self.routines(self.p1)
+        self.assertEqual({r.name for r in rows}, self.BUILTINS)
+        self.assertTrue(all(r.is_builtin and r.instructions and r.title and r.purpose for r in rows))
+        self.assertEqual(self.routines(self.p2).count(), 0)
+
+    def test_a_new_project_gets_its_built_ins(self):
+        r = self.call("post", "/api/v1/projects/", self.owner, {"name": "Delta"})
+        self.assertEqual(r.status_code, 200, r.content)
+        from nucleus.models import Project
+        delta = Project.objects.get(id=r.json()["id"])
+        self.assertEqual({x.name for x in self.routines(delta)}, self.BUILTINS)
+
+    def test_create_needs_routine_manage_validates_the_name_and_round_trips(self):
+        path = f"/api/v1/projects/{self.p1.id}/routines/"
+        body = {"name": "release-notes", "title": "Release notes", "purpose": "Draft release notes from merged PRs.", "instructions": "List every merged PR…", "allowed_capabilities": ["filesystem", "mcp:abc"]}
+        self.assertEqual(self.call("post", path, self.sara, body).status_code, 403)   # a member uses routines, admins define them
+        r = self.call("post", path, self.owner, body)
+        self.assertEqual(r.status_code, 200, r.content)
+        out = r.json()
+        self.assertEqual((out["name"], out["is_builtin"], out["allowed_capabilities"], out["model"]), ("release-notes", False, ["filesystem", "mcp:abc"], None))
+        self.assertEqual(self.call("post", path, self.owner, body).status_code, 400)  # the name is taken here
+        for bad in ({**body, "name": "Release Notes"}, {**body, "name": ""}, {**body, "name": "x" * 41}, {**body, "instructions": "x" * 8001}, {**body, "allowed_capabilities": ["laser"]}):
+            self.assertEqual(self.call("post", path, self.owner, bad).status_code, 400, bad.get("name"))
+
+    def test_list_needs_only_to_read_the_project_and_shows_built_ins_and_own(self):
+        from intelligence.services import seed_builtin_routines
+        seed_builtin_routines(self.p1)
+        path = f"/api/v1/projects/{self.p1.id}/routines/"
+        r = self.call("get", path, self.sara)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual({x["name"] for x in r.json()}, self.BUILTINS)
+
+    def test_patch_and_delete_a_built_in_is_editable_but_stays(self):
+        from intelligence.services import seed_builtin_routines
+        digest = next(x for x in seed_builtin_routines(self.p1) if x.name == "weekly-digest")
+        base = f"/api/v1/projects/{self.p1.id}/routines/"
+        r = self.call("patch", f"{base}{digest.id}/", self.owner, {"title": "Weekly digest (ops)", "model_config_id": str(self.model_config.id)})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual((r.json()["title"], r.json()["model"]["id"]), ("Weekly digest (ops)", str(self.model_config.id)))
+        self.assertEqual(self.call("patch", f"{base}{digest.id}/", self.owner, {"clear_model": True}).json()["model"], None)
+        self.assertEqual(self.call("delete", f"{base}{digest.id}/", self.owner).status_code, 409)
+        own = self.call("post", base, self.owner, {"name": "mine", "title": "Mine", "purpose": "", "instructions": "do"}).json()
+        self.assertEqual(self.call("delete", f"{base}{own['id']}/", self.sara).status_code, 403)
+        self.assertEqual(self.call("delete", f"{base}{own['id']}/", self.owner).status_code, 204)
+        self.assertNotIn("mine", {x["name"] for x in self.call("get", base, self.owner).json()})
+
+    def test_the_worker_reads_a_routine_with_its_model_and_key(self):
+        from intelligence.services import create_routine
+        from internal.api import get_routine_internal
+        routine = create_routine(self.company, self.p1, self.owner, {"name": "keyed", "title": "Keyed", "purpose": "", "instructions": "Use the small model.", "model_config": self.model_config})
+        payload = get_routine_internal(None, str(routine.id)).model_dump()
+        self.assertEqual((payload["name"], payload["instructions"], payload["allowed_capabilities"]), ("keyed", "Use the small model.", None))
+        self.assertEqual(payload["model"]["id"], str(self.model_config.id))
+        self.assertIn("api_key", payload["model"])

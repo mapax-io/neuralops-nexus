@@ -39,6 +39,7 @@ from .schema import (
     TemplatePromptContent,
 )
 from . import services as svc
+from .schema import RoutineIn, RoutinePatchIn, RoutineOut
 
 router = Router(tags=["Intelligence"], auth=SupabaseBearer())
 
@@ -480,6 +481,68 @@ def delete_persona(request, persona_id: str):
 
 
 # ── PromptTemplate endpoints ──────────────────────────────────────────────────
+
+# ── Routine endpoints (W4) ───────────────────────────────────────────────────
+def _routine_out(routine) -> RoutineOut:
+    return RoutineOut(
+        id=str(routine.id), project_id=str(routine.project_id), name=routine.name, title=routine.title,
+        purpose=routine.purpose or "", instructions=routine.instructions, allowed_capabilities=routine.allowed_capabilities,
+        model=_model_config_ref(routine.model_config) if routine.model_config_id and routine.model_config and routine.model_config.is_active else None,
+        is_builtin=routine.is_builtin, created_by_id=str(routine.created_by_id) if routine.created_by_id else None,
+    )
+
+
+def _routine_project(request, project_id: str, right: str):
+    """The project a routine route acts on, under `right` -- 404 when it is not this company's."""
+    company = _company(request)
+    project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(request.auth, right, obj=project):
+        raise HttpError(403, "You don't have permission to manage routines here." if right == "routine.manage" else "You don't have access to this project.")
+    return company, project
+
+
+@router.get("/projects/{project_id}/routines/", response=List[RoutineOut])
+def list_routines(request, project_id: str):
+    """Whoever reads the project sees what `/` offers; defining routines is routine.manage."""
+    _company_, project = _routine_project(request, project_id, "topic.list")
+    return [_routine_out(r) for r in svc.list_routines(project)]
+
+
+@router.post("/projects/{project_id}/routines/", response=RoutineOut)
+def create_routine(request, project_id: str, payload: RoutineIn):
+    company, project = _routine_project(request, project_id, "routine.manage")
+    try:
+        return _routine_out(svc.create_routine(company, project, request.auth, payload.dict()))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+
+
+@router.patch("/projects/{project_id}/routines/{routine_id}/", response=RoutineOut)
+def patch_routine(request, project_id: str, routine_id: str, payload: RoutinePatchIn):
+    company, project = _routine_project(request, project_id, "routine.manage")
+    try:
+        routine = svc.patch_routine(company, project, routine_id, payload.dict(exclude_none=True))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    if not routine:
+        raise HttpError(404, "Routine not found.")
+    return _routine_out(routine)
+
+
+@router.delete("/projects/{project_id}/routines/{routine_id}/", response={204: None})
+def delete_routine(request, project_id: str, routine_id: str):
+    """A built-in is editable but stays -- every project has the four."""
+    _company_, project = _routine_project(request, project_id, "routine.manage")
+    routine = svc.get_routine(project, routine_id)
+    if not routine:
+        raise HttpError(404, "Routine not found.")
+    if routine.is_builtin:
+        raise HttpError(409, "Built-in routines can be edited but not deleted.")
+    svc.delete_routine(project, routine_id)
+    return 204, None
+
 
 @router.get("/prompt-templates", response=ListTemplatePrompts)
 def get_prompts(request):
