@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     TERMINAL_SHELL: str = "/bin/bash"
     TERMINAL_IDLE_SECONDS: int = 1800
     TERMINAL_MAX_SESSIONS: int = 20
+    # How long a model check (apps/managers/model_check.py) waits for the model.
+    MODEL_CHECK_TIMEOUT_SECONDS: float = 20
 
     class Config:
         env_file = ".env"

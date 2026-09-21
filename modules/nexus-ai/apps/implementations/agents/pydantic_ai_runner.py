@@ -57,6 +57,7 @@ from apps.implementations.agents.tool_events import tool_end_event
 from apps.managers.approvals import NucleusApprovals, ToolApprovalGate, nucleus_poll
 from apps.managers.fallbacks import MODEL_FAILURE, is_model_failure
 from apps.schemas.trigger import (
+    ModelConfig,
     AgentEvent,
     AgentEventType,
     PydanticAICapabilities,
@@ -297,13 +298,19 @@ class PydanticAIRunner(AgentRunner):
 
     @classmethod
     def _resolve_model(cls, persona: PersonaConfig) -> Model:
-        provider_name, model_name = persona.model.provider, persona.model.model_id
-        provider_name = provider_name.lower()
+        return PydanticAIRunner.build_model(persona.model)
+
+    @staticmethod
+    def build_model(config: ModelConfig) -> Model:
+        """The pydantic-ai model for one config -- what a persona runs on, and what a model check dials."""
+        provider_name, model_name = config.provider.lower(), config.model_id
         try:
             ModelClass, ProviderClass = PydanticAIRunner._MODEL_REGISTRY[provider_name]
         except KeyError:
             raise
-        provider = ProviderClass(api_key=persona.model.api_key)
+        # An api_base (a compatible endpoint, a proxy) only means something to the OpenAI-shaped providers.
+        kwargs = {"base_url": config.api_base} if config.api_base and ProviderClass is OpenAIProvider else {}
+        provider = ProviderClass(api_key=config.api_key, **kwargs)
         return ModelClass(model_name, provider=provider)
     
     @staticmethod
