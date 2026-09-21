@@ -104,7 +104,7 @@ async def browser_ws(ws: WebSocket) -> None:
     finally:
         _open_sessions -= 1
         await session.close()
-        log.info("[browser] closed project=%s after %.0fs", claims.get("project_id"), asyncio.get_event_loop().time() - idle)
+        log.info("[browser] closed project=%s after %.0fs", claims.get("project_id"), asyncio.get_event_loop().time() - started)
 
 
 async def _handle(session: BrowserSession, message: dict) -> None:

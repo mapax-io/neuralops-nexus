@@ -71,6 +71,42 @@ async def test_a_session_clamps_the_size_it_was_asked_for(monkeypatch):
     assert (small.width, small.height) == (320, 240)
 
 
+class _StuckPage:
+    """A page whose history calls fail, as Chromium's do on a page that cannot go back."""
+    url = "https://example.com/a"
+
+    async def go_back(self, timeout=None):
+        raise RuntimeError("Timeout 30000ms exceeded")
+
+    async def go_forward(self, timeout=None):
+        raise RuntimeError("net::ERR_ABORTED")
+
+    async def reload(self, timeout=None):
+        raise RuntimeError("Timeout 30000ms exceeded")
+
+
+@pytest.mark.asyncio
+async def test_back_forward_and_reload_say_why_they_did_not_work():
+    # They used to swallow the failure: no frame, no message, no change -- a
+    # button that does nothing reads as a broken app, not a page that would not.
+    from apps.managers.browser import BrowserError, Tab
+    states = []
+    session = BrowserSession(on_frame=lambda b: None, on_state=lambda s: states.append(s))
+
+    async def push_state():
+        states.append("pushed")
+    session.push_state = push_state
+    tab = Tab(_StuckPage(), tab_id="t1")
+    session.tabs.append(tab)
+    session.active = tab.id
+    for step in (session.back, session.forward, session.reload):
+        with pytest.raises(BrowserError) as raised:
+            await step()
+        assert str(raised.value)
+    # The state still went out each time, failure or not.
+    assert states.count("pushed") == 3
+
+
 def test_availability_is_reported_not_assumed():
     # Whatever this image has, the answer is a bool and the router gates on it.
     assert isinstance(is_available(), bool)
