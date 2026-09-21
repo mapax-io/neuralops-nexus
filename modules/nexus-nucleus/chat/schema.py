@@ -66,3 +66,13 @@ class SendMessageOut(Schema):
 
 class StopMessageOut(Schema):
     stopping: bool
+
+
+class PreflightDecisionIn(Schema):
+    decision: str  # approve | adjust | decline
+    note: Optional[str] = None
+
+
+class PreflightDecisionOut(Schema):
+    status: str
+    preflight: dict

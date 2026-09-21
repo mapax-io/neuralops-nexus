@@ -637,6 +637,16 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   AI models tab via `POST/DELETE /model-configs/{id}/utility/` under `model_config.update`; lists mark it with
   `is_utility`; the persona payload carries `utility_model`. `PUT /ai-config/` now requires the same right — it
   had no gate before.
+- **Preflight (W3, 2026-09-21).** `Persona.acts_after_approval` (off by default) makes a persona propose
+  before acting: nucleus flags the job (`preflight`) whenever no plan is approved yet, and the WORKER decides
+  whether the run would act (any MCP server, or a shell/filesystem capability — nucleus never reads capability
+  configs); if so the turn runs with no tools in the `preflight` output type (`{summary, steps[{title, tools,
+  writes}], risks}`, ≤ 12 steps). Nucleus stores the parsed plan in `metadata.preflight` (`status: proposed`,
+  with the asking message) and `POST …/messages/{id}/preflight/` (`approve | adjust | decline`, right
+  `persona.approve_run` at the topic) decides it once: approve re-triggers with `approved_plan` ahead of the
+  persona prompt and the tools back on; adjust re-triggers a planning turn with the note; decline posts a system
+  line. Every decision publishes `preflight_decided`. Scheduled and swarm runs never plan (nobody is waiting).
+  Server `0.4.0` — the app relies on the endpoint.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

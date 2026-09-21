@@ -454,6 +454,13 @@ class Persona(TenantBaseModel):
 
     max_tokens = models.PositiveIntegerField(default=4096)
 
+    # Preflight: the persona proposes before acting. When set, a turn that
+    # would use a tool that acts first answers with a plan for a person to
+    # approve, adjust or decline (the worker judges "would act" -- nucleus
+    # never reads capability configs). Off by default; never for scheduled
+    # or swarm runs, which have nobody waiting to answer.
+    acts_after_approval = models.BooleanField(default=False)
+
     max_steps = models.PositiveIntegerField(
         default=10,
         help_text=(

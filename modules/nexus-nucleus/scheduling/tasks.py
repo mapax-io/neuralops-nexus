@@ -105,6 +105,7 @@ def fire_persona_schedule(schedule_id: str) -> None:
             user_message_id=str(uuid.uuid4()),
             topic_id=str(topic.id),
             output_type="auto",
+            interactive=False,  # a schedule has nobody waiting to approve a plan
         )
 
         PersonaSchedule.objects.filter(id=schedule.id).update(

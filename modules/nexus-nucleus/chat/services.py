@@ -22,7 +22,8 @@ from asgiref.sync import sync_to_async
 import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
-from .events import tool_activity_end_event, tool_activity_event
+from authn.permissions.checker import PermissionChecker
+from .events import preflight_decided_event, tool_activity_end_event, tool_activity_event
 from .stop_signals import StopRequested, stop_signals, stoppable, stoppable_lines
 from .reasons import ORPHANED_RUN_REASON, WORKER_ENDED_EARLY_REASON, explain_ai_error
 
@@ -410,6 +411,7 @@ def update_ai_message(
     stopped: bool = False,
     usage: dict | None = None,
     activity_trail: list | None = None,
+    preflight: dict | None = None,
 ) -> None:
     """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
@@ -428,6 +430,8 @@ def update_ai_message(
         metadata["usage"] = usage
     if activity_trail:
         metadata["activity_trail"] = activity_trail
+    if preflight:
+        metadata["preflight"] = preflight
 
     ChatMessage.objects.filter(id=message_id).update(
         content=content,
@@ -468,6 +472,94 @@ USAGE_FIELDS = ("prompt_tokens", "output_tokens", "context_window")
 # How many closed tool calls a reply keeps on its row: enough to audit a
 # long agentic run, small enough to ride in the message metadata.
 ACTIVITY_TRAIL_MAX = 50
+
+
+PLAN_MAX_STEPS = 12
+
+
+def parse_plan(content: str) -> dict | None:
+    """The plan a preflight reply carries, or None when the content is not one."""
+    try:
+        raw = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list):
+        return None
+    steps = []
+    for step in raw["steps"][:PLAN_MAX_STEPS]:
+        if not isinstance(step, dict) or not str(step.get("title", "")).strip():
+            continue
+        tools = step.get("tools") if isinstance(step.get("tools"), list) else []
+        steps.append({"title": str(step["title"]).strip(), "tools": [str(t) for t in tools], "writes": bool(step.get("writes"))})
+    risks = [str(r) for r in raw["risks"]] if isinstance(raw.get("risks"), list) else []
+    return {"summary": str(raw.get("summary") or "").strip(), "steps": steps, "risks": risks}
+
+
+def plan_text(plan: dict) -> str:
+    """The approved plan as the worker puts it ahead of the persona prompt."""
+    lines = [plan["summary"]] if plan.get("summary") else []
+    for i, step in enumerate(plan.get("steps", []), 1):
+        detail = ", ".join(step.get("tools") or [])
+        lines.append(f"{i}. {step['title']}" + (f" (tools: {detail})" if detail else "") + (" (writes)" if step.get("writes") else ""))
+    return "\n".join(lines)
+
+
+class PreflightError(Exception):
+    """A decision that cannot be applied; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+async def decide_preflight(*, topic, message_id: str, user, decision: str, note: str | None = None) -> dict:
+    """
+    Approve, adjust or decline a persona's proposal. Approve runs the plan with
+    the tools back on; adjust asks for another plan with the note; decline ends
+    it with a line in the topic. Once decided, a proposal stays decided.
+    """
+    from nucleus.models import ChatMessage, Persona
+
+    if decision not in ("approve", "adjust", "decline"):
+        raise PreflightError(400, "Decision must be approve, adjust or decline.")
+    msg = await sync_to_async(lambda: ChatMessage.objects.select_related("project", "company").filter(id=message_id, topic=topic).first())()
+    if not msg:
+        raise PreflightError(404, "Message not found.")
+    preflight = dict((msg.metadata or {}).get("preflight") or {})
+    if preflight.get("status") != "proposed":
+        raise PreflightError(409, "This plan has already been decided." if preflight else "This message carries no plan to decide.")
+    if not await sync_to_async(PermissionChecker.can)(user, "persona.approve_run", obj=topic):
+        raise PreflightError(403, "You don't have permission to decide a persona's plan here.")
+    persona = await sync_to_async(lambda: Persona.objects.filter(id=(msg.metadata or {}).get("persona_id"), is_active=True).first())()
+    if not persona:
+        raise PreflightError(409, "The persona behind this plan is gone.")
+    if decision == "adjust" and not (note or "").strip():
+        raise PreflightError(400, "Say what to change.")
+
+    status = {"approve": "approved", "adjust": "adjusted", "decline": "declined"}[decision]
+    preflight.update({
+        "status": status,
+        "decided_by_id": str(user.id),
+        "decided_by_name": user.get_display_name(),
+        "decided_at": timezone.now().isoformat(),
+        "note": (note or "").strip() or None,
+    })
+    metadata = dict(msg.metadata or {})
+    metadata["preflight"] = preflight
+    await sync_to_async(ChatMessage.objects.filter(id=msg.id).update)(metadata=metadata)
+    channel = topic_channel(str(topic.id))
+    await publish_async(channel, preflight_decided_event(str(msg.id), preflight))
+
+    common = dict(company=msg.company, project=msg.project, topic=topic, persona=persona, topic_id=str(topic.id),
+                  user_message_id=preflight.get("user_message_id") or "", output_type="auto")
+    if decision == "approve":
+        asyncio.create_task(trigger_ai_response_async(user_message=preflight.get("user_message") or "", approved_plan=plan_text(preflight["plan"]), **common))
+    elif decision == "adjust":
+        asyncio.create_task(trigger_ai_response_async(user_message=note.strip(), **common))
+    else:
+        line = await sync_to_async(save_system_message)(msg.company, msg.project, topic, f"@{persona.name}'s plan was declined by {user.get_display_name()}.")
+        await publish_async(channel, line)
+    return {"status": status, "preflight": preflight}
 
 
 def remember_tool_call(trail: list, event: dict) -> None:
@@ -525,6 +617,8 @@ async def trigger_ai_response_async(
     user_message_id: str,
     topic_id: str,
     output_type: str = "auto",
+    approved_plan: str | None = None,
+    interactive: bool = True,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -612,6 +706,10 @@ async def trigger_ai_response_async(
         "message": user_message,
         "context_sources": context_sources,
         "output_type": output_type,  # M7: "auto" | "chart" | "code" | "terminal" | ...
+        # Preflight: a gated persona plans first when nobody has approved a plan
+        # yet -- only for interactive turns (a schedule has nobody to ask).
+        "preflight": bool(interactive and persona.acts_after_approval and not approved_plan),
+        "approved_plan": approved_plan,
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
@@ -740,6 +838,16 @@ async def trigger_ai_response_async(
         else "".join(streamed_content)
     )
 
+    # A preflight reply is a proposal for a person to decide; one that is not
+    # a plan at all is kept as ordinary text rather than a card with no plan.
+    preflight = None
+    if final_output_type == "preflight" and not ai_error:
+        plan = parse_plan(save_content)
+        if plan:
+            preflight = {"status": "proposed", "plan": plan, "user_message": user_message, "user_message_id": user_message_id}
+        else:
+            final_output_type, final_render_as = "text", "text"
+
     # 5. Save full content to DB + publish message_done (or FAILED + message_error)
     # What the reader sees: the reauth prompt verbatim (it is written for
     # them), otherwise the categorised sentence — never the raw error.
@@ -755,6 +863,7 @@ async def trigger_ai_response_async(
                 output_type=final_output_type,
                 usage=usage,
                 activity_trail=activity_trail,
+                preflight=preflight,
             )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
@@ -770,6 +879,7 @@ async def trigger_ai_response_async(
         "output_type": final_output_type,   # M7: e.g. "chart"
         "render_as": final_render_as,        # M7: e.g. "html"
         "stopped": False,                    # a stopped run ends in end_stopped_reply()
+        "preflight": preflight,              # the proposal, so the card can be decided without a reload
     }, usage))
 
     # M8: Embed AI response — smart content selection

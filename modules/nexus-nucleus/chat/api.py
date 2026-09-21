@@ -46,7 +46,7 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from chat.events import mention_refused_event
-from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut
+from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut
 from chat import services as chat_svc
 from chat.services import MessageDirectives
 from workspace import services as ws_svc
@@ -414,6 +414,23 @@ async def _trigger_personas(
                     output_type=output_type,
                 )
             )
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/preflight/",
+    response=PreflightDecisionOut,
+)
+async def decide_preflight(request, project_id: str, channel_id: str, topic_id: str, message_id: str, payload: PreflightDecisionIn):
+    """
+    Decide a persona's proposal (see chat/services.py decide_preflight). The
+    right is persona.approve_run at the topic: whoever can talk to the persona
+    here can approve what it proposes.
+    """
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    try:
+        return await chat_svc.decide_preflight(topic=topic, message_id=message_id, user=user, decision=payload.decision, note=payload.note)
+    except chat_svc.PreflightError as exc:
+        raise HttpError(exc.status, str(exc))
 
 
 @router.post(
