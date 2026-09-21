@@ -19,6 +19,8 @@ class ModelConfig(BaseModel):
     # says when a fallback answered. None when nucleus did not send one.
     name: str | None = None
     api_key: str | None = None  # decrypted key from AIModel — passed per-call
+    # An OpenAI-compatible endpoint or a proxy; None means the provider's own.
+    api_base: str | None = None
     max_tokens: int = 4096
     temperature: float = 0.7
     supports_vision: bool = False
