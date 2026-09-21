@@ -16,6 +16,7 @@ import asyncio
 
 import httpx
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from asgiref.sync import sync_to_async
@@ -562,6 +563,55 @@ def _message_in_topic(topic, message_id):
     return ChatMessage.objects.select_related("sender").filter(id=message_id, topic=topic).first()
 
 
+def _claim_preflight(message_id, fields: dict) -> dict | None:
+    """
+    Move a proposal from proposed to decided, exactly once. None when someone
+    got there first.
+
+    The guard has to be part of the write: reading the status, then awaiting a
+    permission check and two more queries before writing, let a double-click
+    through twice -- and an approved plan runs with the tools back on, so twice
+    means two runs from one approval (audit, 2026-09-21).
+    """
+    from nucleus.models import ChatMessage
+
+    with transaction.atomic():
+        row = ChatMessage.objects.select_for_update().filter(id=message_id).first()
+        if not row:
+            return None
+        metadata = dict(row.metadata or {})
+        preflight = dict(metadata.get("preflight") or {})
+        if preflight.get("status") != "proposed":
+            return None
+        preflight.update(fields)
+        metadata["preflight"] = preflight
+        ChatMessage.objects.filter(id=row.id).update(metadata=metadata)
+        return preflight
+
+
+def _claim_approval(message_id, call_id: str, fields: dict) -> dict | None:
+    """
+    Move a held tool call from pending to decided, exactly once, against the row
+    as it is at that moment -- the relay may have appended another call since
+    this request read it, and a write built on the stale list would drop it.
+    """
+    from nucleus.models import ChatMessage
+
+    with transaction.atomic():
+        row = ChatMessage.objects.select_for_update().filter(id=message_id).first()
+        if not row:
+            return None
+        metadata = dict(row.metadata or {})
+        approvals = [dict(a) for a in (metadata.get("approvals") or [])]
+        record = next((a for a in approvals if a.get("call_id") == call_id), None)
+        if not record or record.get("status") != "pending":
+            return None
+        record.update(fields)
+        metadata["approvals"] = approvals
+        ChatMessage.objects.filter(id=row.id).update(metadata=metadata)
+        return record
+
+
 async def decide_preflight(*, topic, message_id: str, user, decision: str, note: str | None = None) -> dict:
     """
     Approve, adjust or decline a persona's proposal. Approve runs the plan with
@@ -587,16 +637,16 @@ async def decide_preflight(*, topic, message_id: str, user, decision: str, note:
         raise PreflightError(400, "Say what to change.")
 
     status = {"approve": "approved", "adjust": "adjusted", "decline": "declined"}[decision]
-    preflight.update({
+    claimed = await sync_to_async(_claim_preflight)(msg.id, {
         "status": status,
         "decided_by_id": str(user.id),
         "decided_by_name": user.get_display_name(),
         "decided_at": timezone.now().isoformat(),
         "note": (note or "").strip() or None,
     })
-    metadata = dict(msg.metadata or {})
-    metadata["preflight"] = preflight
-    await sync_to_async(ChatMessage.objects.filter(id=msg.id).update)(metadata=metadata)
+    if claimed is None:
+        raise PreflightError(409, "This plan has already been decided.")
+    preflight = claimed
     channel = topic_channel(str(topic.id))
     await publish_async(channel, preflight_decided_event(str(msg.id), preflight))
 
@@ -655,14 +705,17 @@ def record_approval_request(message_id: str, approval: dict) -> dict | None:
     record = approval_record(approval)
     if not record:
         return None
-    msg = ChatMessage.objects.filter(id=message_id).first()
-    if not msg:
-        return None
-    metadata = dict(msg.metadata or {})
-    approvals = [a for a in (metadata.get("approvals") or []) if a.get("call_id") != record["call_id"]]
-    approvals.append(record)
-    metadata["approvals"] = approvals[-APPROVALS_MAX:]
-    ChatMessage.objects.filter(id=message_id).update(metadata=metadata)
+    # Under the row lock: a decision arriving at the same moment reads and
+    # writes the same JSON, and whichever wrote last used to erase the other.
+    with transaction.atomic():
+        msg = ChatMessage.objects.select_for_update().filter(id=message_id).first()
+        if not msg:
+            return None
+        metadata = dict(msg.metadata or {})
+        approvals = [a for a in (metadata.get("approvals") or []) if a.get("call_id") != record["call_id"]]
+        approvals.append(record)
+        metadata["approvals"] = approvals[-APPROVALS_MAX:]
+        ChatMessage.objects.filter(id=message_id).update(metadata=metadata)
     return record
 
 
@@ -723,15 +776,16 @@ async def decide_tool_approval(*, topic, message_id: str, call_id: str, user, de
             persona.tool_levels = levels
             await sync_to_async(persona.save)(update_fields=["tool_levels"])
 
-    record.update({
+    claimed = await sync_to_async(_claim_approval)(msg.id, call_id, {
         "status": "allowed" if decision == "allow" else "denied",
         "always": bool(always and decision == "allow"),
         "decided_by_id": str(user.id),
         "decided_by_name": user.get_display_name(),
         "decided_at": timezone.now().isoformat(),
     })
-    metadata["approvals"] = [record if a.get("call_id") == call_id else a for a in approvals]
-    await sync_to_async(ChatMessage.objects.filter(id=msg.id).update)(metadata=metadata)
+    if claimed is None:
+        raise ApprovalError(409, "This call has already been decided.")
+    record = claimed
     await publish_async(topic_channel(str(topic.id)), tool_approval_decided_event(str(msg.id), record))
     return {"status": record["status"], "approval": record}
 

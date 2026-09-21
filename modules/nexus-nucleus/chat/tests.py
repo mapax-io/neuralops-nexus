@@ -891,6 +891,25 @@ class PreflightDecisionTests(RelayFixture):
         self.assertEqual((posted["message"], posted["user_message_id"]), ("chart please", "u1"))
         self.assertEqual(len(self.events("preflight_decided")), 1)
 
+    async def test_a_plan_is_decided_exactly_once_even_when_two_approvals_race(self):
+        # Two clicks of Approve used to both read "proposed", both write, and both
+        # start the run with the tools on (audit, 2026-09-21). The claim is now
+        # the write itself, so exactly one wins.
+        from chat.services import PreflightError, decide_preflight
+        row = await self.propose()
+        FakeClient.posted = []
+        first = decide_preflight(topic=self.t1, message_id=str(row.id), user=self.owner, decision="approve")
+        second = decide_preflight(topic=self.t1, message_id=str(row.id), user=self.owner, decision="approve")
+        outcomes = await asyncio.gather(first, second, return_exceptions=True)
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            await asyncio.gather(*pending)
+        wins = [o for o in outcomes if isinstance(o, dict)]
+        losses = [o for o in outcomes if isinstance(o, PreflightError)]
+        self.assertEqual((len(wins), len(losses)), (1, 1), outcomes)
+        self.assertEqual(losses[0].status, 409)
+        self.assertEqual(len([p for p in FakeClient.posted if p.get("approved_plan")]), 1)
+
     async def test_adjust_asks_for_another_plan_with_the_note(self):
         row = await self.propose()
         outcome = await self.decide(row, self.owner, "adjust", note="Do not overwrite report.md; write report-v2.md")
