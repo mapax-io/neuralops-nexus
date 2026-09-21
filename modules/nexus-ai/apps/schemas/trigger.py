@@ -213,6 +213,8 @@ class PersonaCapabilities(BaseModel):
 class PersonaConfig(BaseModel):
     id: str
     name: str  # "NeuralBot"
+    # Already composed: the project's brief (when any) ahead of the persona's
+    # own prompt -- see nucleus_client.persona_from / prompt_builder.
     system_prompt: str
     model: ModelConfig
     mcp_servers: list[MCPArgs]
