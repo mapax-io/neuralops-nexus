@@ -33,6 +33,8 @@ from apps.schemas.trigger import (
     TriggerJob,
     TriggerSwarmJob,
 )
+from apps.core.config import settings
+from apps.implementations.context_sources.recall.recall_context_source import RECALL_LABEL
 
 
 BRIEF_HEADING = "Project brief — applies to every reply in this project:"
@@ -99,6 +101,7 @@ class NewImprovedPromptBuilder:
         context_chunks: list[Chunk] = []
         system_content = persona.system_prompt
 
+        recall_chunks: list[Chunk] = []
         for source in job.context_sources:
             plugin = ContextSourceFactory.get(source.type)
             filter = (
@@ -109,10 +112,11 @@ class NewImprovedPromptBuilder:
             source_chunks = await plugin.retrieve(
                 query=job.message,
                 collection_id=source.collection_id,
-                top_k=5,
+                top_k=settings.RECALL_TOP_K if source.type == "recall" else 5,
                 filter=filter,
             )
-            context_chunks.extend(source_chunks)
+            # What the team recorded (W5) is its own block, not one more source.
+            (recall_chunks if source.type == "recall" else context_chunks).extend(source_chunks)
 
         system_content = with_output_instruction(system_content, output_type_instruction)
 
@@ -140,6 +144,13 @@ class NewImprovedPromptBuilder:
             )
 
             messages.append(ModelResponse(parts=[TextPart(content=context_ack)]))
+
+        # 2b. What the team has recorded about the project (W5) -- after the
+        #     attached sources, before the conversation, so it reads as
+        #     standing knowledge rather than part of this exchange.
+        if recall_chunks:
+            messages.append(ModelRequest(parts=[UserPromptPart(content=f"[{RECALL_LABEL}]\n\n{self._format_recall(recall_chunks)}")]))
+            messages.append(ModelResponse(parts=[TextPart(content="Noted.")]))
 
         # 3. Conversation history (role: user/assistant only — strip sender_name)
         #    For assistant messages that contain rendered HTML (charts, tables, diagrams),
@@ -191,6 +202,14 @@ class NewImprovedPromptBuilder:
         if len(stripped) <= MAX_CHARS:
             return stripped
         return stripped[:MAX_CHARS] + "\n<!-- ... truncated ... -->"
+
+    def _format_recall(self, chunks: list[Chunk]) -> str:
+        """One line per entry: its kind and who recorded it, then the text."""
+        lines = []
+        for chunk in chunks:
+            who = chunk.metadata.get("author_name") or "the team"
+            lines.append(f"- ({chunk.metadata.get('kind', 'fact')}, {who}) {chunk.text}")
+        return "\n".join(lines)
 
     def _format_chunks(self, chunks: list[Chunk]) -> str:
         """Format chunks with source labels for clear attribution."""

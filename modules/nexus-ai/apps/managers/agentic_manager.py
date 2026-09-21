@@ -37,6 +37,7 @@ from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.managers.preflight import plan_turn
 from apps.managers.routines import apply_routine
 from apps.managers.fallbacks import FallbackRun
+from apps.managers.recall import remember
 from apps.output_types.markers import parse_output_markers
 from apps.output_types.recovery import finalise_reply
 from apps.managers.model_info import context_window_for
@@ -95,9 +96,12 @@ class NewImprovedAgenticManager:
 
         accrued_text: list[str] = []
         usage: dict = {}
+        failed = False
         # The persona's model and, when it fails before answering, its fallbacks in order.
         run = FallbackRun(self.runner, job, messages, persona)
         async for event in run.events():
+            if event.type == AgentEventType.ERROR.value:
+                failed = True
             match event.type:
 
                 # Accrue streamed text
@@ -122,6 +126,10 @@ class NewImprovedAgenticManager:
                 full_response_content, resolved_type
             )
 
+        # Recall (W5): what this exchange taught the team, kept by nucleus --
+        # only for a reply that actually happened.
+        recalled = await remember(job, persona, clean_content) if clean_content and not failed else 0
+
         # Signal the end to the frontend
         yield AgentEvent(
             type=AgentEventType.END,
@@ -134,6 +142,7 @@ class NewImprovedAgenticManager:
             output_tokens=usage.get("output_tokens"),
             context_window=context_window_for(run.model),
             answered_by_model=run.answered_by_model,
+            recalled=recalled or None,
         )
 
     async def swarm(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]: ...
