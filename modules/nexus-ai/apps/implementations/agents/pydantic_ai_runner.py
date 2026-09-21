@@ -53,7 +53,7 @@ from pydantic_ai_harness import (
 from apps.core.config import settings
 from apps.interfaces.agent import AgentRunner
 from apps.implementations.agents.stream_merge import merge_events
-from apps.implementations.agents.tool_events import tool_end_event
+from apps.implementations.agents.tool_events import tool_end_event, url_of
 from apps.managers.approvals import NucleusApprovals, ToolApprovalGate, nucleus_poll
 from apps.managers.fallbacks import MODEL_FAILURE, is_model_failure
 from apps.schemas.trigger import (
@@ -128,6 +128,8 @@ class PydanticAIRunner(AgentRunner):
         flush_granularity: float = 0.05
         # When each tool call began, by call id, so its end event can say how long it took.
         tool_started_at: dict[str, float] = {}
+        # The call's arguments, so the end event can say where a web tool went.
+        tool_args: dict[str, tuple[str, dict]] = {}
         usage: dict | None = None
 
         try:
@@ -171,6 +173,7 @@ class PydanticAIRunner(AgentRunner):
                             # arguments complete -- the part-start above only
                             # knows the name while the arguments still stream.
                             tool_started_at[tool_call.tool_call_id] = time.monotonic()
+                            tool_args[tool_call.tool_call_id] = (tool_call.tool_name, tool_call.args_as_dict())
                             yield AgentEvent(
                                 type=AgentEventType.TOOL_CALL_START,
                                 id=job.msg_id,
@@ -191,6 +194,7 @@ class PydanticAIRunner(AgentRunner):
                                 started_at=tool_started_at.pop(result_part.tool_call_id, time.monotonic()) + gate.waits.pop(result_part.tool_call_id, 0.0),
                                 content=result_part.content if ok else None,
                                 error=None if ok else str(result_part.content),
+                                url=url_of(*tool_args.pop(result_part.tool_call_id, (result_part.tool_name or "", {}))),
                             )
                         case _:
                             pass

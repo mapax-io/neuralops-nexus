@@ -346,6 +346,9 @@ class ToolResultData(BaseModel):
     duration_ms: int
     preview: str | None = None  # the result's text, clipped -- never the raw object
     error: str | None = None    # short reason when ok is False
+    # The page a web tool went to (web_fetch's url; a search's results page),
+    # so the app can open it beside the chat (W9 Follow along).
+    url: str | None = None
 
 
 class AgentEventType(str, Enum):

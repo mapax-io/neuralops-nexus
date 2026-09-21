@@ -8,6 +8,7 @@ keep an activity trail and the reader can audit a run without the raw result.
 from __future__ import annotations
 
 import time
+from urllib.parse import quote_plus
 from typing import Any
 
 from apps.schemas.trigger import AgentEvent, AgentEventType, ToolResultData
@@ -23,7 +24,20 @@ def preview_of(content: Any) -> str | None:
     return text[:TOOL_PREVIEW_CHARS]
 
 
-def tool_end_event(msg_id: str, name: str, *, ok: bool, started_at: float, content: Any = None, error: str | None = None) -> AgentEvent:
+def url_of(name: str, args: dict | None) -> str | None:
+    """The page a web tool call is about: web_fetch's url, or a results page for a search query. None otherwise."""
+    args = args or {}
+    url = args.get("url")
+    if isinstance(url, str) and url.startswith(("http://", "https://")):
+        return url
+    if name in {"web_search", "duckduckgo_search", "search"}:
+        query = args.get("query") or args.get("q")
+        if isinstance(query, str) and query.strip():
+            return "https://www.bing.com/search?q=" + quote_plus(query.strip())
+    return None
+
+
+def tool_end_event(msg_id: str, name: str, *, ok: bool, started_at: float, content: Any = None, error: str | None = None, url: str | None = None) -> AgentEvent:
     reason = (error or "")[:TOOL_ERROR_CHARS] if not ok else ""
     return AgentEvent(
         type=AgentEventType.TOOL_CALL_END,
@@ -34,6 +48,7 @@ def tool_end_event(msg_id: str, name: str, *, ok: bool, started_at: float, conte
             duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
             preview=preview_of(content) if ok else None,
             error=reason or None,
+            url=url,
         ),
     )
 
