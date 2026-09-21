@@ -1074,11 +1074,14 @@ class RoutineDirectiveTests(SimpleTestCase):
         global MessageDirectives
         from chat.services import MessageDirectives
 
-    def test_the_first_standalone_slash_token_is_the_routine_and_is_stripped(self):
+    def test_the_first_standalone_slash_token_is_the_candidate_and_the_text_keeps_it(self):
+        # The token comes out only once the project says it names a routine, so
+        # the parse offers both readings and send_message picks one.
         d = MessageDirectives("@Sara /weekly-digest last week")
-        self.assertEqual((d.routine_name, d.clean_message, d.mention_names), ("weekly-digest", "@Sara last week", ["Sara"]))
+        self.assertEqual((d.routine_name, d.message_without_routine, d.mention_names), ("weekly-digest", "@Sara last week", ["Sara"]))
+        self.assertEqual(d.clean_message, "@Sara /weekly-digest last week")
         d = MessageDirectives("/weekly-digest @Sara")
-        self.assertEqual((d.routine_name, d.clean_message), ("weekly-digest", "@Sara"))
+        self.assertEqual((d.routine_name, d.message_without_routine), ("weekly-digest", "@Sara"))
 
     def test_paths_swarm_and_mid_word_slashes_are_not_routines(self):
         d = MessageDirectives("@Sara look at /etc/hosts and 50/50 odds")
@@ -1091,14 +1094,14 @@ class RoutineDirectiveTests(SimpleTestCase):
 
     def test_only_the_first_token_counts_and_the_other_directives_still_parse(self):
         d = MessageDirectives("@Sara /weekly-digest /other sales @chart")
-        self.assertEqual((d.routine_name, d.output_type, d.clean_message), ("weekly-digest", "chart", "@Sara /other sales"))
+        self.assertEqual((d.routine_name, d.output_type, d.message_without_routine), ("weekly-digest", "chart", "@Sara /other sales"))
         d = MessageDirectives("@Sara @session /meeting-notes today")
         self.assertTrue(d.has_session_open)
         self.assertEqual(d.routine_name, "meeting-notes")
 
 
 class RoutineSendTests(MentionRightFixture):
-    """`@Sara /weekly-digest …` runs Sara with the routine; an unknown routine refuses her."""
+    """`@Sara /weekly-digest …` runs Sara with the routine; a /word that names none is text."""
 
     def setUp(self):
         super().setUp()
@@ -1114,21 +1117,25 @@ class RoutineSendTests(MentionRightFixture):
         self.assertEqual(kwargs["user_message"], "@Sara last week")
         self.assertEqual(self.refused_events(publish), [])
 
-    def test_an_unknown_routine_refuses_the_mentioned_personas_and_posts_the_message(self):
-        r, trigger, _swarm, publish = self.send(self.sara, "@Sara /no-such-thing hello")
+    def test_a_slash_word_that_is_not_a_routine_is_left_in_the_message(self):
+        # A path, a quarter, a fraction: "@Sara read the file at /tmp" used to
+        # strip "/tmp" and refuse Sara outright (audit, 2026-09-21).
+        r, trigger, _swarm, publish = self.send(self.sara, "@Sara read the file at /tmp")
         self.assertEqual(r.status_code, 200, r.content)
-        refusals = r.json()["refusals"]
-        self.assertEqual([(x["name"], x["code"]) for x in refusals], [("Sara", "unknown_routine")])
-        self.assertIn("/no-such-thing", refusals[0]["message"])
-        trigger.assert_not_called()
-        self.assertEqual(len(self.refused_events(publish)), 1)
+        self.assertEqual(r.json()["refusals"], [])
+        kwargs = trigger.call_args.kwargs
+        self.assertIsNone(kwargs["routine"])
+        self.assertEqual(kwargs["user_message"], "@Sara read the file at /tmp")
+        self.assertEqual(self.refused_events(publish), [])
 
-    def test_a_routine_from_another_project_is_unknown_here(self):
+    def test_a_routine_from_another_project_is_not_one_here(self):
         from intelligence.services import create_routine
         create_routine(self.company, self.p2, self.owner, {"name": "elsewhere", "title": "Elsewhere", "purpose": "", "instructions": "x"})
         r, trigger, _swarm, _publish = self.send(self.sara, "@Sara /elsewhere go")
-        self.assertEqual(r.json()["refusals"][0]["code"], "unknown_routine")
-        trigger.assert_not_called()
+        self.assertEqual(r.json()["refusals"], [])
+        self.assertIsNone(trigger.call_args.kwargs["routine"])
+        # The word stays in what Sara is asked, because here it is just a word.
+        self.assertEqual(trigger.call_args.kwargs["user_message"], "@Sara /elsewhere go")
 
     def test_a_slash_token_without_a_mention_is_just_a_message(self):
         r, trigger, _swarm, publish = self.send(self.sara, "/weekly-digest is what we call it")

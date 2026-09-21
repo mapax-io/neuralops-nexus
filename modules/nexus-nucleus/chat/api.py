@@ -259,15 +259,13 @@ async def send_message(
         logger.warning("[chat/api] mention refused user=%s topic=%s personas=%s", user.id, topic_id, [p.name for p in mentioned_personas])
         mentioned_personas = []
 
-    # 5c. A /routine token names a team method in this project. Unknown here,
-    #     the personas it was aimed at do not answer (the message still posts).
+    # 5c. A /routine token names a team method in this project -- if one answers
+    #     to that name. If none does, the token was just a word: it stays in the
+    #     message as typed and nobody is refused over it.
     routine = None
     if directives.routine_name:
         routine = await _get_routine_by_name(project, directives.routine_name)
-    unknown_routine = directives.routine_name is not None and routine is None
-    if unknown_routine and mentioned_personas:
-        refusals = _refuse(mentioned_personas, "unknown_routine", f"No routine called /{directives.routine_name} in this project.")
-        mentioned_personas = []
+    clean_message = directives.message_without_routine if routine else directives.clean_message
 
     # 6. Apply session routing priority
 
@@ -317,15 +315,15 @@ async def send_message(
             centrifugo_channel, {**sys_msg, "type": "message"}
         ))
         # Only trigger personas if there is actual content beyond the @mention
-        if directives.message_without_mentions():
+        if directives.message_without_mentions(clean_message):
             refusals = await _trigger_personas(mentioned_personas, company, project, topic,
-                                                topic_id, msg, directives.clean_message,
+                                                topic_id, msg, clean_message,
                                                 directives.output_type, directives.swarm, routine, user) or refusals
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
         refusals = await _trigger_personas(mentioned_personas, company, project, topic,
-                                            topic_id, msg, directives.clean_message,
+                                            topic_id, msg, clean_message,
                                             directives.output_type, directives.swarm, routine, user) or refusals
 
     else:
@@ -338,15 +336,13 @@ async def send_message(
             if session_personas and not await _can(user, "persona.mention", obj=topic):
                 refusals = _refuse(session_personas, "no_right", "You can't call personas in this topic.")
                 logger.warning("[chat/api] session auto-trigger refused user=%s topic=%s", user.id, topic_id)
-            elif session_personas and unknown_routine:
-                refusals = _refuse(session_personas, "unknown_routine", f"No routine called /{directives.routine_name} in this project.")
             else:
                 logger.warning(
                     "[chat/api] session auto-trigger personas=%s",
                     [p.name for p in session_personas],
                 )
                 refusals = await _trigger_personas(session_personas, company, project, topic,
-                                                    topic_id, msg, directives.clean_message,
+                                                    topic_id, msg, clean_message,
                                                     directives.output_type, directives.swarm, routine, user) or refusals
         # Rule 5: no mention, no session — human-only message, nothing to do
 

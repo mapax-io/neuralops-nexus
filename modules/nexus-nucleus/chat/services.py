@@ -204,6 +204,10 @@ def extract_output_type(message: str) -> tuple[str, str]:
 
 # A routine token: the FIRST standalone /name (lowercase letters, digits,
 # hyphens) -- "/etc/hosts" and "50/50" are not, and /swarm was stripped first.
+# This finds a CANDIDATE only. Whether it IS a routine is a question for the
+# project: "read the file at /tmp" and "compare /q3" are ordinary sentences, and
+# treating every such token as a routine stripped it out of the message and
+# refused the persona outright (audit, 2026-09-21).
 _ROUTINE_RE = re.compile(r"(?:(?<=\s)|^)/([a-z0-9-]+)(?=\s|$)")
 
 
@@ -256,8 +260,10 @@ class MessageDirectives:
         raw = re.sub(r'\s*/swarm\s*', ' ', raw).strip() if self.swarm else raw
         self.has_session_open, self.is_session_close, after_session = extract_session_directive(raw)
         self.output_type, self.clean_message = extract_output_type(after_session)
-        # /routine-name -- resolved by send_message in the topic's project.
-        self.routine_name, self.clean_message = extract_routine(self.clean_message)
+        # /routine-name -- resolved by send_message in the topic's project. The
+        # token stays in clean_message until it resolves; message_without_routine
+        # is the text to use once it has.
+        self.routine_name, self.message_without_routine = extract_routine(self.clean_message)
 
         names = _MENTION_RE.findall(self.clean_message)
         self.mention_names = [n for n in names if n.lower() not in _RESERVED_MENTIONS]
@@ -266,11 +272,12 @@ class MessageDirectives:
     def has_mentions(self) -> bool:
         return bool(self.mention_names)
 
-    def message_without_mentions(self) -> str:
-        """clean_message with every @mention stripped too -- used to check
-        whether there's any actual content left to send to the AI once
-        the @PersonaName addressing is removed."""
-        return _MENTION_RE.sub("", self.clean_message).strip()
+    def message_without_mentions(self, text: str | None = None) -> str:
+        """`text` (default clean_message) with every @mention stripped too -- used
+        to check whether there's any actual content left to send to the AI once
+        the @PersonaName addressing is removed. send_message passes the text it
+        settled on, which has the routine token out of it only if it was one."""
+        return _MENTION_RE.sub("", self.clean_message if text is None else text).strip()
 
 
 # ── Centrifugo publish ─────────────────────────────────────────────────────────
