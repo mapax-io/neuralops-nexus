@@ -891,3 +891,121 @@ class LiveBrowserTests(_MentionRightFixture):
         with self.settings(INTERNAL_API_KEY="shared-secret"):
             r = self.call("post", f"/api/v1/projects/{uuid.uuid4()}/browser/session/", self.owner, {})
         self.assertEqual(r.status_code, 404, r.content)
+
+
+class DeliverableTests(_MentionRightFixture):
+    """W10: what a persona produced and the team kept — by title, versioned, never overwritten."""
+
+    def setUp(self):
+        super().setUp()
+        from nucleus.models import ChatMessage
+        self.chart = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1, content='{"type":"line","labels":[]}',
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=1,
+            metadata={"persona_id": "x", "render_as": "chart", "output_type": "chart"},
+        )
+        self.path = f"/api/v1/projects/{self.p1.id}/deliverables/"
+
+    def keep(self, user, title, message=None):
+        return self.call("post", self.path, user, {"message_id": str((message or self.chart).id), "title": title})
+
+    def test_keeping_needs_the_right_and_takes_the_reply_s_own_kind_and_content(self):
+        # deliverable.manage is Member-tier in the registry — a Member curates
+        # what the team keeps; a Viewer does not.
+        self.assertEqual(self.keep(self.vera, "Q3 revenue").status_code, 403)
+        r = self.keep(self.sara, "Q3 revenue")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["created_by_id"], str(self.sara.id))
+        r = self.keep(self.owner, "Q3 revenue")
+        self.assertEqual(r.status_code, 200, r.content)
+        out = r.json()
+        self.assertEqual((out["title"], out["kind"], out["version"]), ("Q3 revenue", "chart", 2))
+        self.assertEqual(out["content"], self.chart.content)
+        self.assertEqual(out["source_message_id"], str(self.chart.id))
+        self.assertEqual(out["created_by_id"], str(self.owner.id))
+
+    def test_the_same_name_again_is_a_new_version_and_both_stay(self):
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 1)
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 2)
+        self.assertEqual(self.keep(self.owner, "Churn").json()["version"], 1)
+        rows = self.call("get", self.path, self.sara).json()
+        self.assertEqual([(d["title"], d["version"]) for d in rows], [("Churn", 1), ("Q3 revenue", 2), ("Q3 revenue", 1)])
+        # The list leaves the content out; opening one carries it.
+        self.assertIsNone(rows[0].get("content"))
+        one = self.call("get", f"{self.path}{rows[1]['id']}/", self.sara).json()
+        self.assertEqual(one["content"], self.chart.content)
+        # "latest" is one row per name.
+        latest = self.call("get", f"{self.path}?latest=1", self.sara).json()
+        self.assertEqual([(d["title"], d["version"]) for d in latest], [("Churn", 1), ("Q3 revenue", 2)])
+
+    def test_removing_a_version_leaves_the_others_and_frees_its_number(self):
+        self.keep(self.owner, "Q3 revenue")
+        second = self.keep(self.owner, "Q3 revenue").json()
+        self.assertEqual(self.call("delete", f"{self.path}{second['id']}/", self.vera).status_code, 403)
+        self.assertEqual(self.call("delete", f"{self.path}{second['id']}/", self.sara).status_code, 204)
+        rows = self.call("get", self.path, self.owner).json()
+        self.assertEqual([(d["title"], d["version"]) for d in rows], [("Q3 revenue", 1)])
+        # The unique constraint only counts live rows, so the next keep can reuse the number.
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 2)
+
+    def test_two_keeps_of_one_name_at_the_same_moment_do_not_500(self):
+        # next_version() reads, create() writes, and the unique constraint sits
+        # between them. A stale version number is retried; a number that stays
+        # taken answers 409, never a bare IntegrityError.
+        from unittest.mock import patch
+        from workspace import deliverables
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 1)
+        real = deliverables.next_version
+        answers = iter([1, 2])   # the first read is stale, the retry is right
+        with patch.object(deliverables, "next_version", side_effect=lambda *a, **k: next(answers, real(*a, **k))):
+            r = self.keep(self.owner, "Q3 revenue")
+        self.assertEqual((r.status_code, r.json()["version"]), (200, 2), r.content)
+        with patch.object(deliverables, "next_version", return_value=1):
+            r = self.keep(self.owner, "Q3 revenue")
+        self.assertEqual(r.status_code, 409, r.content)
+        self.assertIn("same moment", r.json()["detail"])
+        # Nothing half-written either way.
+        from nucleus.models import Deliverable
+        self.assertEqual(sorted(Deliverable.objects.filter(project=self.p1, is_active=True).values_list("version", flat=True)), [1, 2])
+
+    def test_the_list_never_loads_content_and_is_capped(self):
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+        from workspace import deliverables
+        for i in range(4):
+            self.keep(self.owner, f"Chart {i}")
+        with CaptureQueriesContext(connection) as queries:
+            rows = deliverables.list_deliverables(self.p1)
+            out = [deliverables.summary(r) for r in rows]
+        self.assertEqual(len(out), 4)
+        self.assertTrue(all("content" not in d for d in out))
+        # One query for the rows: summary() must not fetch the deferred column per row.
+        sql = " ".join(q["sql"] for q in queries.captured_queries)
+        self.assertNotIn('"content"', sql)
+        self.assertEqual(len(queries.captured_queries), 1, [q["sql"][:80] for q in queries.captured_queries])
+        self.assertEqual(len(deliverables.list_deliverables(self.p1, limit=2)), 2)
+
+    def test_what_cannot_be_kept(self):
+        from nucleus.models import ChatMessage
+        self.assertEqual(self.keep(self.owner, "   ").status_code, 400)
+        self.assertEqual(self.keep(self.owner, "x" * 121).status_code, 400)
+        blank = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1, content="",
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=2,
+            metadata={"render_as": "text"},
+        )
+        self.assertEqual(self.keep(self.owner, "Nothing", blank).status_code, 400)
+        import uuid
+        r = self.call("post", self.path, self.owner, {"message_id": str(uuid.uuid4()), "title": "Ghost"})
+        self.assertEqual(r.status_code, 404)
+        # Another project's reply cannot be kept into this one, whatever the
+        # person's rights there: the lookup is scoped to the project in the path.
+        from nucleus.models import Channel, ChatTopic
+        other_channel = Channel.objects.create(company=self.company, project=self.p2, name="general", slug="g2")
+        other_topic = ChatTopic.objects.create(company=self.company, project=self.p2, channel=other_channel, title="t", slug="t-p2")
+        elsewhere = ChatMessage.objects.create(
+            company=self.company, project=self.p2, topic=other_topic, content="another project's chart",
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=1,
+            metadata={"render_as": "chart"},
+        )
+        self.assertEqual(self.keep(self.owner, "Elsewhere", elsewhere).status_code, 404)

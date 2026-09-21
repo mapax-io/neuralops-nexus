@@ -37,6 +37,7 @@ from .workspace import (
     Channel,
     ChatTopic,
     ChatMessage,
+    Deliverable,
     ChatReadMarker,
     ChatReaction,
     ChatSession,

@@ -195,3 +195,24 @@ class AvailablePersonaOut(Schema):
     # REMOVED: source_type -- the model/agent discriminator went away with
     # AIAgent. A persona's "agent-ness" is now emergent (does it have MCP
     # servers attached), and this picker does not need it.
+
+
+# ── Deliverables (W10) ────────────────────────────────────────────────────────
+
+class DeliverableKeepIn(Schema):
+    """Keep a reply: which message, under what name. The kind and content come from the message."""
+    message_id: str
+    title: str
+
+
+class DeliverableOut(Schema):
+    id: str
+    project_id: str
+    title: str
+    kind: str                       # html | chart | table | form | text
+    version: int
+    content: Optional[str] = None   # absent from the list, present when one is opened
+    source_message_id: Optional[str] = None
+    created_by_id: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: str
