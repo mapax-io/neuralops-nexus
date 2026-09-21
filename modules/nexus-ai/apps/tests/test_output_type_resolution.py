@@ -135,10 +135,11 @@ def test_registry_covers_every_directive_the_other_side_offers():
     """
     nucleus's _OUTPUT_TYPE_KEYWORDS and the composer's OUTPUT_DIRECTIVES offer
     exactly these eight. A name missing here resolves to unknown and the user's
-    directive silently does nothing.
+    directive silently does nothing. `preflight` is the one type nobody types:
+    nucleus sets it for a gated persona's planning turn (apps/managers/preflight.py).
     """
     assert set(OutputTypeRegistry.names()) == {
-        "text", "html", "chart", "table", "diagram", "form", "terminal", "code",
+        "text", "html", "chart", "table", "diagram", "form", "terminal", "code", "preflight",
     }
 
 

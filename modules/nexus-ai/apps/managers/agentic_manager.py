@@ -34,6 +34,7 @@ from apps.schemas.trigger import (
 )
 from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry, resolve_output_spec
+from apps.managers.preflight import plan_turn
 from apps.output_types.markers import parse_output_markers
 from apps.output_types.recovery import finalise_reply
 from apps.managers.model_info import context_window_for
@@ -55,6 +56,11 @@ class NewImprovedAgenticManager:
 
     async def run(self, job: TriggerJob) -> AsyncIterator[AgentEvent]:
         persona = await nucleus_client.resolve_persona(job.persona_id)
+        # Preflight: a gated persona plans first, with no tools; an approved plan
+        # runs with the tools back on (apps/managers/preflight.py).
+        persona, output_type = plan_turn(job, persona)
+        if output_type != job.output_type:
+            job = job.model_copy(update={"output_type": output_type})
 
         history = await nucleus_client.fetch_history(
             topic_id=job.topic_id, exclude_message_id=job.user_message_id

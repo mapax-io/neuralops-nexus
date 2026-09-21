@@ -317,3 +317,33 @@ OutputTypeRegistry.register(
         ),
     )
 )
+
+
+# Preflight: what a gated persona would do, as a plan for a person to approve,
+# adjust or decline before any tool runs. The app renders it as a card with
+# the decision controls; the keys mirror what the app reads.
+OutputTypeRegistry.register(
+    OutputTypeSpec(
+        name="preflight",
+        render_as="preflight",
+        label="Preflight",
+        icon="clipboard-check",
+        system_instruction=(
+            "You are proposing, not doing. No tool is available on this turn; do not pretend to run one. "
+            "Lay out exactly what you would do so a person can approve, adjust or decline it.\n\n"
+            "OUTPUT FORMAT — your response must be exactly this structure, nothing else:\n\n"
+            "<<<OUTPUT:preflight>>>\n"
+            "{ ...the plan as JSON... }\n"
+            "<<<END_OUTPUT>>>\n\n"
+            "Begin with <<<OUTPUT:preflight>>> on the very first line and end with <<<END_OUTPUT>>> on the very "
+            "last line. No text before or after the markers, no markdown fences.\n\n"
+            "The plan uses exactly these keys and no others:\n"
+            "{\n"
+            '  "summary": "one or two sentences: what you will achieve and how",\n'
+            '  "steps": [ { "title": "one step, in the order you would take it", "tools": ["tool names this step uses, if any"], "writes": true | false } ],  (at most 12 steps; writes = the step changes files, systems or data outside this conversation)\n'
+            '  "risks": ["anything the approver should weigh: irreversible effects, cost, uncertainty"]  (may be empty)\n'
+            "}\n"
+        ),
+        example_prompts=[],
+    )
+)
