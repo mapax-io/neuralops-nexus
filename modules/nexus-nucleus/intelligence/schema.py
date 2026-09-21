@@ -419,3 +419,32 @@ class RecallEntryOut(Schema):
 class RecallPatchIn(Schema):
     kind: Optional[str] = None
     text: Optional[str] = None
+
+
+# ── Catalogues (W11, W18) ─────────────────────────────────────────────────────
+# Content, not records: both are hand-kept modules served as-is, so the app can
+# offer "here is what people usually add" without anyone reading a README.
+
+class MCPCatalogEntryOut(Schema):
+    id: str
+    title: str
+    description: str
+    category: str
+    server_type: str
+    transport: str
+    command: Optional[str] = None
+    url: Optional[str] = None
+    auth_type: str
+    needs: list[str] = []      # what to have ready BEFORE adding it; never a secret
+    docs: str = ""
+
+
+class PersonaCatalogEntryOut(Schema):
+    id: str
+    name: str
+    role: str
+    purpose: str
+    system_prompt: str
+    capabilities: list[str] = []
+    routines: list[str] = []
+    acts_after_approval: bool = False

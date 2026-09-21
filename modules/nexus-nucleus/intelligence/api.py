@@ -42,6 +42,9 @@ from .schema import (
 from . import services as svc
 from .schema import RoutineIn, RoutinePatchIn, RoutineOut
 from .schema import RecallEntryOut, RecallPatchIn, RecallSourceOut
+from .schema import MCPCatalogEntryOut, PersonaCatalogEntryOut
+from intelligence import mcp_catalog as mcp_catalog_content
+from intelligence import persona_catalog as persona_catalog_content
 from . import recall as recall_svc
 
 router = Router(tags=["Intelligence"], auth=SupabaseBearer())
@@ -655,6 +658,28 @@ def list_ai_request_logs(request):
 
 
 # ── Output Types (M7) ─────────────────────────────────────────────────────────
+
+# ── Catalogues (W11 tool catalog, W18 persona catalogue) ─────────────────────
+# Static content, served so the app can pre-fill the dialogs a person already
+# uses. Nothing is created here and nothing is fetched at runtime.
+
+@router.get("/mcp-catalog/", response=List[MCPCatalogEntryOut])
+def mcp_catalog(request):
+    """Tool servers worth adding. Reading it needs the right that lists servers."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "mcp_server.list", obj=company):
+        raise HttpError(403, "You don't have permission to see tool servers.")
+    return mcp_catalog_content.catalog()
+
+
+@router.get("/persona-catalog/", response=List[PersonaCatalogEntryOut])
+def persona_catalog(request):
+    """Roles a team usually wants. Reading it needs the right that lists personas."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "persona.list", obj=company):
+        raise HttpError(403, "You don't have permission to see personas.")
+    return persona_catalog_content.catalog()
+
 
 @router.get("/output-types/")
 def list_output_types(request):
