@@ -853,3 +853,41 @@ class TerminalTests(_MentionRightFixture):
         with self.settings(INTERNAL_API_KEY=""):
             r = self.open_session(self.owner, self.p1)
         self.assertEqual(r.status_code, 503, r.content)
+
+
+class LiveBrowserTests(_MentionRightFixture):
+    """The live browser: a signed ticket for whoever holds project.browser, and nothing without it."""
+
+    def open_session(self, user, project, body=None):
+        return self.call("post", f"/api/v1/projects/{project.id}/browser/session/", user, body or {"width": 1440, "height": 900, "url": "https://example.com"})
+
+    def test_the_right_is_checked_and_the_ticket_carries_the_size_and_first_page(self):
+        import base64, hashlib, hmac, json
+        r = self.open_session(self.sara, self.p1)
+        # A member reads the project; a browser running on the server is an admin's act.
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertIn("permission", r.json()["detail"])
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 200, r.content)
+        body = r.json()
+        self.assertEqual((body["path"], body["expires_in"]), ("/browser/ws", 60))
+        payload, signature = body["ticket"].rsplit(".", 1)
+        self.assertEqual(signature, hmac.new(b"shared-secret", payload.encode(), hashlib.sha256).hexdigest())
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["project_id"], str(self.p1.id))
+        self.assertEqual(claims["user_id"], str(self.owner.id))
+        self.assertEqual((claims["width"], claims["height"], claims["url"]), (1440, 900, "https://example.com"))
+        self.assertGreater(claims["exp"], 0)
+
+    def test_a_server_with_no_worker_key_says_so_rather_than_handing_out_a_ticket(self):
+        with self.settings(INTERNAL_API_KEY=""):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 503, r.content)
+        self.assertIn("worker", r.json()["detail"])
+
+    def test_a_project_of_another_company_is_not_found(self):
+        import uuid
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.call("post", f"/api/v1/projects/{uuid.uuid4()}/browser/session/", self.owner, {})
+        self.assertEqual(r.status_code, 404, r.content)

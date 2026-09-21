@@ -800,6 +800,23 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   the creator's (W22). Rate limiting extends the process's existing shared store (`chat/stop_signals.py` gained
   `incr` and `signal_store()`) rather than opening a second Redis client; a store hiccup never blocks a fire.
   Server `0.6.1` (additive).
+- **The live browser (owner's ask, 2026-09-21).** The Web pane's iframe cannot show most of the web: google.com,
+  github.com and the rest send `X-Frame-Options` / `frame-ancestors`, and the BROWSER enforces that — no client
+  code can override it, which is why the pane showed "refused to connect". The only way to put the real web beside
+  a chat is to run a real browser somewhere and stream it, so the server now runs one: Chromium in the worker
+  image (`neuralops/Dockerfile`, `--build-arg BROWSER=0` leaves it out, ~450 MB), one browser per server, one
+  isolated context per session, one Playwright page per TAB, frames out as JPEG over Chromium's own screencast,
+  mouse and keyboard back in (`modules/nexus-ai/apps/managers/browser.py`, `apps/routers/browser.py`, WS
+  `/api/v1/browser/ws` exposed by nginx as `/browser/ws` in both profiles). Tabs, history, forms, logins and
+  JavaScript work because it IS a browser; popups open as tabs.
+  **What it may reach is the point:** the browser sits INSIDE the deployment, so by default it refuses any private
+  address — every request, not just the address bar (`BROWSER_ALLOW_PRIVATE_NETWORK=false`, loopback, RFC1918,
+  link-local, `.local`/`.internal`, cloud metadata) — and only `http`/`https` (a `javascript:` or `file:` address
+  is refused, never rewritten). The right is `project.browser`, Admin-tier for the same reason `project.terminal`
+  is. Nucleus signs the same short-lived ticket the terminal uses (the helpers now live in
+  `apps/managers/tickets.py`, shared). The app draws frames on a canvas with a real tab strip
+  (`live-browser-pane.tsx`); a server built without the engine answers 4503 and the pane says so, and the old
+  iframe Web pane stays for what it is good at. Server `0.7.0` (MINOR: a new capability).
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

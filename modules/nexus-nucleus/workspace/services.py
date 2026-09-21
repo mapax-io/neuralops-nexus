@@ -130,6 +130,39 @@ def open_terminal_session(project, user) -> dict:
     return {"ticket": ticket, "path": TERMINAL_WS_PATH, "expires_in": TERMINAL_TICKET_TTL}
 
 
+BROWSER_WS_PATH = "/browser/ws"
+
+
+class BrowserError(Exception):
+    """A session that cannot be opened; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def open_browser_session(project, user, *, width: int = 1280, height: int = 800, url: str = "") -> dict:
+    """
+    A ticket for one live-browser session: a real Chromium on the server whose
+    picture the app draws and whose mouse and keyboard it drives. Nothing starts
+    here -- the worker opens it when the app connects with this ticket.
+
+    Ticketed rather than header-authenticated for the same reason the terminal
+    is: a WebSocket in a browser cannot carry an Authorization header.
+    """
+    if not getattr(settings, "INTERNAL_API_KEY", ""):
+        raise BrowserError(503, "The worker is not configured on this server.")
+    logger.info("[browser] session user=%s project=%s", user.id, project.id)
+    ticket = sign_terminal_ticket(
+        {
+            "project_id": str(project.id), "project_name": project.name, "user_id": str(user.id),
+            "width": int(width), "height": int(height), "url": (url or "")[:2000],
+        },
+        settings.INTERNAL_API_KEY,
+    )
+    return {"ticket": ticket, "path": BROWSER_WS_PATH, "expires_in": TERMINAL_TICKET_TTL}
+
+
 def provision_project_folder_and_mcp(project):
     """
     Create the project's folder on disk and its default tool capabilities.
