@@ -32,6 +32,11 @@ class MessageOut(Schema):
     output_type: str = "text"     # M7: "text" | "chart" | "code" | "table" | ...
     stopped: bool = False         # the reader ended the reply; content is what streamed
     status: str = "completed"     # pending | completed | failed — a failed reply's content is its reason
+    # Team AI operations (additive; the app feature-detects each):
+    activity_trail: list = []                 # [{tool, ok, duration_ms, preview}] — what the persona did
+    preflight: Optional[dict] = None          # a proposed run awaiting a decision, and the decision
+    answered_by_model: Optional[str] = None   # set when a fallback model answered
+    usage: Optional[dict] = None              # {prompt_tokens, output_tokens, context_window} from the worker
     sender_name: Optional[str] = None
     sender_id: Optional[str] = None
     sender_avatar: Optional[str] = None  # #148 -- absolute URL, or None

@@ -6,7 +6,7 @@ when to publish; these pin what it publishes.
 """
 from django.test import SimpleTestCase
 
-from chat.events import TOOL_ACTIVITY_LABELS, tool_activity_event
+from chat.events import TOOL_ACTIVITY_LABELS, tool_activity_end_event, tool_activity_event
 
 
 def call(name):
@@ -433,7 +433,7 @@ class FakeClient:
 
 
 @override_settings(NEXUS_AI_URL="http://worker.test", INTERNAL_API_KEY="k")
-class RelayTests(MentionRightFixture):
+class RelayFixture(MentionRightFixture):
     def setUp(self):
         super().setUp()
         self.signals = StopSignals(MemoryStore())
@@ -480,6 +480,8 @@ class RelayTests(MentionRightFixture):
         await self.signals.request_stop(str(pending.id))
         return pending
 
+
+class RelayTests(RelayFixture):
     async def test_a_finished_reply_is_saved_with_its_type_and_announced(self):
         await self.run_single(FakeResponse(sse(
             {"type": "message_delta", "delta": "{\"type\""},
@@ -577,3 +579,133 @@ class RelayTests(MentionRightFixture):
         self.assertEqual((sub.status, sub.content, sub.metadata.get("stopped")), ("completed", "Bob was saying", True))
         done = [e for e in self.events("message_done") if e["id"] == str(sub.id)][0]
         self.assertTrue(done["stopped"])
+
+
+# ── reserved wire fields for the team AI operations work ─────────────────────
+# Present with defaults from day one, so an app can ship its parsers before
+# the capabilities that fill them. Additive only.
+from chat.services import _serialise  # noqa: E402
+
+
+class WireFieldDefaultsTests(MentionRightFixture):
+    def message(self, **metadata):
+        return ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1, sender=self.persona_sara.identity_user,
+            content="hi", sequence=1, metadata={"persona_id": str(self.persona_sara.id), **metadata},
+        )
+
+    def test_defaults_when_nothing_has_filled_them(self):
+        out = _serialise(self.message())
+        self.assertEqual(out["activity_trail"], [])
+        self.assertIsNone(out["preflight"])
+        self.assertIsNone(out["answered_by_model"])
+        self.assertIsNone(out["usage"])
+
+    def test_values_pass_through_from_metadata(self):
+        out = _serialise(self.message(
+            activity_trail=[{"tool": "web_search", "ok": True, "duration_ms": 120, "preview": "…"}],
+            preflight={"status": "proposed"}, answered_by_model="gpt-4o-mini (fallback)",
+            usage={"prompt_tokens": 900, "output_tokens": 12, "context_window": 200000},
+        ))
+        self.assertEqual(out["activity_trail"][0]["tool"], "web_search")
+        self.assertEqual(out["preflight"]["status"], "proposed")
+        self.assertEqual(out["answered_by_model"], "gpt-4o-mini (fallback)")
+        self.assertEqual(out["usage"]["context_window"], 200000)
+
+
+class RelayUsageTests(RelayFixture):
+    """The worker's usage on message_done is kept on the row and republished."""
+
+    async def test_usage_on_done_is_stored_and_republished(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_delta", "delta": "hi"},
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text",
+             "prompt_tokens": 7366, "output_tokens": 104, "context_window": 1000000},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["usage"], {"prompt_tokens": 7366, "output_tokens": 104, "context_window": 1000000})
+        done = self.events("message_done")[0]
+        self.assertEqual((done["prompt_tokens"], done["output_tokens"], done["context_window"]), (7366, 104, 1000000))
+
+    async def test_a_done_without_usage_stores_none(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertNotIn("usage", row.metadata)
+        self.assertIsNone(self.events("message_done")[0]["prompt_tokens"])
+
+
+# ── the activity trail: every tool call, closed, on the wire and on the row ──
+class ToolActivityEndEventTests(SimpleTestCase):
+    def test_carries_outcome_duration_and_preview(self):
+        ev = tool_activity_end_event("m1", {"tool_result": {"name": "web_search", "ok": True, "duration_ms": 412, "preview": "Canada …", "error": None}})
+        self.assertEqual(ev, {"type": "tool_activity_end", "id": "m1", "tool": "web_search", "ok": True, "duration_ms": 412, "preview": "Canada …", "error": None})
+
+    def test_nothing_to_show_publishes_nothing(self):
+        self.assertIsNone(tool_activity_end_event("m1", {"tool_result": {"name": "", "ok": True, "duration_ms": 1}}))
+        self.assertIsNone(tool_activity_end_event("m1", {}))
+
+
+def tool_pair(name, ok=True, duration_ms=100, preview="…", error=None):
+    return [
+        {"type": "tool_call_start", "tool_call": {"name": name, "args": {}}},
+        {"type": "tool_call_end", "tool_result": {"name": name, "ok": ok, "duration_ms": duration_ms, "preview": preview if ok else None, "error": error}},
+    ]
+
+
+class RelayActivityTrailTests(RelayFixture):
+    async def test_each_call_is_published_as_it_ends_and_kept_on_the_row(self):
+        await self.run_single(FakeResponse(sse(
+            *tool_pair("web_search", preview="Canada GDP …"),
+            *tool_pair("shell", ok=False, duration_ms=30, error="command not allowed"),
+            {"type": "message_done", "content": "done", "output_type": "text", "render_as": "text"},
+        )))
+        ends = self.events("tool_activity_end")
+        self.assertEqual([(e["tool"], e["ok"], e["duration_ms"]) for e in ends], [("web_search", True, 100), ("shell", False, 30)])
+        self.assertEqual(ends[1]["error"], "command not allowed")
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["activity_trail"], [
+            {"tool": "web_search", "ok": True, "duration_ms": 100, "preview": "Canada GDP …", "error": None},
+            {"tool": "shell", "ok": False, "duration_ms": 30, "preview": None, "error": "command not allowed"},
+        ])
+        # and the start events still drive the activity label as before
+        self.assertEqual([e["tool"] for e in self.events("tool_activity")], ["web_search", "shell"])
+
+    async def test_the_trail_is_capped_keeping_the_newest(self):
+        calls = []
+        for i in range(55):
+            calls += tool_pair(f"t{i}")
+        await self.run_single(FakeResponse(sse(*calls, {"type": "message_done", "content": "done", "output_type": "text", "render_as": "text"})))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        trail = row.metadata["activity_trail"]
+        self.assertEqual(len(trail), 50)
+        self.assertEqual((trail[0]["tool"], trail[-1]["tool"]), ("t5", "t54"))
+
+    async def test_a_stopped_run_keeps_its_trail(self):
+        stopper = asyncio.ensure_future(self.stop_the_pending_reply_soon())
+        await self.run_single(FakeResponse(sse(*tool_pair("web_search"), {"type": "message_delta", "delta": "partial"}), hang=True))
+        await stopper
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertTrue(row.metadata.get("stopped"))
+        self.assertEqual([t["tool"] for t in row.metadata["activity_trail"]], ["web_search"])
+
+    async def test_a_failed_run_keeps_its_trail(self):
+        await self.run_single(FakeResponse(sse(*tool_pair("web_search"), {"type": "message_error", "error": "status_code: 429 rate_limit_error"})))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.status, "failed")
+        self.assertEqual([t["tool"] for t in row.metadata["activity_trail"]], ["web_search"])
+
+    async def test_a_swarm_delegate_gets_its_own_trail(self):
+        await self.run_swarm(FakeResponse(sse(
+            *tool_pair("web_search"),
+            {"type": "message_done", "content": "over to Bob", "output_type": "text", "render_as": "text"},
+            {"type": "message_start", "id": "sub-1", "persona_id": str(self.persona_bob.id)},
+            *tool_pair("shell"),
+            {"type": "message_done", "content": "Bob here", "output_type": "text", "render_as": "text"},
+        )))
+        root, sub = await sync_to_async(self.reply_rows)()
+        self.assertEqual([t["tool"] for t in root.metadata["activity_trail"]], ["web_search"])
+        self.assertEqual([t["tool"] for t in sub.metadata["activity_trail"]], ["shell"])
+        ends = self.events("tool_activity_end")
+        self.assertEqual([(e["id"] == str(sub.id), e["tool"]) for e in ends], [(False, "web_search"), (True, "shell")])

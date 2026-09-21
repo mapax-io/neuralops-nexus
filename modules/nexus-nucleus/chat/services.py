@@ -22,7 +22,7 @@ from asgiref.sync import sync_to_async
 import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
-from .events import tool_activity_event
+from .events import tool_activity_end_event, tool_activity_event
 from .stop_signals import StopRequested, stop_signals, stoppable, stoppable_lines
 from .reasons import ORPHANED_RUN_REASON, WORKER_ENDED_EARLY_REASON, explain_ai_error
 
@@ -408,6 +408,8 @@ def update_ai_message(
     render_as: str = "text",
     output_type: str = "text",
     stopped: bool = False,
+    usage: dict | None = None,
+    activity_trail: list | None = None,
 ) -> None:
     """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
@@ -422,6 +424,10 @@ def update_ai_message(
     metadata["output_type"] = output_type
     if stopped:
         metadata["stopped"] = True
+    if usage:
+        metadata["usage"] = usage
+    if activity_trail:
+        metadata["activity_trail"] = activity_trail
 
     ChatMessage.objects.filter(id=message_id).update(
         content=content,
@@ -430,7 +436,7 @@ def update_ai_message(
     )
 
 
-def fail_ai_message(message_id: str, error: str, display_content: str | None = None) -> None:
+def fail_ai_message(message_id: str, error: str, display_content: str | None = None, activity_trail: list | None = None) -> None:
     """
     Mark the AI placeholder message FAILED instead of COMPLETED -- called
     when nexus-ai reports an AgentEvent(type="message_error") (see
@@ -449,6 +455,8 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
         return
     metadata = dict(msg.metadata or {})
     metadata["error_detail"] = error
+    if activity_trail:
+        metadata["activity_trail"] = activity_trail
     ChatMessage.objects.filter(id=message_id).update(
         content=display_content or "Something went wrong generating this response.",
         status=ChatMessage.Status.FAILED,
@@ -456,20 +464,54 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
     )
 
 
-async def end_stopped_reply(channel: str, msg_id: str, content: str) -> None:
+USAGE_FIELDS = ("prompt_tokens", "output_tokens", "context_window")
+# How many closed tool calls a reply keeps on its row: enough to audit a
+# long agentic run, small enough to ride in the message metadata.
+ACTIVITY_TRAIL_MAX = 50
+
+
+def remember_tool_call(trail: list, event: dict) -> None:
+    """Append a worker tool_call_end to a reply's trail, keeping the newest ACTIVITY_TRAIL_MAX."""
+    result = event.get("tool_result") or {}
+    name = (result.get("name") or "").strip()
+    if not name:
+        return
+    trail.append({
+        "tool": name,
+        "ok": bool(result.get("ok")),
+        "duration_ms": int(result.get("duration_ms") or 0),
+        "preview": result.get("preview"),
+        "error": result.get("error"),
+    })
+    del trail[:-ACTIVITY_TRAIL_MAX]
+
+
+def usage_from(event: dict) -> dict | None:
+    """The worker's usage on a message_done event, or None when it sent nothing."""
+    values = {k: event.get(k) for k in USAGE_FIELDS}
+    return values if any(v is not None for v in values.values()) else None
+
+
+def with_usage(payload: dict, usage: dict | None) -> dict:
+    """The three usage fields on a published message_done -- always present, null when unknown."""
+    payload.update({k: (usage or {}).get(k) for k in USAGE_FIELDS})
+    return payload
+
+
+async def end_stopped_reply(channel: str, msg_id: str, content: str, activity_trail: list | None = None) -> None:
     """The reader stopped the run: keep what streamed, tell the topic, drop the signal."""
     try:
-        await sync_to_async(update_ai_message)(msg_id, content, stopped=True)
+        await sync_to_async(update_ai_message)(msg_id, content, stopped=True, activity_trail=activity_trail)
     except Exception as exc:
         logger.warning("[trigger] failed to save stopped message %s: %s", msg_id, exc)
-    await publish_async(channel, {
+    await publish_async(channel, with_usage({
         "type": "message_done",
         "id": msg_id,
         "content": content,
         "output_type": "text",
         "render_as": "text",
         "stopped": True,  # the reader ended it; content is what streamed
-    })
+    }, None))
     await stop_signals().clear(msg_id)
 
 
@@ -580,6 +622,8 @@ async def trigger_ai_response_async(
     embed_description: str | None = None
     ai_error: str | None = None
     ai_error_code: str | None = None
+    usage: dict | None = None
+    activity_trail: list = []
     stopped = False
 
     async def should_stop() -> bool:
@@ -627,6 +671,14 @@ async def trigger_ai_response_async(
                             if activity:
                                 await publish_async(channel, activity)
 
+                        elif event_type == "tool_call_end":
+                            # How the call went -- closes the row above and is
+                            # kept on the message so history shows the trail.
+                            ended = tool_activity_end_event(msg_id, event)
+                            if ended:
+                                await publish_async(channel, ended)
+                            remember_tool_call(activity_trail, event)
+
                         elif event_type == "message_delta":
                             delta = event.get("delta") or ""
                             if delta:
@@ -645,6 +697,7 @@ async def trigger_ai_response_async(
                             final_clean_content = event.get("content")
                             # M8: plain-text description for html/form/terminal embedding
                             embed_description = event.get("embed_description")
+                            usage = usage_from(event)
                             break
 
                         elif event_type == "message_error":
@@ -672,7 +725,7 @@ async def trigger_ai_response_async(
         ai_error = ai_error or f"streaming error: {type(exc).__name__}: {exc}"
 
     if stopped:
-        await end_stopped_reply(channel, msg_id, "".join(streamed_content))
+        await end_stopped_reply(channel, msg_id, "".join(streamed_content), activity_trail)
         return  # nothing complete to embed
 
     # The stream ended with neither message_done nor message_error: the worker
@@ -693,18 +746,20 @@ async def trigger_ai_response_async(
     display_error = (ai_error if ai_error_code == "mcp_reauth_required" else explain_ai_error(ai_error)) if ai_error else None
     try:
         if ai_error:
-            await _fail_ai_message(msg_id, ai_error, display_error)
+            await _fail_ai_message(msg_id, ai_error, display_error, activity_trail)
         else:
             await _update_ai_message(
                 msg_id,
                 save_content,
                 render_as=final_render_as,
                 output_type=final_output_type,
+                usage=usage,
+                activity_trail=activity_trail,
             )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
 
-    await publish_async(channel, {
+    await publish_async(channel, with_usage({
         "type": "message_error" if ai_error else "message_done",
         "id": msg_id,
         # Same friendly copy as fail_ai_message()'s DB write -- the raw
@@ -715,7 +770,7 @@ async def trigger_ai_response_async(
         "output_type": final_output_type,   # M7: e.g. "chart"
         "render_as": final_render_as,        # M7: e.g. "html"
         "stopped": False,                    # a stopped run ends in end_stopped_reply()
-    })
+    }, usage))
 
     # M8: Embed AI response — smart content selection
     # text/code → embed full response; html/form/terminal → embed description only
@@ -847,6 +902,7 @@ async def trigger_ai_swarm_response_async(
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
     active_msg_id = msg_id
     streamed_contents: dict[str, list[str]] = {msg_id: []}
+    trails: dict[str, list] = {msg_id: []}  # one activity trail per (sub-)message
     ai_error: str | None = None
     stopped = False
 
@@ -912,6 +968,7 @@ async def trigger_ai_swarm_response_async(
                                 
                             active_msg_id = current_id
                             streamed_contents[current_id] = []
+                            trails[current_id] = []
                             await publish_async(channel, event)
 
                         elif event_type == "message_delta":
@@ -931,15 +988,18 @@ async def trigger_ai_swarm_response_async(
                             final_output_type = event.get("output_type") or "text"
                             final_render_as = event.get("render_as") or "text"
                             embed_description = event.get("embed_description")
-                            
+                            hop_usage = usage_from(event)
+
                             await _update_ai_message(
                                 active_msg_id,
                                 save_content,
                                 render_as=final_render_as,
                                 output_type=final_output_type,
+                                usage=hop_usage,
+                                activity_trail=trails.get(active_msg_id),
                             )
                             event["id"] = active_msg_id
-                            await publish_async(channel, event)
+                            await publish_async(channel, with_usage(event, hop_usage))
                             
                             # M8: Embed AI response
                             _TEXT_EMBEDDABLE = {"text", "code", "auto"}
@@ -973,6 +1033,12 @@ async def trigger_ai_swarm_response_async(
                             if activity:
                                 await publish_async(channel, activity)
 
+                        elif event_type == "tool_call_end":
+                            ended = tool_activity_end_event(active_msg_id, event)
+                            if ended:
+                                await publish_async(channel, ended)
+                            remember_tool_call(trails.setdefault(active_msg_id, []), event)
+
                         elif event_type == "swarm_transition":
                             event["id"] = active_msg_id
                             await publish_async(channel, event)
@@ -983,7 +1049,7 @@ async def trigger_ai_swarm_response_async(
                                 "[trigger] nexus-ai reported error for msg %s: %s",
                                 active_msg_id, ai_error,
                             )
-                            await _fail_ai_message(active_msg_id, ai_error)
+                            await _fail_ai_message(active_msg_id, ai_error, None, trails.get(active_msg_id))
                             # The single path publishes this; the swarm path used
                             # to fail silently, leaving the client to guess from
                             # stall detection. Same friendly copy, same shape --
@@ -1006,7 +1072,7 @@ async def trigger_ai_swarm_response_async(
         logger.warning("[trigger] streaming error for msg %s: %s: %s", active_msg_id, type(exc).__name__, exc)
 
     if stopped:
-        await end_stopped_reply(channel, active_msg_id, "".join(streamed_contents.get(active_msg_id, [])))
+        await end_stopped_reply(channel, active_msg_id, "".join(streamed_contents.get(active_msg_id, [])), trails.get(active_msg_id))
         if active_msg_id != msg_id:
             await stop_signals().clear(msg_id)
 
@@ -1166,6 +1232,11 @@ def _serialise(msg) -> dict:
         "output_type": metadata.get("output_type", "text"), # M7: semantic type name
         "stopped": bool(metadata.get("stopped")),           # ended by the reader; partial
         "status": msg.status,                                # pending | completed | failed
+        # Team AI operations -- reserved with defaults, filled as each lands.
+        "activity_trail": metadata.get("activity_trail") or [],
+        "preflight": metadata.get("preflight"),
+        "answered_by_model": metadata.get("answered_by_model"),
+        "usage": metadata.get("usage"),
         "sender_name": sender_name,
         "sender_id": str(msg.sender_id) if msg.sender_id else None,
         "sender_avatar": msg.sender.get_avatar_url() if msg.sender else None,  # #148

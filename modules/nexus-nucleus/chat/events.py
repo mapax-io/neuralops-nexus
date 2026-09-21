@@ -43,6 +43,27 @@ def mention_refused_event(msg_id: str, actor_user_id: str, refusals: list[dict])
     return {"type": "mention_refused", "id": msg_id, "actor_user_id": actor_user_id, "refusals": refusals}
 
 
+def tool_activity_end_event(msg_id: str, event: dict) -> dict | None:
+    """
+    The tool_activity_end payload for a worker tool_call_end event: how the
+    call went, so the client can close the row tool_activity opened. None
+    when the event names no tool.
+    """
+    result = event.get("tool_result") or {}
+    name = (result.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "type": "tool_activity_end",
+        "id": msg_id,
+        "tool": name,
+        "ok": bool(result.get("ok")),
+        "duration_ms": int(result.get("duration_ms") or 0),
+        "preview": result.get("preview"),
+        "error": result.get("error"),
+    }
+
+
 def tool_activity_event(msg_id: str, event: dict) -> dict | None:
     """
     The tool_activity payload for a worker tool_call_start event, or None when
