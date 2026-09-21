@@ -130,28 +130,49 @@ class MemoryStore:
 
 
 class RedisStore:
-    def __init__(self, url: str) -> None:
+    """
+    The signals as Redis sees them. The client's connection pool belongs to the
+    event loop it was made on, and this store is a process-wide singleton, so it
+    keeps the loop it built the client on and builds a new one whenever it is
+    used from another: `async_to_sync` (Celery -- a schedule's fire, a runbook's
+    steps) opens a fresh loop per call, and the second call on the old client
+    raises "Event loop is closed" (found live, 2026-09-21, on a runbook's second
+    step). The old client is dropped, never closed: its loop is already gone.
+    """
+
+    def __init__(self, url: str, connect=None) -> None:
         import redis.asyncio as redis
 
-        self._client = redis.from_url(url)
+        self._url = url
+        self._connect = connect or (lambda: redis.from_url(url))
+        self._client = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def client(self):
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._loop is not loop or loop.is_closed():
+            self._client = self._connect()
+            self._loop = loop
+        return self._client
 
     async def set(self, key: str, ttl: int) -> None:
-        await self._client.set(key, "1", ex=ttl)
+        await self.client.set(key, "1", ex=ttl)
 
     async def exists(self, key: str) -> bool:
-        return bool(await self._client.exists(key))
+        return bool(await self.client.exists(key))
 
     async def delete(self, key: str) -> None:
-        await self._client.delete(key)
+        await self.client.delete(key)
 
     async def push(self, key: str, value: str, ttl: int) -> None:
-        async with self._client.pipeline() as pipe:
+        async with self.client.pipeline() as pipe:
             pipe.rpush(key, value)
             pipe.expire(key, ttl)
             await pipe.execute()
 
     async def pop_all(self, key: str) -> list[str]:
-        async with self._client.pipeline() as pipe:
+        async with self.client.pipeline() as pipe:
             pipe.lrange(key, 0, -1)
             pipe.delete(key)
             values, _ = await pipe.execute()

@@ -198,7 +198,9 @@ class MentionRightTests(MentionRightFixture):
 import asyncio
 import json
 
-from chat.stop_signals import MemoryStore, StopRequested, StopSignals, stoppable, stoppable_lines
+from asgiref.sync import async_to_sync
+
+from chat.stop_signals import MemoryStore, RedisStore, StopRequested, StopSignals, stoppable, stoppable_lines
 
 
 class StopSignalTests(SimpleTestCase):
@@ -230,6 +232,55 @@ class StopSignalTests(SimpleTestCase):
             self.assertFalse(await signals.is_stop_requested("m1"))
 
         self.run_async(scenario())
+
+
+class RedisStoreLoopTests(SimpleTestCase):
+    """
+    The signal store is a process-wide singleton and its Redis client belongs to
+    the loop it was made on. Celery opens a NEW loop per `async_to_sync` call --
+    a schedule's fire, every step of a runbook -- so the store must build a new
+    client when the loop changes, or the second call raises "Event loop is
+    closed" (2026-09-21: a runbook's second step failed live this way).
+    """
+
+    def store(self):
+        built = []
+
+        class FakeClient:
+            def __init__(self, loop):
+                self.loop = loop
+
+            async def exists(self, key):
+                if self.loop.is_closed() or self.loop is not asyncio.get_running_loop():
+                    raise RuntimeError("Event loop is closed")
+                return 0
+
+        def connect():
+            client = FakeClient(asyncio.get_event_loop())
+            built.append(client)
+            return client
+
+        return RedisStore("redis://unused", connect=connect), built
+
+    def test_a_new_event_loop_gets_a_new_client(self):
+        store, built = self.store()
+        signals = StopSignals(store)
+        # Two calls the way Celery makes them: a fresh, then-closed loop each time.
+        self.assertFalse(async_to_sync(signals.is_stop_requested)("m1"))
+        self.assertFalse(async_to_sync(signals.is_stop_requested)("m1"))
+        self.assertEqual(len(built), 2)
+        self.assertIsNot(built[0], built[1])
+
+    def test_one_loop_keeps_one_client(self):
+        store, built = self.store()
+        signals = StopSignals(store)
+
+        async def scenario():
+            await signals.is_stop_requested("m1")
+            await signals.is_stop_requested("m2")
+
+        asyncio.run(scenario())
+        self.assertEqual(len(built), 1)
 
 
 # The relay used to look for a stop only when the worker sent a line, so a
