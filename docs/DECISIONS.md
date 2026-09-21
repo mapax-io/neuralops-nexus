@@ -750,6 +750,16 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   `ToolResultData.url` (worker `tool_events.url_of`: `web_fetch`'s http(s) `url`; a search query becomes a Bing
   results page — Bing allows framing, DuckDuckGo does not), relayed on `tool_activity_end` and kept on the trail
   row (`chat/services.py remember_tool_call`). The app's Web pane opens it beside the chat. Server `0.5.7`.
+- **Nudge (W8 part 2, 2026-09-21).** The caller adds to a persona reply that is still running:
+  `POST …/messages/{id}/nudge/ {text ≤ 2000}` (`request_nudge_for_message`: the reply is its caller's to steer —
+  403 for anyone else, 409 once finished) queues it on the signal store (`nx:nudge:{msg_id}`, TTL 600 s; the store
+  gained list ops for Memory and Redis). The worker's `NudgeGate` (`apps/managers/nudges.py`, interactive runs
+  only) polls `GET /internal/messages/{id}/nudges/` after each tool call — pydantic-ai's `after_tool_execute` is
+  the one place a running agent reads new words — appends "[The reader adds while you work: …]" to that tool's
+  result and emits `nudge_taken`; the relay publishes `{type: nudge_taken, id, text}` and keeps `metadata.nudges`
+  (`MessageOut.nudges`). Never lost: when the reply ends or is stopped, `repost_untaken_nudges` posts what the
+  persona never reached as an ordinary message from the nudger. A run without tool calls therefore never takes a
+  nudge (it arrives as a message). pydantic-ai only (the LiteLLM runner is unmaintained, OPEN-ITEMS). Server `0.5.8`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

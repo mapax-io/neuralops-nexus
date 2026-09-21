@@ -11,12 +11,15 @@ use. Requests expire, so a stale click can never kill a later run.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import AsyncIterator, Awaitable, Callable
 
 from django.conf import settings
 
 DEFAULT_TTL_SECONDS = 600
+_NUDGE_KEY = "nx:nudge:{msg_id}"
+NUDGE_TTL_SECONDS = 600
 _KEY = "nx:stop:{msg_id}"
 # How long a click waits, at most, before the relay sees it. One Redis EXISTS
 # per tick per in-flight reply; imperceptible to the reader.
@@ -97,6 +100,7 @@ class MemoryStore:
     def __init__(self, now: Callable[[], float] = time.monotonic) -> None:
         self.now = now
         self._expiry: dict[str, float] = {}
+        self._lists: dict[str, list[str]] = {}
 
     async def set(self, key: str, ttl: int) -> None:
         self._expiry[key] = self.now() + ttl
@@ -112,6 +116,17 @@ class MemoryStore:
 
     async def delete(self, key: str) -> None:
         self._expiry.pop(key, None)
+        self._lists.pop(key, None)
+
+    async def push(self, key: str, value: str, ttl: int) -> None:
+        self._lists.setdefault(key, []).append(value)
+        self._expiry[key] = self.now() + ttl
+
+    async def pop_all(self, key: str) -> list[str]:
+        if not await self.exists(key):
+            self._lists.pop(key, None)
+            return []
+        return self._lists.pop(key, [])
 
 
 class RedisStore:
@@ -129,6 +144,19 @@ class RedisStore:
     async def delete(self, key: str) -> None:
         await self._client.delete(key)
 
+    async def push(self, key: str, value: str, ttl: int) -> None:
+        async with self._client.pipeline() as pipe:
+            pipe.rpush(key, value)
+            pipe.expire(key, ttl)
+            await pipe.execute()
+
+    async def pop_all(self, key: str) -> list[str]:
+        async with self._client.pipeline() as pipe:
+            pipe.lrange(key, 0, -1)
+            pipe.delete(key)
+            values, _ = await pipe.execute()
+        return [v.decode() if isinstance(v, bytes) else v for v in values or []]
+
 
 class StopSignals:
     def __init__(self, store, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> None:
@@ -143,6 +171,20 @@ class StopSignals:
 
     async def clear(self, msg_id: str) -> None:
         await self._store.delete(_KEY.format(msg_id=msg_id))
+
+    # ── Nudges (W8): what the caller adds while the reply runs ──────────────
+    async def add_nudge(self, msg_id: str, nudge: dict) -> None:
+        await self._store.push(_NUDGE_KEY.format(msg_id=msg_id), json.dumps(nudge), NUDGE_TTL_SECONDS)
+
+    async def take_nudges(self, msg_id: str) -> list[dict]:
+        """Every nudge waiting for this reply, in order -- and they wait no more."""
+        out = []
+        for raw in await self._store.pop_all(_NUDGE_KEY.format(msg_id=msg_id)):
+            try:
+                out.append(json.loads(raw))
+            except ValueError:
+                continue
+        return out
 
 
 _signals: StopSignals | None = None

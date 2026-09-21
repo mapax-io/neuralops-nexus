@@ -441,6 +441,7 @@ def update_ai_message(
     preflight: dict | None = None,
     answered_by_model: str | None = None,
     recalled: int | None = None,
+    nudges: list[str] | None = None,
 ) -> None:
     """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
@@ -464,6 +465,8 @@ def update_ai_message(
         metadata["answered_by_model"] = answered_by_model
     if recalled:
         metadata["recalled"] = recalled
+    if nudges:
+        metadata["nudges"] = list(nudges)
     if preflight:
         metadata["preflight"] = preflight
 
@@ -761,10 +764,10 @@ def with_usage(payload: dict, usage: dict | None) -> dict:
     return payload
 
 
-async def end_stopped_reply(channel: str, msg_id: str, content: str, activity_trail: list | None = None) -> None:
+async def end_stopped_reply(channel: str, msg_id: str, content: str, activity_trail: list | None = None, nudges: list[str] | None = None) -> None:
     """The reader stopped the run: keep what streamed, tell the topic, drop the signal."""
     try:
-        await sync_to_async(update_ai_message)(msg_id, content, stopped=True, activity_trail=activity_trail)
+        await sync_to_async(update_ai_message)(msg_id, content, stopped=True, activity_trail=activity_trail, nudges=nudges)
     except Exception as exc:
         logger.warning("[trigger] failed to save stopped message %s: %s", msg_id, exc)
     await publish_async(channel, with_usage({
@@ -904,6 +907,7 @@ async def trigger_ai_response_async(
     usage: dict | None = None
     answered_by_model: str | None = None
     recalled: int | None = None
+    nudges_taken: list[str] = []
     activity_trail: list = []
     stopped = False
 
@@ -959,6 +963,14 @@ async def trigger_ai_response_async(
                             if ended:
                                 await publish_async(channel, ended)
                             remember_tool_call(activity_trail, event)
+
+                        elif event_type == "nudge_taken":
+                            # The caller added to the running reply and the
+                            # persona took it at its next step (W8).
+                            text = (event.get("nudge") or "").strip()
+                            if text:
+                                nudges_taken.append(text)
+                                await publish_async(channel, {"type": "nudge_taken", "id": msg_id, "text": text})
 
                         elif event_type == "approval_requested":
                             # The worker holds a tool call for a person and
@@ -1017,7 +1029,8 @@ async def trigger_ai_response_async(
         ai_error = ai_error or f"streaming error: {type(exc).__name__}: {exc}"
 
     if stopped:
-        await end_stopped_reply(channel, msg_id, "".join(streamed_content), activity_trail)
+        await end_stopped_reply(channel, msg_id, "".join(streamed_content), activity_trail, nudges=nudges_taken)
+        await repost_untaken_nudges(company, project, topic, msg_id, channel)
         return  # nothing complete to embed
 
     # The stream ended with neither message_done nor message_error: the worker
@@ -1060,6 +1073,7 @@ async def trigger_ai_response_async(
                 preflight=preflight,
                 answered_by_model=answered_by_model,
                 recalled=recalled,
+                nudges=nudges_taken,
             )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
@@ -1079,6 +1093,8 @@ async def trigger_ai_response_async(
         "answered_by_model": answered_by_model,
         "recalled": recalled or 0,
     }, usage))
+    # A nudge the persona never reached is a message now, not a lost word.
+    await repost_untaken_nudges(company, project, topic, msg_id, channel)
 
     # M8: Embed AI response — smart content selection
     # text/code → embed full response; html/form/terminal → embed description only
@@ -1561,6 +1577,7 @@ def _serialise(msg) -> dict:
         "approvals": metadata.get("approvals") or [],
         "answered_by_model": metadata.get("answered_by_model"),
         "recalled": int(metadata.get("recalled") or 0),
+        "nudges": metadata.get("nudges") or [],
         "usage": metadata.get("usage"),
         "sender_name": sender_name,
         "sender_id": str(msg.sender_id) if msg.sender_id else None,
@@ -1578,6 +1595,48 @@ def _serialise(msg) -> dict:
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }
+
+
+def request_nudge_for_message(topic, message_id: str, user) -> str:
+    """
+    Whether `user` may add to a reply that is still running here (W8 Nudge):
+    "nudging", or "not_found" / "finished" / "not_owner" as for a stop -- a
+    reply is its caller's to steer. Sync; the caller wraps it.
+    """
+    from nucleus.models import ChatMessage
+
+    msg = ChatMessage.objects.filter(id=message_id, topic=topic).first()
+    if not msg or not (msg.metadata or {}).get("persona_id"):
+        return "not_found"
+    if msg.status != ChatMessage.Status.PENDING:
+        return "finished"
+    owner_id = (msg.metadata or {}).get("triggered_by_id")
+    if owner_id and owner_id != str(user.id):
+        return "not_owner"
+    return "nudging"
+
+
+async def repost_untaken_nudges(company, project, topic, msg_id: str, channel: str) -> int:
+    """
+    Never lost: a nudge the persona did not reach (no tool step came, the
+    reply ended or was stopped) becomes an ordinary message from the person
+    who sent it. Returns how many were posted.
+    """
+    from nucleus.models import User as _User
+    leftovers = await stop_signals().take_nudges(msg_id)
+    posted = 0
+    for nudge in leftovers:
+        user = await sync_to_async(lambda uid: _User.objects.filter(id=uid).first())(nudge.get("user_id"))
+        text = (nudge.get("text") or "").strip()
+        if not user or not text:
+            continue
+        try:
+            msg = await sync_to_async(save_user_message)(company, project, topic, user, text)
+            await publish_async(channel, msg)
+            posted += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[nudge] could not repost a nudge for %s: %s", msg_id, exc)
+    return posted
 
 
 def request_stop_for_message(topic, message_id: str, user=None) -> str:

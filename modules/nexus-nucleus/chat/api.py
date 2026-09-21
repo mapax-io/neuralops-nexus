@@ -46,7 +46,7 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from chat.events import mention_refused_event
-from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut, ToolApprovalDecisionIn, ToolApprovalDecisionOut
+from chat.schema import MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut, ToolApprovalDecisionIn, ToolApprovalDecisionOut, NudgeIn
 from chat import services as chat_svc
 from chat.services import MessageDirectives
 from workspace import services as ws_svc
@@ -502,3 +502,27 @@ async def stop_message(request, project_id: str, channel_id: str, topic_id: str,
         return {"stopping": True}
     await stop_signals().request_stop(message_id)
     return {"stopping": True}
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/nudge/",
+    response={200: dict},
+)
+async def nudge_message(request, project_id: str, channel_id: str, topic_id: str, message_id: str, payload: NudgeIn):
+    """
+    Add to a persona reply that is still running (W8 Nudge): the worker takes
+    it at the persona's next step; one it never reaches is posted as a
+    message when the reply ends. The reply is its caller's to steer.
+    """
+    from .stop_signals import stop_signals
+
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    outcome = await sync_to_async(chat_svc.request_nudge_for_message)(topic, message_id, user)
+    if outcome == "not_found":
+        raise HttpError(404, "Message not found.")
+    if outcome == "not_owner":
+        raise HttpError(403, "Only the person who called the persona can nudge this reply.")
+    if outcome == "finished":
+        raise HttpError(409, "This reply has already finished.")
+    await stop_signals().add_nudge(message_id, {"text": payload.text, "user_id": str(user.id), "name": user.display_name or user.username})
+    return {"queued": True}
