@@ -26,7 +26,6 @@ import ipaddress
 import logging
 import re
 import socket
-import time
 import uuid
 from typing import Any, Callable, Awaitable
 from urllib.parse import urlparse
@@ -227,7 +226,6 @@ class BrowserSession:
         self.context: Any = None
         self.tabs: list[Tab] = []
         self.active: str | None = None
-        self.last_used = time.time()
         self._closed = False
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -456,28 +454,27 @@ class BrowserSession:
             if push_state:
                 await self.push_state()
 
+    # These three say why they did not work, as navigate does: a button that
+    # produces no frame, no message and no change reads as a broken app rather
+    # than a page that would not go there (audit, 2026-09-21).
     async def back(self) -> None:
-        if self.current:
-            try:
-                await self.current.page.go_back(timeout=settings.BROWSER_NAV_TIMEOUT_MS)
-            except Exception:  # noqa: BLE001
-                pass
-            await self.push_state()
+        await self._history_step("go_back")
 
     async def forward(self) -> None:
-        if self.current:
-            try:
-                await self.current.page.go_forward(timeout=settings.BROWSER_NAV_TIMEOUT_MS)
-            except Exception:  # noqa: BLE001
-                pass
-            await self.push_state()
+        await self._history_step("go_forward")
 
     async def reload(self) -> None:
-        if self.current:
-            try:
-                await self.current.page.reload(timeout=settings.BROWSER_NAV_TIMEOUT_MS)
-            except Exception:  # noqa: BLE001
-                pass
+        await self._history_step("reload")
+
+    async def _history_step(self, method: str) -> None:
+        if not self.current:
+            return
+        page, url = self.current.page, self.current.url
+        try:
+            await getattr(page, method)(timeout=settings.BROWSER_NAV_TIMEOUT_MS)
+        except Exception as exc:  # noqa: BLE001
+            raise BrowserError(_readable(exc, url)) from exc
+        finally:
             await self.push_state()
 
     async def resize(self, width: int, height: int) -> None:
