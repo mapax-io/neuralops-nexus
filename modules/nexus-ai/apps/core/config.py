@@ -83,6 +83,8 @@ class Settings(BaseSettings):
     RECALL_REMEMBER_TIMEOUT_SECONDS: float = 15
     # Nudge (W8): the poll after each tool call must not slow the run.
     NUDGE_POLL_TIMEOUT_SECONDS: float = 1.5
+    # Runbooks (W6): how much of the previous step's reply a step is given (its head).
+    RUNBOOK_STEP_CONTEXT_MAX: int = 12_000
 
     class Config:
         env_file = ".env"
