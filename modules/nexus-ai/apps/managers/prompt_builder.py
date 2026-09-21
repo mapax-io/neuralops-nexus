@@ -34,6 +34,21 @@ from apps.schemas.trigger import (
 )
 
 
+BRIEF_HEADING = "Project brief — applies to every reply in this project:"
+
+
+def compose_system_prompt(project_brief: str | None, persona_prompt: str) -> str:
+    """
+    The system prompt a persona runs with: the project's brief in its own
+    block FIRST, then the persona's own prompt. Order is deliberate -- the
+    brief is the team's standing instruction, the persona prompt its role
+    within it. No brief means the persona prompt alone, byte for byte.
+    """
+    brief = (project_brief or "").strip()
+    if not brief:
+        return persona_prompt
+    return f"{BRIEF_HEADING}\n{brief}\n\n{persona_prompt}"
+
 class NewImprovedPromptBuilder:
     async def build(
         self,

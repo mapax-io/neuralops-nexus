@@ -20,6 +20,7 @@ from threading import local
 import httpx
 from pydantic_ai.capabilities import MCP
 
+from apps.managers.prompt_builder import compose_system_prompt
 from apps.core.config import settings
 import shlex
 from apps.schemas.trigger import HistoryMessage, MCPArgs, ModelConfig, PersonaConfig, PersonaCapabilities
@@ -45,8 +46,15 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
             url, headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY},
         )
         response.raise_for_status()
-    data = response.json()
+    return persona_from(response.json())
 
+
+def persona_from(data: dict) -> PersonaConfig:
+    """
+    Shape nucleus's persona payload into the worker's PersonaConfig. The
+    project brief (absent on an older nucleus) is composed into the system
+    prompt here, so every runner and prompt path sees one string, brief first.
+    """
     model_data = data.get("model")
     model = ModelConfig(
         provider=model_data["provider"] if model_data else "litellm",
@@ -116,7 +124,7 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
     return PersonaConfig(
         id=data["id"],
         name=data["name"],
-        system_prompt=(data.get("prompt") or {}).get("system_prompt", ""),
+        system_prompt=compose_system_prompt(data.get("project_brief"), (data.get("prompt") or {}).get("system_prompt", "")),
         model=model,
         mcp_servers=mcp_servers,
         capabilities=capabilities,
