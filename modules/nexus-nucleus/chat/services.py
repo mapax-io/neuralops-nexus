@@ -743,6 +743,8 @@ def remember_tool_call(trail: list, event: dict) -> None:
         "duration_ms": int(result.get("duration_ms") or 0),
         "preview": result.get("preview"),
         "error": result.get("error"),
+        # The page a web tool went to -- the app opens it beside the chat (W9).
+        "url": result.get("url"),
     })
     del trail[:-ACTIVITY_TRAIL_MAX]
 
