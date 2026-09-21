@@ -252,7 +252,11 @@ def stop_run(run, user) -> str:
         _publish_run(run)
         return "stopped"
     run.status = RunbookRun.Status.STOPPED
-    run.save(update_fields=["status", "error", "updated_at"])
+    # Stamped here as well as in _end: if the worker driving this run is already
+    # gone, nothing else will ever close the row and the banner reads "stopped"
+    # with no end time for good (audit, 2026-09-21).
+    run.ended_at = timezone.now()
+    run.save(update_fields=["status", "error", "ended_at", "updated_at"])
     pending = ChatMessage.objects.filter(
         topic=run.topic, status=ChatMessage.Status.PENDING, metadata__runbook_run__id=str(run.id),
     ).order_by("-sequence").first()
@@ -282,8 +286,8 @@ def _end(run, status: str, *, error: str = "", line: str) -> None:
     _publish_run(run)
 
 
-def _after_step(run, result: dict) -> None:
-    """Record one step's outcome on the run row and tell the topic."""
+def _after_step(run) -> None:
+    """Record the steps recorded so far on the run row and tell the topic."""
     from nucleus.models import RunbookRun
     RunbookRun.objects.filter(id=run.id).update(step_results=run.step_results, updated_at=timezone.now())
     _publish_run(run)
@@ -323,13 +327,42 @@ def _run_step(run, step: dict, index: int, count: int, context: str | None, acto
 
 def execute_run(run_id: str) -> None:
     """Drive a queued run to its end. Sync -- it runs inside a Celery task."""
+    from nucleus.models import RunbookRun
+
+    # Claimed, not checked: two deliveries of the same task both read "queued"
+    # and both drove every step into the chat (audit, 2026-09-21). Exactly one
+    # update can move the row out of QUEUED, and only that one goes on.
+    claimed = RunbookRun.objects.filter(id=run_id, status=RunbookRun.Status.QUEUED).update(
+        status=RunbookRun.Status.RUNNING, started_at=timezone.now(), updated_at=timezone.now(),
+    )
+    if not claimed:
+        logger.info("[runbook] run %s was not queued, nothing to do", run_id)
+        return
+    run = RunbookRun.objects.select_related("runbook", "topic", "project", "company", "started_by").filter(id=run_id).first()
+    if not run:
+        return
+    # Every way out of _drive that is not an ending is an ending here. Without
+    # this the row stayed RUNNING for ever on a time limit, a DB error or a bug,
+    # and the chat showed a runbook mid-flight that nothing would ever close --
+    # nothing reaps active runs, and a lost task is not redelivered (audit,
+    # 2026-09-21).
+    try:
+        _drive(run)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[runbook] run %s stopped driving", run_id)
+        _end(
+            run, RunbookRun.Status.FAILED,
+            error=f"The server stopped driving this run: {type(exc).__name__}",
+            line=f"Runbook: {run.runbook.title} stopped unexpectedly — the server could not carry it to the end.",
+        )
+        raise
+
+
+def _drive(run) -> None:
+    """The steps themselves, from the first to whichever one ends the run."""
     from authn.permissions.checker import PermissionChecker
     from nucleus.models import Persona, RunbookRun
 
-    run = RunbookRun.objects.select_related("runbook", "topic", "project", "company", "started_by").filter(id=run_id).first()
-    if not run or run.status != RunbookRun.Status.QUEUED:
-        logger.info("[runbook] run %s not queued (%s), nothing to do", run_id, getattr(run, "status", "missing"))
-        return
     title = run.runbook.title
     steps = run.runbook.steps or []
     count = len(steps)
@@ -346,9 +379,6 @@ def execute_run(run_id: str) -> None:
         _end(run, RunbookRun.Status.FAILED, error=f"Did not start: {reason}.", line=f"Runbook: {title} did not start — {reason}.")
         return
 
-    run.status = RunbookRun.Status.RUNNING
-    run.started_at = timezone.now()
-    run.save(update_fields=["status", "started_at", "updated_at"])
     _announce(run, f"Runbook: {title} started by {actor.get_display_name()} — {count} steps.")
     _publish_run(run)
 
@@ -382,7 +412,7 @@ def execute_run(run_id: str) -> None:
         if status == "failed" and step.get("on_failure") == "skip":
             result["status"] = "skipped"
         run.step_results = [*(run.step_results or []), result]
-        _after_step(run, result)
+        _after_step(run)
 
         if status == "done":
             context = content
