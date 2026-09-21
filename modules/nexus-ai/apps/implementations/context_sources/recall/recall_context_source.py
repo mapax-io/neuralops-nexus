@@ -57,10 +57,16 @@ class RecallContextSource(ContextSource):
     async def retrieve(self, query: str, collection_id: str, top_k: int = 8, filter: dict | None = None) -> list[Chunk]:
         """The project's entries closest to the query. The prompt builder passes {"source_id": project_id}."""
         project_id = (filter or {}).get("project_id") or (filter or {}).get("source_id")
+        # The collection is company-wide, so no project id means no filter, which
+        # would answer with every project's Recall. A boundary fails closed: with
+        # nothing to scope by, there is nothing to return (audit, 2026-09-21).
+        if not project_id:
+            logger.warning("[recall] retrieve without a project id — returning nothing")
+            return []
         query_vector = await self._embedder.embed_query(query)
         return await self._store.search(
             query_vector=query_vector, collection_id=collection_id, top_k=top_k,
-            filter={"project_id": project_id} if project_id else None,
+            filter={"project_id": project_id},
         )
 
     async def delete_entry(self, entry_id: str, company_id: str) -> None:

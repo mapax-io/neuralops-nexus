@@ -83,6 +83,19 @@ async def test_an_entry_is_embedded_by_id_retrieved_by_project_and_removed_by_id
     assert await source.retrieve("database", "company_c_recall", filter={"project_id": "p1"}) == []
 
 
+@pytest.mark.asyncio
+async def test_retrieval_without_a_project_returns_nothing_rather_than_everything():
+    # The collection is company-wide; with no project to scope by, an unfiltered
+    # search would hand one project the whole company's Recall.
+    store = FakeStore()
+    source = RecallContextSource(embedder=FakeEmbedder(), store=store)
+    await source.ingest(RecallEmbedRequest(entry_id="e1", company_id="c", project_id="p1", kind="fact", text="Secret to p1."))
+    searched = len(store.searches)
+    assert await source.retrieve("secret", "company_c_recall", filter=None) == []
+    assert await source.retrieve("secret", "company_c_recall", filter={}) == []
+    assert len(store.searches) == searched   # the store was never even asked
+
+
 def test_the_embed_routes_need_the_key_and_reach_the_plugin(monkeypatch):
     from apps.main import app
     from apps.factories import context_source as factory
