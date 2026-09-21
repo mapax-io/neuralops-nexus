@@ -477,8 +477,29 @@ def get_persona(company, persona_id: str):
     )
 
 
+TOOL_LEVELS = ("auto", "ask", "off")
+
+
+def validate_tool_levels(levels) -> dict:
+    """
+    The shape nucleus stores: non-empty string keys (a capability id or
+    "<capability>/<tool>") to one of the three levels. What a key MEANS is the
+    worker's business (apps/managers/approvals.py).
+    """
+    if not isinstance(levels, dict):
+        raise ValueError("tool_levels must be an object.")
+    for key, level in levels.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("Every tool level needs a name.")
+        if level not in TOOL_LEVELS:
+            raise ValueError("A tool level is auto, ask or off.")
+    return dict(levels)
+
+
 def create_persona(company, user, data: dict):
     from nucleus.models import Persona, Project, Prompt, PromptTemplate
+    if "tool_levels" in data:
+        data["tool_levels"] = validate_tool_levels(data["tool_levels"])
 
     prompt_data = data.pop("prompt")
     project_id = data.pop("project_id")
@@ -582,6 +603,8 @@ def patch_persona(company, persona_id: str, data: dict):
 
     persona.model = model_config
     persona.advisor_model = advisor
+    if data.get("tool_levels") is not None:
+        data["tool_levels"] = validate_tool_levels(data["tool_levels"])
     for field, value in data.items():
         if value is not None:
             setattr(persona, field, value)

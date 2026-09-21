@@ -665,3 +665,16 @@ Seen live on 2026-09-21: a line chart answered with `"fill": true` on a dataset,
 `fill` and models reach for it on line charts anyway. Either add `fill` to the description (and the guard,
 as a boolean per dataset) or state in the contract that area fills are not supported. Until then a
 fraction of line charts degrade to the data fallback.
+
+---
+
+## The LiteLLM agent backend reads a persona shape the worker no longer sends
+
+**Where:** `modules/nexus-ai/apps/implementations/agents/litellm_runner.py` (`_run_with_mcp`).
+
+`AGENT_BACKEND=litellm` is not the default. Its MCP loop reads `persona.mcp_servers` as the old
+`MCPServerConfig` rows (`transport`, `secrets`, `auth_type`, `token_env_var`), but `PersonaConfig.mcp_servers`
+has been a list of `MCPArgs` (`url`, `command`, `args`, `env`, `authorization_token`, now `id`/`name`) since the
+persona payload was reshaped, so that path raises on the first attribute it reads. Tool approvals (W16) are
+therefore wired only into the pydantic-ai runner; when the LiteLLM backend is brought back, its loop should run
+each MCP call through `ToolApprovalGate` (or be dropped in favour of the pydantic-ai runner for MCP personas).

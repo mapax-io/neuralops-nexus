@@ -84,6 +84,16 @@ def tool_activity_event(msg_id: str, event: dict) -> dict | None:
     }
 
 
+def tool_approval_event(msg_id: str, approval: dict) -> dict:
+    """A tool call the worker holds for a person: the record as the row now holds it (pending)."""
+    return {"type": "tool_approval", "id": msg_id, "approval": approval}
+
+
+def tool_approval_decided_event(msg_id: str, approval: dict) -> dict:
+    """A person allowed or denied a held call: the record with who decided what."""
+    return {"type": "tool_approval_decided", "id": msg_id, "approval": approval}
+
+
 def preflight_decided_event(msg_id: str, preflight: dict) -> dict:
     """A person decided a proposal: the whole preflight record, as the row now holds it."""
     return {"type": "preflight_decided", "id": msg_id, "preflight": preflight}

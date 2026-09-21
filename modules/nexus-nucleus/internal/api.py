@@ -167,6 +167,8 @@ class PersonaInternal(Schema):
     # The server's utility model for the worker's own small passes; None means
     # "use this persona's model".
     utility_model: Optional[ModelInternal] = None
+    # Tool approvals: the persona's levels; the worker applies the defaults.
+    tool_levels: dict = Field(default_factory=dict)
 
 
 class ContextSourceInternal(Schema):
@@ -353,7 +355,18 @@ def get_persona_internal(request, persona_id: str):
         project_brief=persona.project.brief or None,
         utility_model=_model_internal(utility) if (utility := utility_model_of(persona.company)) else None,
         max_steps=persona.max_steps,
+        tool_levels=persona.tool_levels or {},
     )
+
+
+@router.get("/messages/{message_id}/approvals/{call_id}/")
+async def get_approval_state_internal(request, message_id: str, call_id: str):
+    """
+    What a held tool call has become -- polled by nexus-ai (apps/managers/
+    approvals.py) while the call waits: pending | allowed | denied | stopped.
+    """
+    from chat.services import approval_state
+    return await approval_state(message_id, call_id)
 
 
 @router.get("/topics/{topic_id}/contexts/", response=list[ContextSourceInternal])

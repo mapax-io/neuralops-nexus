@@ -167,6 +167,7 @@ def _persona_out(persona) -> PersonaOut:
         max_tokens=persona.max_tokens,
         max_steps=persona.max_steps,
         acts_after_approval=persona.acts_after_approval,
+        tool_levels=persona.tool_levels or {},
         prompt=prompt,
         is_active=persona.is_active,
         avatar=(

@@ -647,6 +647,21 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   persona prompt and the tools back on; adjust re-triggers a planning turn with the note; decline posts a system
   line. Every decision publishes `preflight_decided`. Scheduled and swarm runs never plan (nobody is waiting).
   Server `0.4.0` — the app relies on the endpoint.
+- **Tool approvals (W16, 2026-09-21).** `Persona.tool_levels` (`{capability id | "<capability>/<tool>":
+  "auto"|"ask"|"off"}`, keys `shell`, `filesystem`, `web_search`, `web_fetch`, `mcp:<server id>`) is stored and
+  shape-validated by nucleus; the WORKER owns the defaults (reading is automatic; `run_command`, `start_command`,
+  `write_file`, `edit_file`, `create_directory` ask; an MCP tool asks unless its annotations say `readOnlyHint`)
+  and hides `off` tools from the model. An Ask tool holds the run in process: the worker sends
+  `approval_requested {call_id, tool, capability_id, args_preview}`, the relay stores it at once under
+  `metadata.approvals` (status `pending`) and publishes `tool_approval`; the worker polls
+  `GET /internal/messages/{id}/approvals/{call_id}/` (pending | allowed | denied | stopped) and sends `keepalive`
+  events so the relay's two-minute idle timeout never ends the reply. `POST …/messages/{id}/approvals/{call_id}/`
+  (`allow | deny`, `always`) decides once under `persona.approve_run` at the topic; `always` writes
+  `"<capability>/<tool>": "auto"` onto the persona and therefore also needs `persona.update`. Denied, timed out
+  (`APPROVAL_TIMEOUT_SECONDS`, 600) and stopped calls are skipped with a one-line reason the model sees; a reply
+  that ends expires its pending calls. Scheduled (`interactive=False`) and swarm runs refuse Ask tools at once —
+  nobody can answer there. Not the plan's Redis wait: the worker has no Redis, and Stop already works as
+  nucleus-held state that a poll reads. Server `0.5.0` — the app relies on the decision endpoint.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).
