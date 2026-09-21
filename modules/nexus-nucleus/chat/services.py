@@ -933,8 +933,17 @@ async def trigger_ai_response_async(
     #    they're equivalent risks silently breaking RAG/attached-file search.
     #    Left as a separate, explicitly flagged follow-up -- see #131.
 
-    # _build_context_sources does sync ORM queries — must be wrapped for async context
-    context_sources = await sync_to_async(_build_context_sources)(topic, company, persona)
+    # _build_context_sources does sync ORM queries — must be wrapped for async context.
+    # Guarded: this sits between message_start and the streaming try, and this
+    # whole function runs as a fire-and-forget task nobody awaits — a raise here
+    # left a PENDING row and a spinner with no terminal event at all (audit,
+    # 2026-09-21). Context is an addition to the prompt, so losing it is worth
+    # far less than losing the reply.
+    try:
+        context_sources = await sync_to_async(_build_context_sources)(topic, company, persona)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[trigger] context sources unavailable for msg %s: %s", msg_id, exc)
+        context_sources = []
 
     job_payload = {
         "job_id": str(uuid.uuid4()),
