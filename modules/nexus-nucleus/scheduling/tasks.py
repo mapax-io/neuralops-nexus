@@ -94,12 +94,15 @@ def fire_persona_schedule(schedule_id: str) -> None:
 
     try:
         if persona is None:
-            # W6: the schedule starts a runbook -- the run announces itself and
-            # executes here, in this task, step after step.
+            # W6: the schedule starts a runbook. It is HANDED OFF rather than
+            # driven here: a twelve-step run of AI replies held this beat-fired
+            # slot for its whole length and inherited this task's time limit, so
+            # a long run hit it and died mid-flight (audit, 2026-09-21). The run
+            # row exists either way, and the banner follows it.
             if not schedule.runbook_id or not schedule.runbook.is_active:
                 raise RuntimeError("the runbook this schedule starts no longer exists")
             run = runbooks.start_run(company, project, schedule.runbook, actor, topic)
-            runbooks.execute_run(str(run.id))
+            run_runbook.delay(str(run.id))
             PersonaSchedule.objects.filter(id=schedule.id).update(
                 last_run_at=timezone.now(),
                 last_status=PersonaSchedule.RunStatus.SUCCESS,

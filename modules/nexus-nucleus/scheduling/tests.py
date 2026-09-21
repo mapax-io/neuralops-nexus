@@ -228,6 +228,10 @@ class RunbookApiTests(RunbookFixture):
         self.assertEqual(set(ids(self.call("get", f"{base}?runbook_id={rb.id}", self.vera))), {str(done.id), str(running.id)})
         self.assertEqual(ids(self.call("get", f"{base}?topic_id={self.t2.id}", self.vera)), [str(running.id)])
         self.assertEqual(ids(self.call("get", f"{base}?active=1", self.vera)), [str(running.id)])
+        self.assertEqual(ids(self.call("get", f"{base}?active=true", self.vera)), [str(running.id)])
+        # "false" is false: bool("false") was True, so asking for every run gave
+        # only the active ones (audit, 2026-09-21).
+        self.assertEqual(set(ids(self.call("get", f"{base}?active=false", self.vera))), {str(done.id), str(running.id)})
 
     def test_stop_ends_a_queued_run_and_signals_a_running_reply(self):
         rb = self.runbook()
@@ -253,7 +257,9 @@ class RunbookApiTests(RunbookFixture):
         signals.return_value.request_stop.assert_awaited_once_with(reply["id"])
         running.refresh_from_db()
         self.assertEqual(running.status, "stopped")
-        self.assertIsNone(running.ended_at)  # the loop closes it
+        # Stamped here too: if the worker driving it is already gone, nothing
+        # else ever would, and the banner read "stopped" with no end for good.
+        self.assertIsNotNone(running.ended_at)
 
 
 class RunbookExecutionTests(RunbookFixture):
@@ -285,6 +291,34 @@ class RunbookExecutionTests(RunbookFixture):
         self.assertEqual([m.metadata["runbook_run"]["step"] for m in rows], [1, 2, 3])
         from chat.services import _serialise
         self.assertEqual(_serialise(rows[0])["runbook_run"], {"id": str(run.id), "title": "Weekly ops update", "step": 1, "of": 3})
+
+    def test_a_run_is_claimed_once_and_a_second_delivery_does_nothing(self):
+        # Two deliveries of one task both read "queued" and both drove every step
+        # into the chat; the transition is now a conditional update.
+        rb = self.runbook()
+        run = RunbookRun.objects.get(id=self.start(rb, self.sara)[0].json()["id"])
+        calls = self.execute(run.id, {})
+        self.assertEqual(len(calls), 3)
+        again = self.execute(run.id, {})
+        self.assertEqual(again, [])
+        run.refresh_from_db()
+        self.assertEqual(run.status, "done")
+        self.assertEqual(len(run.step_results), 3)
+
+    def test_a_run_the_server_stops_driving_ends_as_failed_not_running_for_ever(self):
+        # Nothing reaps active runs and a lost task is not redelivered, so every
+        # exit that is not an ending has to be made one.
+        rb = self.runbook()
+        run = RunbookRun.objects.get(id=self.start(rb, self.sara)[0].json()["id"])
+        with patch("scheduling.runbooks._run_step", side_effect=RuntimeError("the database went away")), \
+             patch("chat.services.publish"):
+            with self.assertRaises(RuntimeError):
+                runbooks.execute_run(str(run.id))
+        run.refresh_from_db()
+        self.assertEqual(run.status, "failed")
+        self.assertIsNotNone(run.ended_at)
+        self.assertIn("RuntimeError", run.error)
+        self.assertEqual(self.lines()[-1], "Runbook: Weekly ops update stopped unexpectedly — the server could not carry it to the end.")
 
     def test_a_failed_step_follows_its_policy(self):
         rb = self.runbook()
@@ -389,7 +423,9 @@ class RunbookScheduleTests(RunbookFixture):
             neither = self.call("post", path, self.sara, {k: v for k, v in body.items() if k != "runbook_id"})
         self.assertEqual((both.status_code, neither.status_code), (400, 400))
         schedule = PersonaSchedule.objects.get()
-        with patch("chat.services.publish"), patch("scheduling.runbooks.execute_run") as run_it:
+        # Handed to its own task, not driven inside the beat-fired one: a long run
+        # used to inherit this task's time limit and die mid-flight.
+        with patch("chat.services.publish"), patch("scheduling.tasks.run_runbook.delay") as run_it:
             fire_persona_schedule(str(schedule.id))
         run = RunbookRun.objects.get()
         self.assertEqual((run.runbook_id, run.topic_id, run.started_by), (rb.id, self.t1.id, self.sara))

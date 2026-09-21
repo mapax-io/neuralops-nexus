@@ -246,9 +246,11 @@ def create_runbook(request, project_id: str, payload: RunbookIn):
 
 # The fixed `runs/` paths register BEFORE `{runbook_id}/` -- the resolver takes the first pattern that matches.
 @router.get("/{project_id}/runbooks/runs/", response=List[RunbookRunOut])
-def list_runbook_runs(request, project_id: str, runbook_id: Optional[str] = None, topic_id: Optional[str] = None, active: Optional[str] = None):
+def list_runbook_runs(request, project_id: str, runbook_id: Optional[str] = None, topic_id: Optional[str] = None, active: bool = False):
+    # bool, not a string: bool("false") is True, so ?active=false used to return
+    # only the active runs -- the opposite of the ask (audit, 2026-09-21).
     _, _, project = _runbook_project(request, project_id, "topic.list")
-    return [runbooks.serialise_run(r) for r in runbooks.list_runs(project, runbook_id=runbook_id, topic_id=topic_id, active=bool(active))]
+    return [runbooks.serialise_run(r) for r in runbooks.list_runs(project, runbook_id=runbook_id, topic_id=topic_id, active=active)]
 
 
 @router.post("/{project_id}/runbooks/runs/{run_id}/stop/", response=RunbookRunOut)
