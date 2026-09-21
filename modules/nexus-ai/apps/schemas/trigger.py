@@ -283,6 +283,8 @@ class TriggerJob(BaseModel):
     # Someone is watching this run (a chat turn, not a schedule): an Ask tool
     # may wait for their decision. Absent on an older nucleus -- assume so.
     interactive: bool = True
+    # Routines (W4): the team method this reply runs with, fetched like the persona.
+    routine_id: str | None = None
 
 
 class TriggerSwarmJob(BaseModel):

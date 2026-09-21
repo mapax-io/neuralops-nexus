@@ -148,6 +148,17 @@ def persona_from(data: dict) -> PersonaConfig:
     )
 
 
+async def resolve_routine(routine_id: str):
+    """The routine a job names (W4) -- one internal GET, shaped like the persona is."""
+    # Imported here: routines.py reads model_from from this module.
+    from apps.managers.routines import routine_from
+    url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/routines/{routine_id}/"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url, headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY})
+        response.raise_for_status()
+    return routine_from(response.json())
+
+
 async def fetch_history(topic_id: str, exclude_message_id: str | None = None) -> list[HistoryMessage]:
     """
     Fetch and shape conversation history for a trigger.
