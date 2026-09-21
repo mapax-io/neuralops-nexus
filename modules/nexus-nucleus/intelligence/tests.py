@@ -233,3 +233,16 @@ class UtilityModelTests(MentionRightFixture):
         body = {"embedding_provider": "fastembed", "embedding_model": "x", "embedding_base_url": "", "default_llm_model": "openai:gpt-4o-mini"}
         self.assertEqual(self.call("put", "/api/v1/ai-config/", self.sara, body).status_code, 403)
         self.assertEqual(self.call("put", "/api/v1/ai-config/", self.owner, body).status_code, 200)
+
+
+class PersonaGateTests(MentionRightFixture):
+    """`acts_after_approval` -- the persona proposes before acting -- round-trips."""
+
+    def test_the_gate_is_off_by_default_and_patches_through(self):
+        from intelligence.api import _persona_out
+        from intelligence.services import patch_persona
+        self.assertFalse(_persona_out(self.persona_sara).acts_after_approval)
+        patch_persona(self.company, str(self.persona_sara.id), {"acts_after_approval": True})
+        self.persona_sara.refresh_from_db()
+        self.assertTrue(self.persona_sara.acts_after_approval)
+        self.assertTrue(_persona_out(self.persona_sara).acts_after_approval)

@@ -166,6 +166,7 @@ def _persona_out(persona) -> PersonaOut:
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
         max_steps=persona.max_steps,
+        acts_after_approval=persona.acts_after_approval,
         prompt=prompt,
         is_active=persona.is_active,
         avatar=(

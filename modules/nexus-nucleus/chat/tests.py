@@ -191,6 +191,7 @@ class MentionRightTests(MentionRightFixture):
 # across nucleus workers, with an in-memory store for tests and single-process
 # use.
 import asyncio
+import json
 
 from chat.stop_signals import MemoryStore, StopRequested, StopSignals, stoppable, stoppable_lines
 
@@ -415,6 +416,7 @@ class FakeResponse:
 
 class FakeClient:
     response: FakeResponse
+    posted: list = []  # every job nucleus sent, oldest first
 
     def __init__(self, *args, **kwargs):
         pass
@@ -426,6 +428,7 @@ class FakeClient:
         return False
 
     def build_request(self, method, url, **kwargs):
+        FakeClient.posted.append(kwargs.get("json"))
         return (method, url)
 
     async def send(self, request, stream=True):
@@ -709,3 +712,118 @@ class RelayActivityTrailTests(RelayFixture):
         self.assertEqual([t["tool"] for t in sub.metadata["activity_trail"]], ["shell"])
         ends = self.events("tool_activity_end")
         self.assertEqual([(e["id"] == str(sub.id), e["tool"]) for e in ends], [(False, "web_search"), (True, "shell")])
+
+
+PLAN = {"summary": "Read the CSV and write the report.", "steps": [{"title": "Read sales.csv", "tools": ["filesystem"], "writes": False}, {"title": "Write report.md", "tools": ["filesystem"], "writes": True}], "risks": ["Overwrites report.md"]}
+
+
+class PreflightRelayTests(RelayFixture):
+    """A gated persona plans first; the plan lands on the row for a person to decide."""
+
+    def setUp(self):
+        super().setUp()
+        FakeClient.posted = []
+
+    def gate(self):
+        self.persona_sara.acts_after_approval = True
+        self.persona_sara.save(update_fields=["acts_after_approval"])
+
+    async def test_a_gated_persona_is_flagged_for_the_worker_and_an_ungated_one_is_not(self):
+        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
+        self.assertFalse(FakeClient.posted[-1]["preflight"])
+        await sync_to_async(self.gate)()
+        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
+        self.assertTrue(FakeClient.posted[-1]["preflight"])
+        self.assertIsNone(FakeClient.posted[-1]["approved_plan"])
+
+    async def test_a_preflight_reply_stores_the_proposal_with_what_was_asked(self):
+        await sync_to_async(self.gate)()
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_done", "content": json.dumps(PLAN), "output_type": "preflight", "render_as": "preflight"},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["preflight"], {"status": "proposed", "plan": PLAN, "user_message": "chart please", "user_message_id": "u1"})
+        done = self.events("message_done")[0]
+        self.assertEqual(done["render_as"], "preflight")
+        self.assertEqual(done["preflight"]["status"], "proposed")  # live cards decide without a reload
+
+    async def test_a_plan_that_is_not_json_is_kept_as_text_with_no_proposal(self):
+        await sync_to_async(self.gate)()
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_done", "content": "I would read the file then write it.", "output_type": "preflight", "render_as": "preflight"},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertNotIn("preflight", row.metadata)
+        self.assertEqual(row.metadata["render_as"], "text")
+
+
+class PreflightDecisionTests(RelayFixture):
+    """Approve, adjust or decline a proposal, under persona.approve_run at the topic."""
+
+    def setUp(self):
+        super().setUp()
+        FakeClient.posted = []
+        self.persona_sara.acts_after_approval = True
+        self.persona_sara.save(update_fields=["acts_after_approval"])
+
+    async def propose(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_done", "content": json.dumps(PLAN), "output_type": "preflight", "render_as": "preflight"},
+        )))
+        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "done", "output_type": "text", "render_as": "text"}))
+        return (await sync_to_async(self.reply_rows)())[0]
+
+    async def decide(self, row, user, decision, note=None):
+        from chat.services import decide_preflight
+        outcome = await decide_preflight(topic=self.t1, message_id=str(row.id), user=user, decision=decision, note=note)
+        # The re-trigger is fire-and-forget (the HTTP reply never waits on AI);
+        # let it run to its end before looking at what was posted.
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            await asyncio.gather(*pending)
+        return outcome
+
+    async def test_approve_records_who_and_runs_the_plan_with_the_tools_back_on(self):
+        row = await self.propose()
+        outcome = await self.decide(row, self.owner, "approve")
+        self.assertEqual(outcome["status"], "approved")
+        await sync_to_async(row.refresh_from_db)()
+        pf = row.metadata["preflight"]
+        self.assertEqual((pf["status"], pf["decided_by_name"]), ("approved", "owner"))
+        self.assertIn("decided_at", pf)
+        posted = FakeClient.posted[-1]
+        self.assertFalse(posted["preflight"])
+        self.assertIn("Read sales.csv", posted["approved_plan"])
+        self.assertEqual((posted["message"], posted["user_message_id"]), ("chart please", "u1"))
+        self.assertEqual(len(self.events("preflight_decided")), 1)
+
+    async def test_adjust_asks_for_another_plan_with_the_note(self):
+        row = await self.propose()
+        outcome = await self.decide(row, self.owner, "adjust", note="Do not overwrite report.md; write report-v2.md")
+        self.assertEqual(outcome["status"], "adjusted")
+        posted = FakeClient.posted[-1]
+        self.assertTrue(posted["preflight"])
+        self.assertIn("report-v2.md", posted["message"])
+
+    async def test_decline_closes_the_proposal_and_says_so_in_the_topic(self):
+        row = await self.propose()
+        outcome = await self.decide(row, self.owner, "decline")
+        self.assertEqual(outcome["status"], "declined")
+        from nucleus.models import ChatMessage
+        line = await sync_to_async(lambda: ChatMessage.objects.filter(topic=self.t1, message_type=ChatMessage.MessageType.SYSTEM).order_by("-sequence").first())()
+        self.assertIn("declined", line.content)
+        self.assertEqual(len(FakeClient.posted), 1)  # nothing re-triggered
+
+    async def test_a_decided_plan_cannot_be_decided_again_and_the_right_is_checked(self):
+        from chat.services import PreflightError
+        row = await self.propose()
+        with self.assertRaises(PreflightError) as ctx:
+            await self.decide(row, self.vera, "approve")  # a viewer cannot approve
+        self.assertEqual(ctx.exception.status, 403)
+        await self.decide(row, self.owner, "decline")
+        with self.assertRaises(PreflightError) as ctx:
+            await self.decide(row, self.owner, "approve")
+        self.assertEqual(ctx.exception.status, 409)
+        with self.assertRaises(PreflightError) as ctx:
+            await self.decide(type("Row", (), {"id": "00000000-0000-0000-0000-000000000000"})(), self.owner, "approve")
+        self.assertEqual(ctx.exception.status, 404)

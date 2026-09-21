@@ -236,6 +236,7 @@ class PersonaIn(Schema):
     temperature: float = 0.7
     max_tokens: int = 4096
     max_steps: int = 10
+    acts_after_approval: bool = False
     prompt: PromptIn
     # REMOVED: source_type, model_id, agent_id
 
@@ -261,6 +262,7 @@ class PersonaPatchIn(Schema):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     max_steps: Optional[int] = None
+    acts_after_approval: Optional[bool] = None
     prompt: Optional[PromptIn] = None
 
 
@@ -276,6 +278,7 @@ class PersonaOut(Schema):
     temperature: float
     max_tokens: int
     max_steps: int
+    acts_after_approval: bool = False
     prompt: Optional[PromptOut] = None
     is_active: bool
     # Server-relative media URL of the shadow user's assigned avatar --

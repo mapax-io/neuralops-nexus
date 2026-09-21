@@ -82,3 +82,8 @@ def tool_activity_event(msg_id: str, event: dict) -> dict | None:
         "tool": name,
         "label": TOOL_ACTIVITY_LABELS.get(name) or f"Using {name.replace('_', ' ')}",
     }
+
+
+def preflight_decided_event(msg_id: str, preflight: dict) -> dict:
+    """A person decided a proposal: the whole preflight record, as the row now holds it."""
+    return {"type": "preflight_decided", "id": msg_id, "preflight": preflight}
