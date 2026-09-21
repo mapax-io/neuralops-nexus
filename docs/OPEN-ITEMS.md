@@ -685,3 +685,11 @@ each MCP call through `ToolApprovalGate` (or be dropped in favour of the pydanti
 CSS variables; `chart-block.tsx` and `terminal-pane.tsx` use it. `mermaid-block.tsx` still carries an older
 copy of the same MutationObserver + matchMedia logic in a `useEffect`; fold it onto `useResolvedTheme()` in a
 small follow-up so there is one implementation.
+
+
+## Nucleus test modules import each other in a cycle
+
+`workspace/tests.py` imports `MentionRightFixture` from `chat/tests.py` (W21's `TerminalTests`), and `chat/tests.py`
+imports from `workspace/tests.py`. The full-suite order (`workspace.tests` before `chat.tests`) loads fine, but
+`manage.py test chat.tests …` alone fails with "partially initialized module". Move the shared fixtures
+(`MentionRightFixture`, `InviteGrantsFixture`) into a `nucleus/test_fixtures.py` both import from.

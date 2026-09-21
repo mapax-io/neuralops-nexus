@@ -112,9 +112,9 @@ def attach_model_config_to_project(company, config_id: str, project_id: str) -> 
 
 def detach_model_config_from_project(company, config_id: str, project_id: str) -> bool:
     """
-    Refuses while a persona in that project still uses the config, as either
-    its primary or its advisor -- detaching would leave a persona pointing at
-    a model it can no longer see.
+    Refuses while a persona in that project still uses the config, as its
+    primary, its advisor or a fallback -- detaching would leave a persona
+    pointing at a model it can no longer see.
     """
     from nucleus.models import ModelConfig, Persona
     from django.db.models import Q
@@ -124,10 +124,10 @@ def detach_model_config_from_project(company, config_id: str, project_id: str) -
         return False
 
     in_use = Persona.objects.filter(
-        Q(model_id=config.id) | Q(advisor_model_id=config.id),
+        Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config),
         project_id=project_id,
         is_active=True,
-    ).values_list("name", flat=True)
+    ).distinct().values_list("name", flat=True)
     if in_use:
         raise ValueError(
             "Cannot detach '%s' from this project -- still used by: %s."
@@ -156,8 +156,8 @@ def delete_model_config(company, config_id: str) -> bool:
 
     in_use = list(
         Persona.objects.filter(
-            Q(model_id=config.id) | Q(advisor_model_id=config.id), is_active=True
-        ).values_list("name", flat=True)
+            Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config), is_active=True
+        ).distinct().values_list("name", flat=True)
     )
     if in_use:
         raise ValueError(
@@ -379,7 +379,7 @@ def delete_mcp_server_standalone(company, server_id: str) -> bool:
 
 # ── Persona ───────────────────────────────────────────────────────────────────
 
-def _validate_persona_wiring(company, project, model_config, advisor, servers):
+def _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks=()):
     """
     Every cross-object rule the database cannot express, in one place.
     Raises ValueError, which the API layer turns into a 400.
@@ -387,7 +387,10 @@ def _validate_persona_wiring(company, project, model_config, advisor, servers):
     if model_config is None:
         raise ValueError("A model config is required.")
 
-    for label, config in (("model", model_config), ("advisor model", advisor)):
+    if any(f.id == model_config.id for f in fallbacks):
+        raise ValueError("A fallback must be a different model from the primary -- it is what answers when the primary cannot.")
+
+    for label, config in (("model", model_config), ("advisor model", advisor), *(("fallback model", f) for f in fallbacks)):
         if config is None:
             continue
         if config.company_id != company.id:
@@ -429,6 +432,30 @@ def _resolve_model_config(company, config_id):
     if config is None:
         raise ValueError("Model config not found.")
     return config
+
+
+MAX_FALLBACK_MODELS = 3
+
+
+def _resolve_fallback_models(company, config_ids):
+    """The persona's fallbacks as ModelConfig rows, in the order given; repeats collapse; at most three."""
+    ids = list(dict.fromkeys(config_ids or []))
+    if len(ids) > MAX_FALLBACK_MODELS:
+        raise ValueError("A persona can have up to three fallback models.")
+    return [_resolve_model_config(company, config_id) for config_id in ids]
+
+
+def fallback_models_of(persona) -> list:
+    """The persona's fallback models in order, skipping any that were retired."""
+    return [link.model for link in persona.fallback_links.select_related("model").order_by("position") if link.model.is_active]
+
+
+def _set_fallback_models(persona, configs) -> None:
+    from nucleus.models import PersonaFallbackModel
+    persona.fallback_links.all().delete()
+    PersonaFallbackModel.objects.bulk_create(
+        [PersonaFallbackModel(persona=persona, model=config, position=position) for position, config in enumerate(configs)]
+    )
 
 
 def _resolve_mcp_servers(company, server_ids):
@@ -505,6 +532,7 @@ def create_persona(company, user, data: dict):
     project_id = data.pop("project_id")
     model_config_id = data.pop("model_config_id", None)
     advisor_id = data.pop("advisor_model_config_id", None)
+    fallback_ids = data.pop("fallback_model_config_ids", None)
     server_ids = data.pop("mcp_server_ids", None)
 
     project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
@@ -513,8 +541,9 @@ def create_persona(company, user, data: dict):
 
     model_config = _resolve_model_config(company, model_config_id)
     advisor = _resolve_model_config(company, advisor_id)
+    fallbacks = _resolve_fallback_models(company, fallback_ids)
     servers = _resolve_mcp_servers(company, server_ids)
-    _validate_persona_wiring(company, project, model_config, advisor, servers)
+    _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks)
 
     if Persona.objects.filter(project=project, name=data.get("name"), is_active=True).exists():
         raise ValueError(
@@ -544,6 +573,8 @@ def create_persona(company, user, data: dict):
     )
     if servers:
         persona.mcp_servers.set(servers)
+    if fallbacks:
+        _set_fallback_models(persona, fallbacks)
 
     template_id = prompt_data.pop("template_id", None)
     template = PromptTemplate.objects.filter(
@@ -581,6 +612,7 @@ def patch_persona(company, persona_id: str, data: dict):
     model_config_id = data.pop("model_config_id", None)
     advisor_id = data.pop("advisor_model_config_id", None)
     clear_advisor = data.pop("clear_advisor", False)
+    fallback_ids = data.pop("fallback_model_config_ids", None)   # None: not sent; []: clear
     server_ids = data.pop("mcp_server_ids", None)
 
     model_config = (
@@ -599,7 +631,10 @@ def patch_persona(company, persona_id: str, data: dict):
         else list(persona.mcp_servers.filter(is_active=True))
     )
 
-    _validate_persona_wiring(company, persona.project, model_config, advisor, servers)
+    fallbacks = (
+        _resolve_fallback_models(company, fallback_ids) if fallback_ids is not None else fallback_models_of(persona)
+    )
+    _validate_persona_wiring(company, persona.project, model_config, advisor, servers, fallbacks)
 
     persona.model = model_config
     persona.advisor_model = advisor
@@ -612,6 +647,8 @@ def patch_persona(company, persona_id: str, data: dict):
 
     if server_ids is not None:
         persona.mcp_servers.set(servers)
+    if fallback_ids is not None:
+        _set_fallback_models(persona, fallbacks)
 
     if prompt_data and hasattr(persona, "prompt"):
         template_id = prompt_data.pop("template_id", None)

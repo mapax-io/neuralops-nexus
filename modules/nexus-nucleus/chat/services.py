@@ -439,6 +439,7 @@ def update_ai_message(
     usage: dict | None = None,
     activity_trail: list | None = None,
     preflight: dict | None = None,
+    answered_by_model: str | None = None,
 ) -> None:
     """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
@@ -458,6 +459,8 @@ def update_ai_message(
         metadata["usage"] = usage
     if activity_trail:
         metadata["activity_trail"] = activity_trail
+    if answered_by_model:
+        metadata["answered_by_model"] = answered_by_model
     if preflight:
         metadata["preflight"] = preflight
 
@@ -894,6 +897,7 @@ async def trigger_ai_response_async(
     ai_error: str | None = None
     ai_error_code: str | None = None
     usage: dict | None = None
+    answered_by_model: str | None = None
     activity_trail: list = []
     stopped = False
 
@@ -976,6 +980,8 @@ async def trigger_ai_response_async(
                             # M8: plain-text description for html/form/terminal embedding
                             embed_description = event.get("embed_description")
                             usage = usage_from(event)
+                            # "<model> (fallback)" when the persona's own model could not answer.
+                            answered_by_model = event.get("answered_by_model") or None
                             break
 
                         elif event_type == "message_error":
@@ -1044,6 +1050,7 @@ async def trigger_ai_response_async(
                 usage=usage,
                 activity_trail=activity_trail,
                 preflight=preflight,
+                answered_by_model=answered_by_model,
             )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
@@ -1060,6 +1067,7 @@ async def trigger_ai_response_async(
         "render_as": final_render_as,        # M7: e.g. "html"
         "stopped": False,                    # a stopped run ends in end_stopped_reply()
         "preflight": preflight,              # the proposal, so the card can be decided without a reload
+        "answered_by_model": answered_by_model,
     }, usage))
 
     # M8: Embed AI response — smart content selection
@@ -1290,6 +1298,7 @@ async def trigger_ai_swarm_response_async(
                                 output_type=final_output_type,
                                 usage=hop_usage,
                                 activity_trail=trails.get(active_msg_id),
+                                answered_by_model=event.get("answered_by_model") or None,
                             )
                             event["id"] = active_msg_id
                             await publish_async(channel, with_usage(event, hop_usage))

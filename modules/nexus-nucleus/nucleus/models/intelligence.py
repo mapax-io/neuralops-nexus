@@ -434,6 +434,16 @@ class Persona(TenantBaseModel):
         ),
     )
 
+    # Models to answer with when `model` cannot (its key revoked, no credit,
+    # rate-limited, the provider down), in order -- the through rows carry the
+    # position. The worker tries them one by one before giving up (W7).
+    fallback_models = models.ManyToManyField(
+        ModelConfig,
+        through="PersonaFallbackModel",
+        related_name="fallback_personas",
+        blank=True,
+    )
+
     mcp_servers = models.ManyToManyField(
         "nucleus.MCPServer",
         blank=True,
@@ -511,6 +521,22 @@ class Persona(TenantBaseModel):
 
     def __str__(self):
         return self.name
+
+
+class PersonaFallbackModel(models.Model):
+    """One fallback model of a persona and its place in the order (W7)."""
+
+    persona = models.ForeignKey(Persona, on_delete=models.CASCADE, related_name="fallback_links")
+    model = models.ForeignKey(ModelConfig, on_delete=models.CASCADE, related_name="fallback_links")
+    position = models.PositiveSmallIntegerField()
+
+    class Meta:
+        db_table = "intelligence_persona_fallback_model"
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(fields=["persona", "model"], name="uniq_persona_fallback_model"),
+            models.UniqueConstraint(fields=["persona", "position"], name="uniq_persona_fallback_position"),
+        ]
 
 
 class MCPServer(TenantBaseModel):

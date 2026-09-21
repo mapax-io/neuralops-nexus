@@ -163,6 +163,7 @@ def _persona_out(persona) -> PersonaOut:
         project_id=str(persona.project_id),
         model=_model_config_ref(persona.model),
         advisor_model=_model_config_ref(persona.advisor_model) if persona.advisor_model_id else None,
+        fallback_models=[_model_config_ref(m) for m in svc.fallback_models_of(persona)],
         mcp_servers=[_mcp_ref(s) for s in persona.mcp_servers.all() if s.is_active],
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
