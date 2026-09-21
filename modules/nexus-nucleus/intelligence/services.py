@@ -24,7 +24,14 @@ _validate_persona_wiring() is the single place all three are applied.
 """
 import copy
 
+import logging
+import re
+
 from django.conf import settings
+
+import httpx
+
+logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -98,6 +105,69 @@ def update_model_config(company, config_id: str, data: dict):
         config.set_api_key(api_key)
     config.save()
     return config
+
+
+class WorkerUnavailable(Exception):
+    """The AI worker is not configured or could not be reached; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+MODEL_CHECK_TIMEOUT = 30
+
+
+def check_model_config(company, data: dict) -> dict:
+    """
+    Verify a model with its key before it is saved: the worker makes one tiny
+    call the way a persona run would. Returns {ok, reason, latency_ms}; the
+    reason is the categorised sentence (chat/reasons.py), never the provider's
+    raw text -- that can carry the key. The key itself is never logged.
+    """
+    from chat.reasons import GENERIC_REASON, explain_ai_error
+
+    provider, model_id = data.get("provider"), (data.get("model_id") or "").strip()
+    _reject_unknown_provider(provider)
+    _reject_prefixed_model_id(model_id)
+    if not model_id:
+        raise ValueError("A model id is required.")
+    api_key = data.get("api_key") or None
+    if not api_key and data.get("config_id"):
+        existing = get_model_config(company, data["config_id"])
+        api_key = existing.get_api_key() if existing else None
+
+    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
+    internal_key = getattr(settings, "INTERNAL_API_KEY", "")
+    if not nexus_ai_url or not internal_key:
+        raise WorkerUnavailable(503, "The AI worker is not configured on this server, so the model cannot be checked.")
+    try:
+        response = httpx.post(
+            f"{nexus_ai_url}/api/v1/models/check/",
+            json={"provider": provider, "model_id": model_id, "api_key": api_key, "api_base": data.get("api_base") or None},
+            headers={"X-Internal-Key": internal_key},
+            timeout=MODEL_CHECK_TIMEOUT,
+        )
+        response.raise_for_status()
+        answer = response.json()
+    except httpx.HTTPError as exc:
+        logger.warning("[model_check] worker call failed: %s", type(exc).__name__)
+        raise WorkerUnavailable(502, "The AI worker could not be reached to check the model. Try again in a moment.")
+
+    if answer.get("ok"):
+        return {"ok": True, "reason": None, "latency_ms": answer.get("latency_ms")}
+    code = answer.get("error_code")
+    if code == "unsupported_provider":
+        reason = "This server's AI worker cannot run %s models yet." % provider
+    else:
+        # The chat sentences end by pointing at the AI models page; the reader is on it.
+        reason = re.sub(r"\s*Check the (key|model) on the AI models page\.$", "", explain_ai_error(answer.get("error")))
+        if reason == GENERIC_REASON:
+            # Nothing the categories know: say what is known, which is that the provider said no.
+            status = answer.get("status_code")
+            reason = "The model provider did not accept this model with this key%s." % (" (HTTP %s)" % status if status else "")
+    logger.info("[model_check] %s:%s refused: %s (status %s)", provider, model_id, code, answer.get("status_code"))
+    return {"ok": False, "reason": reason, "latency_ms": None}
 
 
 def attach_model_config_to_project(company, config_id: str, project_id: str) -> bool:
@@ -690,6 +760,7 @@ def delete_persona(company, persona_id: str) -> bool:
 
 # ── Routines (W4) ─────────────────────────────────────────────────────────────
 import re as _re
+
 
 ROUTINE_NAME_RE = _re.compile(r"^[a-z0-9-]{1,40}$")
 ROUTINE_CAPABILITY_RE = _re.compile(r"^(shell|filesystem|web_search|web_fetch|thinking|mcp:[0-9a-fA-F-]+)$")

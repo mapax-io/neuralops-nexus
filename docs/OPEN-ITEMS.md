@@ -693,3 +693,11 @@ small follow-up so there is one implementation.
 imports from `workspace/tests.py`. The full-suite order (`workspace.tests` before `chat.tests`) loads fine, but
 `manage.py test chat.tests …` alone fails with "partially initialized module". Move the shared fixtures
 (`MentionRightFixture`, `InviteGrantsFixture`) into a `nucleus/test_fixtures.py` both import from.
+
+## Worker: providers nucleus accepts that the runner cannot build, and a duplicated key check
+
+`ModelConfig.Provider` allows `google` and `ollama`, but `PydanticAIRunner._MODEL_REGISTRY` has no entry for
+either, so a persona on such a model fails at call time (the model check now says so up front). Add the
+pydantic-ai Google model and an OpenAI-compatible route for Ollama. Also: `apps/routers/embed.py` and
+`apps/routers/trigger.py` each carry their own `_verify_key`; `apps/routers/internal_key.py` (model check) is the
+shared one — point the other two at it.
