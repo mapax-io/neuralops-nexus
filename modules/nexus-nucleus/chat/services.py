@@ -1223,13 +1223,25 @@ async def trigger_ai_swarm_response_async(
     #    they're equivalent risks silently breaking RAG/attached-file search.
     #    Left as a separate, explicitly flagged follow-up -- see #131.
 
-    # _build_context_sources does sync ORM queries — must be wrapped for async context
-    context_sources = await sync_to_async(_build_context_sources)(topic, company)
+    # _build_context_sources does sync ORM queries — must be wrapped for async context.
+    # The first persona decides whether Recall is in the prompt: every hop shares
+    # one job, and a persona with Recall off must not get it because it was
+    # mentioned alongside someone who has it on (audit, 2026-09-21). Guarded for
+    # the same reason as the single path: this runs unawaited, after the swarm's
+    # message_start, so a raise here would leave a spinner with no end.
+    try:
+        context_sources = await sync_to_async(_build_context_sources)(topic, company, personas[0] if personas else None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[swarm] context sources unavailable for msg %s: %s", msg_id, exc)
+        context_sources = []
 
     job_payload = {
         "job_id": str(uuid.uuid4()),
         "msg_id": msg_id,
-        "personas": [[str(persona.id), persona.name, persona.description] for persona in personas],
+        # description is nullable, and the worker's schema is list[list[str]]: a
+        # persona created without one used to 422 the whole swarm, which ended as
+        # a spinner that never resolved (audit, 2026-09-21).
+        "personas": [[str(persona.id), persona.name, persona.description or ""] for persona in personas],
         "topic_id": topic_id,
         "user_message_id": user_message_id,
         "message": user_message,
@@ -1410,11 +1422,26 @@ async def trigger_ai_swarm_response_async(
         stopped = True
     except Exception as exc:
         logger.warning("[trigger] streaming error for msg %s: %s: %s", active_msg_id, type(exc).__name__, exc)
+        ai_error = ai_error or f"streaming error: {type(exc).__name__}: {exc}"
 
     if stopped:
         await end_stopped_reply(channel, active_msg_id, "".join(streamed_contents.get(active_msg_id, [])), trails.get(active_msg_id))
         if active_msg_id != msg_id:
             await stop_signals().clear(msg_id)
+    elif ai_error:
+        # Without this the run ended with no terminal event at all: the bubble
+        # span for 90 s and then read as stalled (audit, 2026-09-21).
+        display_error = explain_ai_error(ai_error)
+        await sync_to_async(fail_ai_message)(active_msg_id, ai_error, display_error, trails.get(active_msg_id))
+        await publish_async(channel, {
+            "type": "message_error", "id": active_msg_id, "content": display_error,
+            "output_type": "text", "render_as": "text", "stopped": False,
+        })
+    # A nudge the swarm never reached is a message, not a lost word — the single
+    # path has done this since W8; this one forgot.
+    await repost_untaken_nudges(company, project, topic, active_msg_id, channel)
+    if active_msg_id != msg_id:
+        await repost_untaken_nudges(company, project, topic, msg_id, channel)
 
 
 # ── Read messages ──────────────────────────────────────────────────────────────

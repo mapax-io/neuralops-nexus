@@ -1293,3 +1293,37 @@ class NudgeRelayTests(RelayFixture):
         self.assertEqual([r.content for r in human], ["and cite it"])
         self.assertEqual(human[0].sender_id, self.owner.id)
         self.assertEqual([e for e in self.published if e.get("type") == "message" and e.get("content") == "and cite it"][0]["sender_type"], "human")
+
+
+class SwarmSafetyTests(MentionRightFixture):
+    """A gate that holds alone must hold in company: a swarm run cannot ask for a plan, so it refuses one."""
+
+    def test_a_gated_persona_refuses_the_swarm_rather_than_acting_unapproved(self):
+        from nucleus.models import Persona
+        Persona.objects.filter(id=self.persona_bob.id).update(acts_after_approval=True)
+        r, trigger, swarm, publish = self.send(self.sara, "@Sara @Bob ship it /swarm")
+        self.assertEqual(r.status_code, 200, r.content)
+        swarm.assert_not_awaited()
+        trigger.assert_not_awaited()
+        refusals = r.json()["refusals"]
+        self.assertEqual({x["name"] for x in refusals}, {"Sara", "Bob"})
+        self.assertEqual({x["code"] for x in refusals}, {"gated_in_swarm"})
+        self.assertIn("@Bob", refusals[0]["message"])
+        self.assertIn("on their own", refusals[0]["message"])
+        # The sender is told in the topic as well as in the response.
+        self.assertTrue(self.refused_events(publish))
+
+    def test_ungated_personas_still_swarm(self):
+        r, trigger, swarm, _ = self.send(self.sara, "@Sara @Bob ship it /swarm")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(swarm.await_count, 1)
+        self.assertEqual(r.json()["refusals"], [])
+
+    def test_a_gated_persona_mentioned_alone_still_proposes(self):
+        from nucleus.models import Persona
+        Persona.objects.filter(id=self.persona_bob.id).update(acts_after_approval=True)
+        r, trigger, swarm, _ = self.send(self.sara, "@Bob ship it")
+        self.assertEqual(r.status_code, 200, r.content)
+        swarm.assert_not_awaited()
+        self.assertEqual(trigger.await_count, 1)
+        self.assertEqual(r.json()["refusals"], [])
