@@ -817,6 +817,31 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   `apps/managers/tickets.py`, shared). The app draws frames on a canvas with a real tab strip
   (`live-browser-pane.tsx`); a server built without the engine answers 4503 and the pane says so, and the old
   iframe Web pane stays for what it is good at. Server `0.7.0` (MINOR: a new capability).
+- **Wave 7 — catalogues, deliverables, search, first steps (2026-09-21).** The last wave of the team-AI-operations
+  plan, all additive, server `0.8.0`:
+  - **Tool catalog (W11)** and **persona catalogue (W18)** are hand-kept CONTENT modules
+    (`intelligence/mcp_catalog.py`, `intelligence/persona_catalog.py`) served by `GET /mcp-catalog/` and
+    `GET /persona-catalog/` under the rights that already list those things. Nothing is fetched at runtime and no
+    secret is in either file: picking an entry PRE-FILLS the create dialog the person already uses, and every
+    field stays editable. The app renders both through one shared `Catalogue` component, built once as the plan
+    asked, which also marks what is already set up.
+  - **Deliverables (W10)**: `Deliverable(project, title, kind, version, content, source_message, created_by)`
+    (migration 0028) with a unique (project, title, version) over LIVE rows only, so removing a version frees its
+    number. Keeping is by title — the same title again is a new version, never an overwrite, because someone who
+    linked v1 still has v1. `deliverable.manage` is Member-tier per the registry; the keep route additionally
+    refuses a message from a topic the person cannot see, and one from another project outright.
+  - **Message search (W19)**: `GET /search/messages/?q=`. The worker ranks by meaning over the embeddings it
+    already keeps (`POST /api/v1/search/messages/`, ids and scores only — it decides nothing about access);
+    nucleus keeps the hits whose topics the person can see and builds every result from its own rows. When the
+    worker cannot answer, the same visible messages are searched literally, so a search box always answers. The
+    command palette shows hits and jumps to the message itself.
+  - **First steps (W20, app only)**: what a fresh server still needs, computed from data already loaded
+    (`lib/shell/first-steps.ts`) rather than a checklist anyone ticks, so it cannot claim something is done that
+    is not. A model without a key does not count. Dismissal is device-scoped: it is a state of the server, not a
+    preference to sync. The Intelligence setup guide now shares the model/persona judgement with it.
+  **The app's `COMPATIBLE_SERVER_VERSION` moves with this** (`src/lib/version.ts`): while MAJOR is 0 the app
+  treats MINOR drift as breaking, so leaving it behind disables Connect for the very server the app ships with —
+  found in the 2026-09-21 audit, when it still read `0.2.0` against a `0.7.0` server.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

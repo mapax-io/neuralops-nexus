@@ -729,3 +729,18 @@ the coroutine returns, so that task can be cancelled before it runs: the reply i
 embedded, and so never found by chat retrieval. Pre-existing for schedules; runbooks inherit it. Fix by awaiting
 the embed when the caller is synchronous (a flag on the trigger, or `interactive=False` implying it), or by
 handing the embed to its own Celery task.
+
+## `scheduling/hooks.py` calls into the chat API module
+
+`fire()` imports `chat.api` and calls its private `_trigger_personas` with eleven positional arguments — a
+services module reaching into a router module. The who-to-trigger decision belongs in `chat/services.py`
+(e.g. `trigger_personas(...)`), with `chat/api.py` and `hooks.py` both calling it. Left as is on 2026-09-21
+because the move touches every trigger call site at once; `fire()` does now honour the refusals the call
+returns and records a failed fire instead of a silent success.
+
+## `PersonaSchedule` has no database constraint for "exactly one of persona / runbook"
+
+`persona` became nullable when a schedule learned to start a runbook (W6). The invariant that exactly one of
+`persona` / `runbook` is set is enforced only in `scheduling/services.py:create_schedule`. A `CheckConstraint`
+(`(persona IS NULL) <> (runbook IS NULL)`) would make the table say it too; needs a migration and a check of
+existing rows first.
