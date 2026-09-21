@@ -1,5 +1,5 @@
 """
-Stop signals for in-flight persona replies.
+The process's small shared key store, and the stop signals built on it.
 
 A reader clicks Stop on a streaming bubble; the relay in chat/services.py reads
 the worker's stream through stoppable_lines(), which polls this on its own
@@ -7,6 +7,10 @@ clock and ends the run, keeping what streamed so far. Keyed by the AI message
 id. Redis-backed so a stop raised on one nucleus worker reaches
 the relay running on another; a memory store serves tests and single-process
 use. Requests expire, so a stale click can never kill a later run.
+
+The same store carries the nudges waiting for a reply (W8) and the inbound
+hooks' per-minute fire counts (W12) -- one client per process, reached through
+signal_store(), rather than a second connection pool per feature.
 """
 from __future__ import annotations
 
@@ -101,6 +105,7 @@ class MemoryStore:
         self.now = now
         self._expiry: dict[str, float] = {}
         self._lists: dict[str, list[str]] = {}
+        self._counts: dict[str, int] = {}
 
     async def set(self, key: str, ttl: int) -> None:
         self._expiry[key] = self.now() + ttl
@@ -117,6 +122,7 @@ class MemoryStore:
     async def delete(self, key: str) -> None:
         self._expiry.pop(key, None)
         self._lists.pop(key, None)
+        self._counts.pop(key, None)
 
     async def push(self, key: str, value: str, ttl: int) -> None:
         self._lists.setdefault(key, []).append(value)
@@ -127,6 +133,14 @@ class MemoryStore:
             self._lists.pop(key, None)
             return []
         return self._lists.pop(key, [])
+
+    async def incr(self, key: str, ttl: int) -> int:
+        """This key's count after adding one; it starts at 1 and expires with the window."""
+        if not await self.exists(key):
+            self._counts.pop(key, None)
+        self._counts[key] = self._counts.get(key, 0) + 1
+        self._expiry.setdefault(key, self.now() + ttl)
+        return self._counts[key]
 
 
 class RedisStore:
@@ -178,6 +192,14 @@ class RedisStore:
             values, _ = await pipe.execute()
         return [v.decode() if isinstance(v, bytes) else v for v in values or []]
 
+    async def incr(self, key: str, ttl: int) -> int:
+        """This key's count after adding one; the TTL is set on the first, so the window slides once."""
+        async with self.client.pipeline() as pipe:
+            pipe.incr(key)
+            pipe.expire(key, ttl, nx=True)
+            count, _ = await pipe.execute()
+        return int(count)
+
 
 class StopSignals:
     def __init__(self, store, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> None:
@@ -209,13 +231,21 @@ class StopSignals:
 
 
 _signals: StopSignals | None = None
+_store = None
+
+
+def signal_store():
+    """The process-wide store: Redis when the broker is configured, memory otherwise."""
+    global _store
+    if _store is None:
+        url = getattr(settings, "CELERY_BROKER_URL", "")
+        _store = RedisStore(url) if url.startswith("redis") else MemoryStore()
+    return _store
 
 
 def stop_signals() -> StopSignals:
-    """The process-wide instance: Redis when the broker is configured, memory otherwise."""
+    """The process-wide stop/nudge signals, over that one store."""
     global _signals
     if _signals is None:
-        url = getattr(settings, "CELERY_BROKER_URL", "")
-        store = RedisStore(url) if url.startswith("redis") else MemoryStore()
-        _signals = StopSignals(store)
+        _signals = StopSignals(signal_store())
     return _signals
