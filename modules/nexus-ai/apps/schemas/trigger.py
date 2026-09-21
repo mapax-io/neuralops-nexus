@@ -219,6 +219,10 @@ class PersonaConfig(BaseModel):
     model: ModelConfig
     mcp_servers: list[MCPArgs]
     capabilities: PersonaCapabilities
+    # The server's utility model for the worker's own small passes (recall,
+    # runbook conditions, titles); None means "use this persona's model" --
+    # ask nucleus_client.utility_model_for, never read this directly.
+    utility_model: ModelConfig | None = None
 
 
 class HistoryMessage(BaseModel):
