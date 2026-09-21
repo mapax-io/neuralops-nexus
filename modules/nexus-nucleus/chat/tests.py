@@ -116,6 +116,11 @@ class MentionRightFixture(InviteGrantsFixture):
             r = Client().post(path, data={"content": content}, content_type="application/json", HTTP_AUTHORIZATION="Bearer t")
         return r, trigger, swarm, publish
 
+    def call(self, method, path, user, body=None):
+        """One authenticated HTTP call as `user`; the Supabase check is patched away."""
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            return getattr(Client(), method)(path, data=body, content_type="application/json", HTTP_AUTHORIZATION="Bearer t")
+
     @staticmethod
     def refused_events(publish) -> list:
         return [c.args[1] for c in publish.call_args_list if isinstance(c.args[1], dict) and c.args[1].get("type") == "mention_refused"]
@@ -953,3 +958,95 @@ class ToolApprovalDecisionTests(RelayFixture):
     async def test_an_unknown_call_is_pending_until_the_relay_has_stored_it(self):
         row = await self.pending_row()
         self.assertEqual((await self.state(row, "not-yet"))["status"], "pending")
+
+
+# ── W4 Routines ───────────────────────────────────────────────────────────────
+class RoutineDirectiveTests(SimpleTestCase):
+    """The first standalone /token names a routine; paths, /swarm and mid-word slashes do not."""
+
+    def setUp(self):
+        global MessageDirectives
+        from chat.services import MessageDirectives
+
+    def test_the_first_standalone_slash_token_is_the_routine_and_is_stripped(self):
+        d = MessageDirectives("@Sara /weekly-digest last week")
+        self.assertEqual((d.routine_name, d.clean_message, d.mention_names), ("weekly-digest", "@Sara last week", ["Sara"]))
+        d = MessageDirectives("/weekly-digest @Sara")
+        self.assertEqual((d.routine_name, d.clean_message), ("weekly-digest", "@Sara"))
+
+    def test_paths_swarm_and_mid_word_slashes_are_not_routines(self):
+        d = MessageDirectives("@Sara look at /etc/hosts and 50/50 odds")
+        self.assertIsNone(d.routine_name)
+        self.assertEqual(d.clean_message, "@Sara look at /etc/hosts and 50/50 odds")
+        d = MessageDirectives("@A @B plan the launch /swarm")
+        self.assertTrue(d.swarm)
+        self.assertIsNone(d.routine_name)
+        self.assertIsNone(MessageDirectives("@Sara /Weekly_Digest go").routine_name)  # not the slug alphabet
+
+    def test_only_the_first_token_counts_and_the_other_directives_still_parse(self):
+        d = MessageDirectives("@Sara /weekly-digest /other sales @chart")
+        self.assertEqual((d.routine_name, d.output_type, d.clean_message), ("weekly-digest", "chart", "@Sara /other sales"))
+        d = MessageDirectives("@Sara @session /meeting-notes today")
+        self.assertTrue(d.has_session_open)
+        self.assertEqual(d.routine_name, "meeting-notes")
+
+
+class RoutineSendTests(MentionRightFixture):
+    """`@Sara /weekly-digest …` runs Sara with the routine; an unknown routine refuses her."""
+
+    def setUp(self):
+        super().setUp()
+        from intelligence.services import seed_builtin_routines
+        seed_builtin_routines(self.p1)
+
+    def test_a_known_routine_rides_the_trigger_and_leaves_the_message(self):
+        r, trigger, _swarm, publish = self.send(self.sara, "@Sara /weekly-digest last week")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["refusals"], [])
+        kwargs = trigger.call_args.kwargs
+        self.assertEqual(kwargs["routine"].name, "weekly-digest")
+        self.assertEqual(kwargs["user_message"], "@Sara last week")
+        self.assertEqual(self.refused_events(publish), [])
+
+    def test_an_unknown_routine_refuses_the_mentioned_personas_and_posts_the_message(self):
+        r, trigger, _swarm, publish = self.send(self.sara, "@Sara /no-such-thing hello")
+        self.assertEqual(r.status_code, 200, r.content)
+        refusals = r.json()["refusals"]
+        self.assertEqual([(x["name"], x["code"]) for x in refusals], [("Sara", "unknown_routine")])
+        self.assertIn("/no-such-thing", refusals[0]["message"])
+        trigger.assert_not_called()
+        self.assertEqual(len(self.refused_events(publish)), 1)
+
+    def test_a_routine_from_another_project_is_unknown_here(self):
+        from intelligence.services import create_routine
+        create_routine(self.company, self.p2, self.owner, {"name": "elsewhere", "title": "Elsewhere", "purpose": "", "instructions": "x"})
+        r, trigger, _swarm, _publish = self.send(self.sara, "@Sara /elsewhere go")
+        self.assertEqual(r.json()["refusals"][0]["code"], "unknown_routine")
+        trigger.assert_not_called()
+
+    def test_a_slash_token_without_a_mention_is_just_a_message(self):
+        r, trigger, _swarm, publish = self.send(self.sara, "/weekly-digest is what we call it")
+        self.assertEqual((r.status_code, r.json()["refusals"]), (200, []))
+        trigger.assert_not_called()
+        self.assertEqual(self.refused_events(publish), [])
+
+
+class RoutineRelayTests(RelayFixture):
+    """The routine's id rides the job the worker gets; none when no routine was named."""
+
+    def setUp(self):
+        super().setUp()
+        FakeClient.posted = []
+
+    async def test_the_job_carries_the_routine_id_or_none(self):
+        from intelligence.services import seed_builtin_routines
+        routines = await sync_to_async(seed_builtin_routines)(self.p1)
+        digest = next(x for x in routines if x.name == "weekly-digest")
+        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"}))
+        await trigger_ai_response_async(
+            company=self.company, project=self.p1, topic=self.t1, persona=self.persona_sara,
+            user_message="last week", user_message_id="u1", topic_id=str(self.t1.id), routine=digest,
+        )
+        self.assertEqual(FakeClient.posted[-1]["routine_id"], str(digest.id))
+        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
+        self.assertIsNone(FakeClient.posted[-1]["routine_id"])

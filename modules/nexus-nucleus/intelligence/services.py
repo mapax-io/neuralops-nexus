@@ -651,6 +651,121 @@ def delete_persona(company, persona_id: str) -> bool:
 
 # ── PromptTemplate ────────────────────────────────────────────────────────────
 
+# ── Routines (W4) ─────────────────────────────────────────────────────────────
+import re as _re
+
+ROUTINE_NAME_RE = _re.compile(r"^[a-z0-9-]{1,40}$")
+ROUTINE_CAPABILITY_RE = _re.compile(r"^(shell|filesystem|web_search|web_fetch|thinking|mcp:[0-9a-fA-F-]+)$")
+ROUTINE_INSTRUCTIONS_MAX = 8000
+
+
+def validate_routine_data(data: dict, *, partial: bool = False) -> dict:
+    """The shape a routine is stored in; raises ValueError with the reason a person can act on."""
+    out = dict(data)
+    if "name" in out or not partial:
+        name = (out.get("name") or "").strip()
+        if not ROUTINE_NAME_RE.match(name):
+            raise ValueError("A routine name is 1–40 lowercase letters, digits or hyphens — it is what people type after /.")
+        out["name"] = name
+    if "title" in out or not partial:
+        title = (out.get("title") or "").strip()
+        if not title or len(title) > 120:
+            raise ValueError("A routine needs a title of at most 120 characters.")
+        out["title"] = title
+    if "purpose" in out:
+        purpose = (out.get("purpose") or "").strip()
+        if len(purpose) > 200:
+            raise ValueError("The purpose is at most 200 characters.")
+        out["purpose"] = purpose
+    if "instructions" in out or not partial:
+        instructions = (out.get("instructions") or "").strip()
+        if not instructions or len(instructions) > ROUTINE_INSTRUCTIONS_MAX:
+            raise ValueError(f"Instructions are required and at most {ROUTINE_INSTRUCTIONS_MAX:,} characters.")
+        out["instructions"] = instructions
+    if out.get("allowed_capabilities") is not None:
+        caps = out["allowed_capabilities"]
+        if not isinstance(caps, list) or not all(isinstance(c, str) and ROUTINE_CAPABILITY_RE.match(c) for c in caps):
+            raise ValueError("allowed_capabilities is a list of capability ids: shell, filesystem, web_search, web_fetch, thinking or mcp:<server id>.")
+        out["allowed_capabilities"] = list(dict.fromkeys(caps))
+    return out
+
+
+def list_routines(project):
+    from nucleus.models import Routine
+    return list(Routine.objects.filter(project=project, is_active=True).select_related("model_config").order_by("name"))
+
+
+def get_routine(project, routine_id: str):
+    from nucleus.models import Routine
+    return Routine.objects.filter(project=project, id=routine_id, is_active=True).select_related("model_config").first()
+
+
+def get_routine_by_name(project, name: str):
+    """The routine a /token names in THIS project, or None -- routines are project-owned like personas."""
+    from nucleus.models import Routine
+    return Routine.objects.filter(project=project, name=name, is_active=True).select_related("model_config").first()
+
+
+def _routine_name_taken(project, name: str, exclude_id=None) -> bool:
+    from nucleus.models import Routine
+    qs = Routine.objects.filter(project=project, name=name, is_active=True)
+    if exclude_id:
+        qs = qs.exclude(id=exclude_id)
+    return qs.exists()
+
+
+def create_routine(company, project, user, data: dict):
+    from nucleus.models import Routine
+    data = validate_routine_data(data)
+    model_config = data.pop("model_config", None)
+    model_config_id = data.pop("model_config_id", None)
+    if model_config_id:
+        model_config = _resolve_model_config(company, model_config_id)
+    if _routine_name_taken(project, data["name"]):
+        raise ValueError("A routine named /%s already exists in this project." % data["name"])
+    return Routine.objects.create(company=company, project=project, created_by=user, model_config=model_config, **data)
+
+
+def patch_routine(company, project, routine_id: str, data: dict):
+    routine = get_routine(project, routine_id)
+    if not routine:
+        return None
+    data = validate_routine_data({k: v for k, v in data.items() if v is not None}, partial=True)
+    if data.pop("clear_model", False):
+        routine.model_config = None
+    model_config_id = data.pop("model_config_id", None)
+    if model_config_id:
+        routine.model_config = _resolve_model_config(company, model_config_id)
+    if data.pop("clear_capabilities", False):
+        routine.allowed_capabilities = None
+    if "name" in data and _routine_name_taken(project, data["name"], exclude_id=routine.id):
+        raise ValueError("A routine named /%s already exists in this project." % data["name"])
+    for field, value in data.items():
+        setattr(routine, field, value)
+    routine.save()
+    return routine
+
+
+def delete_routine(project, routine_id: str) -> bool:
+    """Soft-delete a routine someone made; a built-in stays (the route answers 409)."""
+    routine = get_routine(project, routine_id)
+    if not routine or routine.is_builtin:
+        return False
+    routine.soft_delete()
+    return True
+
+
+def seed_builtin_routines(project) -> list:
+    """The four built-ins, added by name where missing -- a project keeps its edits."""
+    from nucleus.models import Routine
+    from .builtin_routines import BUILTIN_ROUTINES
+    existing = {r.name: r for r in Routine.objects.filter(project=project, is_active=True)}
+    for spec in BUILTIN_ROUTINES:
+        if spec["name"] not in existing:
+            existing[spec["name"]] = Routine.objects.create(company=project.company, project=project, is_builtin=True, **spec)
+    return list_routines(project)
+
+
 def list_prompt_templates(company):
     from nucleus.models import PromptTemplate
     return PromptTemplate.objects.filter(

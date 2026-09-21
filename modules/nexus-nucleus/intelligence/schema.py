@@ -290,6 +290,41 @@ class PersonaOut(Schema):
     # REMOVED: source_type, model_id, agent_id
 
 
+# ── Routine (W4) ──────────────────────────────────────────────────────────────
+
+class RoutineIn(Schema):
+    name: str
+    title: str
+    purpose: str = ""
+    instructions: str
+    allowed_capabilities: Optional[list[str]] = None   # None = the persona's own tools
+    model_config_id: Optional[str] = None
+
+
+class RoutinePatchIn(Schema):
+    name: Optional[str] = None
+    title: Optional[str] = None
+    purpose: Optional[str] = None
+    instructions: Optional[str] = None
+    allowed_capabilities: Optional[list[str]] = None
+    clear_capabilities: bool = False   # back to the persona's own tools
+    model_config_id: Optional[str] = None
+    clear_model: bool = False          # back to the persona's own model
+
+
+class RoutineOut(Schema):
+    id: str
+    project_id: str
+    name: str
+    title: str
+    purpose: str
+    instructions: str
+    allowed_capabilities: Optional[list[str]] = None
+    model: Optional[ModelConfigRef] = None
+    is_builtin: bool
+    created_by_id: Optional[str] = None
+
+
 # ── PromptTemplate ────────────────────────────────────────────────────────────
 
 class PromptTemplateOut(Schema):

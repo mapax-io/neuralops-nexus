@@ -87,6 +87,9 @@ def create_project(request, payload: ProjectCreateRequest):
     except ValueError as exc:
         raise HttpError(400, str(exc))
     svc.provision_project_folder_and_mcp(project)
+    # The four built-in routines every project starts with (W4).
+    from intelligence.services import seed_builtin_routines
+    seed_builtin_routines(project)
     return _project_out(project)
 
 

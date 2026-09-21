@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.core.exceptions import ImproperlyConfigured
 
-from .base import BaseModel, TenantBaseModel
+from .base import BaseModel, ProjectBaseModel, TenantBaseModel
 
 
 def _fernet():
@@ -795,3 +795,33 @@ class MCPServer(TenantBaseModel):
 
     def __str__(self):
         return self.name
+
+
+class Routine(ProjectBaseModel):
+    """
+    A team-shared, named method a persona runs with for one reply:
+    `@Sara /weekly-digest last week`. The instructions ride the system prompt
+    after the project brief and the persona's own prompt; allowed_capabilities
+    narrows the persona's tools for that turn (never widens); model_config
+    swaps the model for that turn. Four built-ins are seeded per project
+    (intelligence/builtin_routines.py) -- editable, never deletable.
+    """
+    name = models.CharField(max_length=40, help_text="The /token: lowercase letters, digits and hyphens; unique per project.")
+    title = models.CharField(max_length=120)
+    purpose = models.CharField(max_length=200, blank=True, default="")
+    instructions = models.TextField(help_text="Markdown, at most 8,000 characters.")
+    # None = the persona's own tools; a list of capability ids (shell, filesystem,
+    # web_search, web_fetch, thinking, mcp:<server id>) keeps only those.
+    allowed_capabilities = models.JSONField(null=True, blank=True)
+    model_config = models.ForeignKey(
+        ModelConfig, on_delete=models.SET_NULL, null=True, blank=True, related_name="routines",
+        help_text="Overrides the persona's model for a reply run with this routine.",
+    )
+    is_builtin = models.BooleanField(default=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_routines")
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return f"/{self.name}"

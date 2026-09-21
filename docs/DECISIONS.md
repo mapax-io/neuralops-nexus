@@ -662,6 +662,17 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   that ends expires its pending calls. Scheduled (`interactive=False`) and swarm runs refuse Ask tools at once —
   nobody can answer there. Not the plan's Redis wait: the worker has no Redis, and Stop already works as
   nucleus-held state that a poll reads. Server `0.5.0` — the app relies on the decision endpoint.
+- **Routines (W4, 2026-09-21).** `Routine` (project-owned: `name` `[a-z0-9-]{1,40}` unique per project, `title`,
+  `purpose` ≤ 200, `instructions` ≤ 8 000, `allowed_capabilities` null | list of capability ids, `model_config` null,
+  `is_builtin`) under `/projects/{id}/routines/` — list needs `topic.list` at the project, writes `routine.manage`;
+  built-ins are editable, never deletable (409). Four are seeded per project on creation and by
+  `manage.py seed_routines` (idempotent by name). The send path reads the FIRST standalone `/name` token
+  (`MessageDirectives.routine_name`, stripped from the message; `/swarm`, paths and mid-word slashes are not
+  tokens): known in the topic's project → `routine_id` on the job; unknown with personas to answer → refusal
+  `unknown_routine` (the message still posts, they do not reply); no persona → plain text. The WORKER fetches the
+  routine (`GET /internal/routines/{id}/`, key decrypted there) and applies it for that turn only: instructions as
+  their own block after brief + persona prompt, `allowed_capabilities` INTERSECTS the persona's tools (never widens),
+  `model_config` replaces the model. Swarm runs ignore routines. Server `0.5.1` (additive).
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

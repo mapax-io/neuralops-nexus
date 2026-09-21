@@ -171,6 +171,16 @@ class PersonaInternal(Schema):
     tool_levels: dict = Field(default_factory=dict)
 
 
+class RoutineInternal(Schema):
+    """One routine, ready to apply for a turn: instructions, the tool narrowing, the model swap (key decrypted)."""
+    id: str
+    name: str
+    title: str
+    instructions: str
+    allowed_capabilities: Optional[list[str]] = None
+    model: Optional[ModelInternal] = None
+
+
 class ContextSourceInternal(Schema):
     id: str
     type: str  # "doc" or "code"
@@ -356,6 +366,20 @@ def get_persona_internal(request, persona_id: str):
         utility_model=_model_internal(utility) if (utility := utility_model_of(persona.company)) else None,
         max_steps=persona.max_steps,
         tool_levels=persona.tool_levels or {},
+    )
+
+
+@router.get("/routines/{routine_id}/", response=RoutineInternal)
+def get_routine_internal(request, routine_id: str):
+    """The routine a job names (TriggerJob.routine_id) -- fetched by the worker like the persona."""
+    from nucleus.models import Routine
+    routine = Routine.objects.filter(id=routine_id, is_active=True).select_related("model_config").first()
+    if not routine:
+        raise HttpError(404, "Routine not found.")
+    model = routine.model_config if routine.model_config_id and routine.model_config and routine.model_config.is_active else None
+    return RoutineInternal(
+        id=str(routine.id), name=routine.name, title=routine.title, instructions=routine.instructions,
+        allowed_capabilities=routine.allowed_capabilities, model=_model_internal(model) if model else None,
     )
 
 
