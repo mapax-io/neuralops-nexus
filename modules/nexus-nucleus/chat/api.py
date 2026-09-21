@@ -318,15 +318,15 @@ async def send_message(
         ))
         # Only trigger personas if there is actual content beyond the @mention
         if directives.message_without_mentions():
-            await _trigger_personas(mentioned_personas, company, project, topic,
-                                     topic_id, msg, directives.clean_message,
-                                     directives.output_type, directives.swarm, routine, user)
+            refusals = await _trigger_personas(mentioned_personas, company, project, topic,
+                                                topic_id, msg, directives.clean_message,
+                                                directives.output_type, directives.swarm, routine, user) or refusals
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
-        await _trigger_personas(mentioned_personas, company, project, topic,
-                                 topic_id, msg, directives.clean_message,
-                                 directives.output_type, directives.swarm, routine, user)
+        refusals = await _trigger_personas(mentioned_personas, company, project, topic,
+                                            topic_id, msg, directives.clean_message,
+                                            directives.output_type, directives.swarm, routine, user) or refusals
 
     else:
         # Rules 4 + 5: no explicit mention — check session
@@ -345,9 +345,9 @@ async def send_message(
                     "[chat/api] session auto-trigger personas=%s",
                     [p.name for p in session_personas],
                 )
-                await _trigger_personas(session_personas, company, project, topic,
-                                         topic_id, msg, directives.clean_message,
-                                         directives.output_type, directives.swarm, routine, user)
+                refusals = await _trigger_personas(session_personas, company, project, topic,
+                                                    topic_id, msg, directives.clean_message,
+                                                    directives.output_type, directives.swarm, routine, user) or refusals
         # Rule 5: no mention, no session — human-only message, nothing to do
 
     if refusals:
@@ -375,9 +375,10 @@ async def _trigger_personas(
     swarm: bool,
     routine=None,
     triggered_by=None,
-) -> None:
+) -> list[dict]:
     """
-    Fire AI trigger tasks for each persona in parallel.
+    Fire AI trigger tasks for each persona in parallel. Returns any refusals --
+    personas that will not answer this message, and why.
     Spawns one asyncio task per persona. Only triggers personas that have
     a model configured -- a cheap existence check, not a judgment about the
     model's actual configuration, so it stays here. (The old source_type
@@ -388,11 +389,24 @@ async def _trigger_personas(
     #131). This function's only job is deciding WHO to trigger.
     """
     if not personas:
-        return
+        return []
     # Turn off swarm mode if only one persona is mentioned
     swarm = swarm and len(personas) > 1
 
     if swarm:
+        # A gated persona proposes before it acts, and the swarm path has no plan
+        # to approve — it used to run them with the gate simply ignored, so the
+        # same persona was safe alone and not safe in company (audit, 2026-09-21).
+        # One at a time is the honest answer until a swarm can carry a plan.
+        gated = [p for p in personas if getattr(p, "acts_after_approval", False)]
+        if gated:
+            names = ", ".join(f"@{p.name}" for p in gated)
+            logger.warning("[chat/api] swarm refused: gated personas %s", [p.name for p in gated])
+            return _refuse(
+                personas, "gated_in_swarm",
+                f"{names} proposes a plan before acting, which a /swarm run cannot ask you to approve. "
+                "Mention them on their own.",
+            )
         asyncio.create_task(
             chat_svc.trigger_ai_swarm_response_async(
                 company=company,
@@ -432,6 +446,7 @@ async def _trigger_personas(
                     triggered_by=triggered_by,
                 )
             )
+    return []
 
 
 @router.post(
