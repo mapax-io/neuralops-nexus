@@ -31,10 +31,12 @@ from authn.permissions.checker import PermissionChecker
 from workspace import services as ws_svc
 from intelligence import services as intel_svc
 from chat import services as chat_svc
+from scheduling import hooks as hook_svc
 from scheduling import runbooks
 from scheduling import services as sched_svc
 from scheduling.schema import (
-    RunbookIn, RunbookOut, RunbookPatchIn, RunbookRunOut, RunbookStartIn, ScheduleCreateIn, ScheduleUpdateIn, ScheduleOut,
+    HookIn, HookOut, HookPatchIn, RunbookIn, RunbookOut, RunbookPatchIn, RunbookRunOut, RunbookStartIn,
+    ScheduleCreateIn, ScheduleUpdateIn, ScheduleOut,
 )
 
 router = Router(tags=["Scheduling"], auth=SupabaseBearer())
@@ -312,3 +314,65 @@ def start_runbook(request, project_id: str, runbook_id: str, payload: RunbookSta
     run = runbooks.start_run(company, project, runbook, user, topic)
     run_runbook.delay(str(run.id))
     return runbooks.serialise_run(runbooks.get_run(project, str(run.id)))
+
+
+# ── Inbound hooks (W12) ───────────────────────────────────────────────────────
+# Managed under the topic they fire into, like schedules. hook.manage defines
+# them; because a hook calls a persona as its creator, creating one also needs
+# the right to call personas THERE -- otherwise a hook would be a way to lend
+# someone else's reach to a machine.
+
+def _hook_topic(request, project_id: str, channel_id: str, topic_id: str, *, creating: bool = False):
+    company, user, project, channel, topic = _resolve_topic(request, project_id, channel_id, topic_id)
+    if not PermissionChecker.can(user, "hook.manage", obj=project):
+        raise HttpError(403, "You don't have permission to manage inbound hooks here.")
+    if creating and not PermissionChecker.can(user, "persona.mention", obj=topic):
+        raise HttpError(403, "You don't have permission to call personas in this topic.")
+    return company, user, project, topic
+
+
+@router.get("/{project_id}/channels/{channel_id}/topics/{topic_id}/hooks/", response=List[HookOut])
+def list_hooks(request, project_id: str, channel_id: str, topic_id: str):
+    _, _, _, topic = _hook_topic(request, project_id, channel_id, topic_id)
+    return [hook_svc.serialise_hook(h) for h in hook_svc.list_hooks(topic)]
+
+
+@router.post("/{project_id}/channels/{channel_id}/topics/{topic_id}/hooks/", response=HookOut)
+def create_hook(request, project_id: str, channel_id: str, topic_id: str, payload: HookIn):
+    """The only response that carries the token -- it is hashed at rest and cannot be shown again."""
+    company, user, project, topic = _hook_topic(request, project_id, channel_id, topic_id, creating=True)
+    persona = intel_svc.get_persona(company, payload.persona_id)
+    if not persona or str(persona.project_id) != str(project.id):
+        raise HttpError(404, "Persona not found.")
+    hook, token = hook_svc.create_hook(company, project, topic, user, persona, payload.label)
+    _announce(company, project, topic, f"\U0001F517 Inbound hook created for @{persona.name}{f' ({hook.label})' if hook.label else ''} by {user.get_display_name()}")
+    return hook_svc.serialise_hook(hook, token=token)
+
+
+@router.patch("/{project_id}/channels/{channel_id}/topics/{topic_id}/hooks/{hook_id}/", response=HookOut)
+def patch_hook(request, project_id: str, channel_id: str, topic_id: str, hook_id: str, payload: HookPatchIn):
+    _, _, _, topic = _hook_topic(request, project_id, channel_id, topic_id)
+    hook = hook_svc.get_hook(topic, hook_id)
+    if not hook:
+        raise HttpError(404, "Hook not found.")
+    return hook_svc.serialise_hook(hook_svc.patch_hook(hook, label=payload.label, is_paused=payload.is_paused))
+
+
+@router.post("/{project_id}/channels/{channel_id}/topics/{topic_id}/hooks/{hook_id}/regenerate/", response=HookOut)
+def regenerate_hook(request, project_id: str, channel_id: str, topic_id: str, hook_id: str):
+    """A new token, shown once; whatever held the old URL stops working immediately."""
+    _, _, _, topic = _hook_topic(request, project_id, channel_id, topic_id, creating=True)
+    hook = hook_svc.get_hook(topic, hook_id)
+    if not hook:
+        raise HttpError(404, "Hook not found.")
+    return hook_svc.serialise_hook(hook, token=hook_svc.regenerate_token(hook))
+
+
+@router.delete("/{project_id}/channels/{channel_id}/topics/{topic_id}/hooks/{hook_id}/", response={204: None})
+def delete_hook(request, project_id: str, channel_id: str, topic_id: str, hook_id: str):
+    _, _, _, topic = _hook_topic(request, project_id, channel_id, topic_id)
+    hook = hook_svc.get_hook(topic, hook_id)
+    if not hook:
+        raise HttpError(404, "Hook not found.")
+    hook_svc.delete_hook(hook)
+    return 204, None

@@ -50,6 +50,7 @@ from .context import (
 )
 
 from .scheduling import (
+    InboundHook,
     PersonaSchedule,
     Runbook,
     RunbookRun,

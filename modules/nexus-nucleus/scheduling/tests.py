@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 from django.test import Client
 
-from authn.permissions.models import Right, Role, RoleRight
+from authn.permissions.models import Right, Role, RoleAssignment, RoleRight
 from chat.tests import MentionRightFixture
-from nucleus.models import ChatMessage, CompanyAccess, PersonaSchedule
+from nucleus.models import ChatMessage, CompanyAccess, PersonaSchedule, User
 from scheduling.tasks import fire_persona_schedule
 
 
@@ -398,3 +398,178 @@ class RunbookScheduleTests(RunbookFixture):
         self.assertEqual(schedule.last_status, PersonaSchedule.RunStatus.SUCCESS)
         listed = self.call("get", path, self.sara).json()
         self.assertEqual(listed[0]["runbook_title"], "Weekly ops update")
+
+
+# ── Inbound hooks (W12) ───────────────────────────────────────────────────────
+
+import hashlib  # noqa: E402
+
+from nucleus.models import InboundHook  # noqa: E402
+from scheduling import hooks as hook_svc  # noqa: E402
+
+
+class HookFixture(MentionRightFixture):
+    """A hook into t1 calling Sara, created by sara, with the shared store swapped for a memory one."""
+
+    def setUp(self):
+        super().setUp()
+        # hook.manage is Admin-tier in the registry (a hook lends a persona's
+        # reach to a machine), so the fixture's creator holds Admin.
+        self.assign(self.sara, "Admin")
+        self.manage_path = f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t1.id}/hooks/"
+        from chat.stop_signals import MemoryStore
+        self.store = MemoryStore()
+        patcher = patch("scheduling.hooks.signal_store", return_value=self.store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def create(self, user=None, persona=None, label="Build monitor"):
+        body = {"persona_id": str((persona or self.persona_sara).id), "label": label}
+        return self.call("post", self.manage_path, user or self.sara, body)
+
+    def hook_with_token(self):
+        r = self.create()
+        self.assertEqual(r.status_code, 200, r.content)
+        return InboundHook.objects.get(id=r.json()["id"]), r.json()["token"]
+
+    def fire(self, token, body=None, **kw):
+        with patch("scheduling.hooks.chat_api._trigger_personas", new_callable=AsyncMock) as trigger, \
+             patch("chat.services.publish_async", new_callable=AsyncMock) as publish, \
+             patch("chat.services.embed_message_async", new_callable=AsyncMock):
+            r = Client().post(f"/api/v1/hooks/{token}/", data=body if body is not None else {"text": "the build is red"},
+                              content_type="application/json", **kw)
+        return r, trigger, publish
+
+
+class HookManagementTests(HookFixture):
+
+    def test_creating_needs_hook_manage_and_the_mention_right_and_shows_the_token_once(self):
+        # A Viewer, and an ordinary Member, may not define hooks -- it is Admin-tier.
+        self.assertEqual(self.create(self.vera).status_code, 403)
+        member = User.objects.create_user(username="milo", email="milo@acme.test", password="x")
+        CompanyAccess.objects.create(company=self.company, user=member, role="member", invited_by=self.owner)
+        self.assign(member, "Member")
+        self.assertEqual(self.create(member).status_code, 403)
+        r = self.create()
+        self.assertEqual(r.status_code, 200, r.content)
+        out = r.json()
+        token = out["token"]
+        self.assertGreaterEqual(len(token), 32)
+        hook = InboundHook.objects.get()
+        self.assertEqual(hook.token_hash, hashlib.sha256(token.encode()).hexdigest())
+        self.assertNotIn(token, hook.token_hash)
+        self.assertEqual(hook.token_hint, token[-4:])
+        self.assertEqual((hook.created_by, hook.persona_id, hook.topic_id), (self.sara, self.persona_sara.id, self.t1.id))
+        self.assertEqual((out["persona_name"], out["label"], out["token_hint"], out["fire_count"]), ("Sara", "Build monitor", token[-4:], 0))
+        # The list never carries the token again -- only the hint.
+        listed = self.call("get", self.manage_path, self.sara).json()
+        self.assertEqual(len(listed), 1)
+        self.assertIsNone(listed[0].get("token"))  # never again, only the hint
+        self.assertEqual(listed[0]["token_hint"], token[-4:])
+
+    def test_a_member_who_cannot_call_personas_here_cannot_leave_a_hook_that_does(self):
+        scheduler = Role.objects.create(company=self.company, name="Hooker")
+        for code in ("project.list", "project.view", "channel.list", "topic.list", "hook.manage"):
+            RoleRight.objects.create(role=scheduler, right=Right.objects.get(code=code))
+        RoleAssignment.objects.filter(user=self.vera).delete()
+        self.assign(self.vera, "Hooker")
+        r = self.create(self.vera)
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertIn("call personas", r.json()["detail"])
+
+    def test_pause_regenerate_and_remove(self):
+        hook, token = self.hook_with_token()
+        r = self.call("patch", f"{self.manage_path}{hook.id}/", self.sara, {"is_paused": True, "label": "Nightly build"})
+        self.assertEqual(r.status_code, 200, r.content)
+        hook.refresh_from_db()
+        self.assertEqual((hook.is_paused, hook.label), (True, "Nightly build"))
+        # Regenerate answers with a NEW token once, and the old one stops working.
+        r = self.call("post", f"{self.manage_path}{hook.id}/regenerate/", self.sara)
+        self.assertEqual(r.status_code, 200, r.content)
+        fresh = r.json()["token"]
+        self.assertNotEqual(fresh, token)
+        hook.refresh_from_db()
+        self.assertEqual(hook.token_hash, hashlib.sha256(fresh.encode()).hexdigest())
+        self.assertEqual(self.fire(token)[0].status_code, 404)
+        # Removing is a soft delete: the row goes, its topic keeps its messages.
+        self.assertEqual(self.call("delete", f"{self.manage_path}{hook.id}/", self.sara).status_code, 204)
+        self.assertEqual(self.call("get", self.manage_path, self.sara).json(), [])
+        self.assertEqual(self.fire(fresh)[0].status_code, 404)
+
+    def test_only_this_topic_s_hooks_are_listed_and_reachable(self):
+        hook, _ = self.hook_with_token()
+        other = f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t2.id}/hooks/"
+        self.assertEqual(self.call("get", other, self.sara).json(), [])
+        self.assertEqual(self.call("patch", f"{other}{hook.id}/", self.sara, {"is_paused": True}).status_code, 404)
+
+
+class HookFireTests(HookFixture):
+
+    def test_a_fire_posts_the_creator_s_message_and_triggers_the_persona(self):
+        hook, token = self.hook_with_token()
+        r, trigger, publish = self.fire(token)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {"ok": True})
+        row = ChatMessage.objects.filter(topic=self.t1).order_by("-sequence").first()
+        self.assertEqual(row.content, "@Sara the build is red")
+        self.assertEqual(row.sender, self.sara)              # the hook acts as its creator
+        self.assertEqual((row.metadata or {}).get("role"), "user")
+        self.assertEqual(trigger.await_count, 1)
+        kw = trigger.await_args.kwargs or {}
+        args = trigger.await_args.args
+        personas = kw.get("personas", args[0] if args else None)
+        self.assertEqual([p.id for p in personas], [self.persona_sara.id])
+        self.assertEqual(kw.get("triggered_by", None) or args[-1], self.sara)
+        self.assertTrue(any(c.args[1].get("id") == str(row.id) and c.args[1].get("type") == "message" for c in publish.call_args_list))
+        hook.refresh_from_db()
+        self.assertEqual((hook.fire_count, hook.last_status, hook.last_error), (1, InboundHook.FireStatus.SUCCESS, ""))
+        self.assertIsNotNone(hook.last_fired_at)
+
+    def test_structured_data_rides_along_as_a_fenced_block(self):
+        _, token = self.hook_with_token()
+        r, _, _ = self.fire(token, {"text": "deploy failed", "data": {"service": "api", "exit": 3}})
+        self.assertEqual(r.status_code, 200, r.content)
+        row = ChatMessage.objects.filter(topic=self.t1).order_by("-sequence").first()
+        self.assertTrue(row.content.startswith("@Sara deploy failed\n\n```json\n"))
+        self.assertIn('"service": "api"', row.content)
+        self.assertTrue(row.content.endswith("```"))
+
+    def test_the_endpoint_matrix(self):
+        hook, token = self.hook_with_token()
+        # Unknown token: 404, and nothing about whether it ever existed.
+        r, trigger, _ = self.fire("nope-not-a-token")
+        self.assertEqual(r.status_code, 404)
+        trigger.assert_not_awaited()
+        # Empty and oversize text.
+        self.assertEqual(self.fire(token, {"text": "   "})[0].status_code, 400)
+        self.assertEqual(self.fire(token, {"text": "x" * 4001})[0].status_code, 413)
+        self.assertEqual(self.fire(token, {"text": "ok", "data": {"big": "y" * 33_000}})[0].status_code, 413)
+        # Paused: 409, and no message posted.
+        before = ChatMessage.objects.filter(topic=self.t1).count()
+        InboundHook.objects.filter(id=hook.id).update(is_paused=True)
+        r, trigger, _ = self.fire(token)
+        self.assertEqual(r.status_code, 409)
+        trigger.assert_not_awaited()
+        self.assertEqual(ChatMessage.objects.filter(topic=self.t1).count(), before)
+        InboundHook.objects.filter(id=hook.id).update(is_paused=False)
+        # The creator lost the right to call personas: 403, recorded on the hook, still nothing posted.
+        self.demote_to_viewer(self.sara)
+        r, trigger, _ = self.fire(token)
+        self.assertEqual(r.status_code, 403)
+        trigger.assert_not_awaited()
+        self.assertEqual(ChatMessage.objects.filter(topic=self.t1).count(), before)
+        hook.refresh_from_db()
+        self.assertEqual(hook.last_status, InboundHook.FireStatus.FAILED)
+        self.assertIn("call personas", hook.last_error)
+
+    def test_a_hook_is_rate_limited_per_hook_and_says_when_to_retry(self):
+        _, token = self.hook_with_token()
+        for i in range(hook_svc.FIRES_PER_MINUTE):
+            self.assertEqual(self.fire(token)[0].status_code, 200, f"fire {i + 1}")
+        r, trigger, _ = self.fire(token)
+        self.assertEqual(r.status_code, 429)
+        trigger.assert_not_awaited()
+        self.assertEqual(r.headers.get("Retry-After"), "60")
+        # Another hook has its own budget.
+        _, other = self.hook_with_token()
+        self.assertEqual(self.fire(other)[0].status_code, 200)
