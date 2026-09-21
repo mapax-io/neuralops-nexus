@@ -144,6 +144,34 @@ def create_project(company, user, name: str, description: str = None):
     return project
 
 
+# Long enough for real working instructions, short enough to sit in every
+# persona prompt without crowding the conversation out of the context window.
+PROJECT_BRIEF_MAX = 8_000
+
+
+def update_project(project, user, *, brief: str | None = None, description: str | None = None):
+    """
+    Edit a project's brief and/or description. Whitespace around the brief is
+    trimmed; over the cap is refused before anything is written. Caller checks
+    project.update.
+    """
+    fields = []
+    if brief is not None:
+        brief = brief.strip()
+        if len(brief) > PROJECT_BRIEF_MAX:
+            raise ValueError(f"The brief is {len(brief):,} characters; the limit is {PROJECT_BRIEF_MAX:,}.")
+        project.brief = brief
+        project.brief_updated_by = user
+        project.brief_updated_at = timezone.now()
+        fields += ["brief", "brief_updated_by", "brief_updated_at"]
+    if description is not None:
+        project.description = description.strip()
+        fields.append("description")
+    if fields:
+        project.save(update_fields=fields + ["updated_at"])
+    return project
+
+
 def get_project(company, user, project_id: str):
     # PermissionChecker, _reachable_project_ids — imported at top of file.
 

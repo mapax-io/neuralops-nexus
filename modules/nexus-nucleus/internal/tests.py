@@ -38,3 +38,21 @@ class TopicHistoryInternalTests(MentionRightFixture):
         with patch.dict(os.environ, {"INTERNAL_API_KEY": "k"}):
             r = Client().get(f"/api/v1/internal/topics/{self.t1.id}/history/", HTTP_X_INTERNAL_API_KEY="nope")
         self.assertEqual(r.status_code, 401)
+
+
+class PersonaInternalBriefTests(MentionRightFixture):
+    def payload(self):
+        from nucleus.models import Prompt
+        Prompt.objects.get_or_create(persona=self.persona_sara, defaults={"company": self.company, "system_prompt": "You are Sara.", "output_type": "text"})
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": "k"}):
+            r = Client().get(f"/api/v1/internal/personas/{self.persona_sara.id}/", HTTP_X_INTERNAL_API_KEY="k")
+        self.assertEqual(r.status_code, 200, r.content)
+        return r.json()
+
+    def test_the_project_brief_rides_with_the_persona(self):
+        self.p1.brief = "Ship the Q4 launch."
+        self.p1.save(update_fields=["brief"])
+        self.assertEqual(self.payload()["project_brief"], "Ship the Q4 launch.")
+
+    def test_no_brief_is_null_not_an_empty_block(self):
+        self.assertIsNone(self.payload()["project_brief"])

@@ -161,6 +161,9 @@ class PersonaInternal(Schema):
     temperature: float
     max_tokens: int
     max_steps: int
+    # The project's brief, for the worker to put ahead of the persona prompt.
+    # None when the project has none (not an empty block).
+    project_brief: Optional[str] = None
 
 
 class ContextSourceInternal(Schema):
@@ -282,7 +285,7 @@ def get_persona_internal(request, persona_id: str):
 
     persona = (
         Persona.objects.filter(id=persona_id, is_active=True)
-        .select_related("prompt", "model", "advisor_model")
+        .select_related("prompt", "model", "advisor_model", "project")
         .prefetch_related("mcp_servers")
         .first()
     )
@@ -343,6 +346,7 @@ def get_persona_internal(request, persona_id: str):
         capabilities=capabilities,
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
+        project_brief=persona.project.brief or None,
         max_steps=persona.max_steps,
     )
 

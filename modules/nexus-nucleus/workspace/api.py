@@ -13,7 +13,7 @@ from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from .schema import (
     MemberAccessOut, SetMemberAccessIn,
-    ProjectCreateRequest, ProjectOut, ChannelOut, ChannelCreateRequest,
+    ProjectCreateRequest, ProjectUpdateRequest, ProjectOut, ChannelOut, ChannelCreateRequest,
     TopicCreateRequest, TopicUpdateRequest, TopicOut,
     InviteRequest, InviteResponse, MemberOut, RemoveMemberResponse,
     TeamMemberOut, AddMemberRequest, InviteToProjectRequest, InviteToProjectOut,
@@ -52,9 +52,11 @@ def _require_team_manager(user, project):
         raise HttpError(403, "You don't have permission to manage this project's team.")
 
 
-def _project_out(project) -> dict:
+def _project_out(project, with_brief: bool = False) -> dict:
     channels = project.channel_items.filter(is_active=True).order_by("name")
     return {
+        "brief": project.brief if with_brief and project.brief else None,
+        "brief_length": len(project.brief or ""),
         "id": str(project.id),
         "name": project.name,
         "slug": project.slug,
@@ -94,7 +96,22 @@ def get_project(request, project_id: str):
     project = svc.get_project(company, user, project_id)
     if not project:
         raise HttpError(404, "Project not found.")
-    return _project_out(project)
+    return _project_out(project, with_brief=True)
+
+
+@router.patch("/{project_id}/", response=ProjectOut)
+def update_project(request, project_id: str, payload: ProjectUpdateRequest):
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.update", obj=project):
+        raise HttpError(403, "You don't have permission to edit this project.")
+    try:
+        svc.update_project(project, user, brief=payload.brief, description=payload.description)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+    return _project_out(project, with_brief=True)
 
 
 @router.delete("/{project_id}/")

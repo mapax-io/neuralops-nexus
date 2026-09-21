@@ -626,6 +626,11 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   app hides a control whose endpoint answers 404. Never a breaking rename.
 - **Versions.** `NEURALOPS_VERSION` moves a MINOR only when the app *requires* a new server capability for a
   control it shows; additive fields are a PATCH. The app's `COMPATIBLE_SERVER_VERSION` follows each MINOR.
+- **Project Brief (W1, 2026-09-21).** `Project.brief` (≤ 8,000 chars, `workspace/services.py
+  update_project`) is edited under the new `project.update` right (Admin-tier) via `PATCH /projects/{id}/`;
+  the detail route returns `brief`, the list only `brief_length`. The internal persona payload carries
+  `project_brief`, and the worker puts it in its own system block *ahead of* the persona prompt — order is
+  brief → persona → output instruction. First app-required capability: server `0.3.0`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).
