@@ -16,67 +16,31 @@ the Admin-tier right is the boundary, the container the hard one.
 from __future__ import annotations
 
 import asyncio
-import base64
 import fcntl
-import hashlib
-import hmac
-import json
 import os
 import signal
 import struct
 import sys
 import termios
-import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 from apps.core.config import settings
+from apps.managers.tickets import TICKET_TTL_SECONDS, sign_ticket, verify_ticket as _verify
 
-TICKET_TTL_SECONDS = 60
+__all__ = ["TICKET_TTL_SECONDS", "TerminalSession", "sign_ticket", "verify_ticket"]
+
 # What the shell inherits, and nothing else. The worker's env carries keys.
 ENV_PASSTHROUGH = ("PATH", "LANG", "LC_ALL", "TZ")
 DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
 
 
 # ── Tickets ──────────────────────────────────────────────────────────────────
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _unb64(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
-def _signature(payload: str, secret: str) -> str:
-    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
-
-def sign_ticket(claims: dict[str, Any], secret: str, ttl: int = TICKET_TTL_SECONDS, now: float | None = None) -> str:
-    """`<base64url claims>.<hmac>` -- what nucleus issues (its copy of this lives in workspace/services.py)."""
-    body = dict(claims)
-    body["exp"] = int((now if now is not None else time.time()) + ttl)
-    payload = _b64(json.dumps(body, separators=(",", ":"), sort_keys=True).encode())
-    return f"{payload}.{_signature(payload, secret)}"
-
-
+# The ticket itself is generic and shared with the live browser; a terminal's
+# ticket must also name the folder the shell opens in.
 def verify_ticket(ticket: str | None, secret: str, now: float | None = None) -> dict[str, Any] | None:
-    """The claims when the signature holds and the ticket is not expired; None otherwise."""
-    if not ticket or "." not in ticket:
-        return None
-    payload, signature = ticket.rsplit(".", 1)
-    if not hmac.compare_digest(signature, _signature(payload, secret)):
-        return None
-    try:
-        claims = json.loads(_unb64(payload))
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(claims, dict) or not isinstance(claims.get("exp"), int):
-        return None
-    if claims["exp"] < (now if now is not None else time.time()):
-        return None
-    if not claims.get("cwd") or not claims.get("project_id"):
-        return None
-    return claims
+    """The claims when the signature holds and the ticket is live; None otherwise."""
+    return _verify(ticket, secret, require=("project_id", "cwd"), now=now)
 
 
 # ── The session ──────────────────────────────────────────────────────────────
