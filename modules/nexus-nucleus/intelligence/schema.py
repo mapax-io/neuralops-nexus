@@ -79,6 +79,8 @@ class ModelConfigOut(Schema):
     config: dict
     is_active: bool
     has_api_key: bool
+    # This config is the server's utility model (one per server, see CompanyAIConfig).
+    is_utility: bool = False
     # Projects this config is attached to (visibility gate) -- lets clients
     # render and manage attachments without a second endpoint.
     project_ids: list[str] = []
@@ -327,3 +329,4 @@ class CompanyAIConfigOut(Schema):
     embedding_model: str
     embedding_base_url: str
     default_llm_model: str
+    utility_model_id: Optional[str] = None

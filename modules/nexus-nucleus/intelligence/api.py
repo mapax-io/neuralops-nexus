@@ -67,8 +67,9 @@ def _oauth_connected(server) -> bool:
     return bool(server.get_secrets().get("refresh_token"))
 
 
-def _model_config_out(config) -> ModelConfigOut:
+def _model_config_out(config, utility_id: str | None = None) -> ModelConfigOut:
     return ModelConfigOut(
+        is_utility=str(config.id) == utility_id,
         id=str(config.id),
         name=config.name,
         provider=config.provider,
@@ -184,7 +185,9 @@ def _persona_out(persona) -> PersonaOut:
 @router.get("/model-configs/", response=List[ModelConfigOut])
 def list_model_configs(request):
     company = _company(request)
-    return [_model_config_out(m) for m in svc.list_model_configs(company, request.auth)]
+    utility = svc.utility_model_of(company)
+    utility_id = str(utility.id) if utility else None
+    return [_model_config_out(m, utility_id) for m in svc.list_model_configs(company, request.auth)]
 
 
 @router.post("/model-configs/", response=ModelConfigOut)
@@ -212,7 +215,36 @@ def patch_model_config(request, config_id: str, payload: ModelConfigPatchIn):
         raise HttpError(400, str(e))
     if not config:
         raise HttpError(404, "Model config not found.")
-    return _model_config_out(config)
+    utility = svc.utility_model_of(company)
+    return _model_config_out(config, str(utility.id) if utility else None)
+
+
+@router.post("/model-configs/{config_id}/utility/", response=ModelConfigOut)
+def set_utility_model(request, config_id: str):
+    """Make this config the server's utility model (one per server)."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to choose the utility model.")
+    try:
+        config = svc.set_utility_model(company, request.auth, config_id)
+    except LookupError:
+        raise HttpError(404, "Model config not found.")
+    return _model_config_out(config, str(config.id))
+
+
+@router.delete("/model-configs/{config_id}/utility/", response=ModelConfigOut)
+def clear_utility_model(request, config_id: str):
+    """Stop using this config as the utility model (personas' own models take over)."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to choose the utility model.")
+    config = svc.get_model_config(company, config_id)
+    if not config:
+        raise HttpError(404, "Model config not found.")
+    utility = svc.utility_model_of(company)
+    if utility and str(utility.id) == config_id:
+        svc.set_utility_model(company, request.auth, None)
+    return _model_config_out(config, None)
 
 
 @router.delete("/model-configs/{config_id}/", response={204: None})
@@ -478,28 +510,31 @@ def get_prompt(request, id: str):
 
 # ── CompanyAIConfig endpoints ─────────────────────────────────────────────────
 
-@router.get("/ai-config/", response=CompanyAIConfigOut)
-def get_ai_config(request):
-    company = _company(request)
-    config = svc.get_ai_config(company)
+def _ai_config_out(config) -> CompanyAIConfigOut:
+    utility = config.utility_model if config.utility_model_id else None
     return CompanyAIConfigOut(
         embedding_provider=config.embedding_provider,
         embedding_model=config.embedding_model,
         embedding_base_url=config.embedding_base_url,
         default_llm_model=config.default_llm_model,
+        utility_model_id=str(utility.id) if utility and utility.is_active else None,
     )
+
+
+@router.get("/ai-config/", response=CompanyAIConfigOut)
+def get_ai_config(request):
+    company = _company(request)
+    return _ai_config_out(svc.get_ai_config(company))
 
 
 @router.put("/ai-config/", response=CompanyAIConfigOut)
 def update_ai_config(request, payload: CompanyAIConfigIn):
     company = _company(request)
-    config = svc.update_ai_config(company, request.auth, payload.dict())
-    return CompanyAIConfigOut(
-        embedding_provider=config.embedding_provider,
-        embedding_model=config.embedding_model,
-        embedding_base_url=config.embedding_base_url,
-        default_llm_model=config.default_llm_model,
-    )
+    # Server-wide model settings are model-config editing; this route had no
+    # gate at all before the utility model joined it.
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to edit the server's AI settings.")
+    return _ai_config_out(svc.update_ai_config(company, request.auth, payload.dict()))
 
 
 @router.get("/ai-request-logs/", response=List[AIRequestLogOut])

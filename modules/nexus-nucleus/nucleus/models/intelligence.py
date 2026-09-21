@@ -86,6 +86,13 @@ class CompanyAIConfig(BaseModel):
     )
 
     # -- Session --------------------------------------------------------------
+    # The one model the server's own small jobs run on -- recall passes,
+    # runbook conditions, titles -- so a persona's model is not spent on them.
+    # Nothing consumes it until those land; unset means "use the persona's".
+    utility_model = models.ForeignKey(
+        "nucleus.ModelConfig", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+        help_text="Model config used for the server's utility passes; falls back to the persona's model when unset.",
+    )
     session_timeout_minutes = models.PositiveIntegerField(
         default=30,
         help_text="How long an @session stays active without explicit close (minutes).",

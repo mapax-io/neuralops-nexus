@@ -631,6 +631,12 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   the detail route returns `brief`, the list only `brief_length`. The internal persona payload carries
   `project_brief`, and the worker puts it in its own system block *ahead of* the persona prompt — order is
   brief → persona → output instruction. First app-required capability: server `0.3.0`.
+- **Utility model (W17, 2026-09-21).** `CompanyAIConfig.utility_model` (FK ModelConfig, SET_NULL; cleared
+  when that config is deleted) is the one model the server's own small passes run on (recall, runbook
+  conditions, titles — nothing consumes it yet; the worker falls back to the persona's model). Chosen from the
+  AI models tab via `POST/DELETE /model-configs/{id}/utility/` under `model_config.update`; lists mark it with
+  `is_utility`; the persona payload carries `utility_model`. `PUT /ai-config/` now requires the same right — it
+  had no gate before.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

@@ -164,6 +164,9 @@ class PersonaInternal(Schema):
     # The project's brief, for the worker to put ahead of the persona prompt.
     # None when the project has none (not an empty block).
     project_brief: Optional[str] = None
+    # The server's utility model for the worker's own small passes; None means
+    # "use this persona's model".
+    utility_model: Optional[ModelInternal] = None
 
 
 class ContextSourceInternal(Schema):
@@ -282,6 +285,7 @@ def get_persona_internal(request, persona_id: str):
     """
     from nucleus.models import Persona
     from intelligence import oauth_client
+    from intelligence.services import utility_model_of
 
     persona = (
         Persona.objects.filter(id=persona_id, is_active=True)
@@ -347,6 +351,7 @@ def get_persona_internal(request, persona_id: str):
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
         project_brief=persona.project.brief or None,
+        utility_model=_model_internal(utility) if (utility := utility_model_of(persona.company)) else None,
         max_steps=persona.max_steps,
     )
 
