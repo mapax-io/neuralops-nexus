@@ -264,6 +264,12 @@ class TriggerJob(BaseModel):
     # "auto" = nexus-ai should classify intent via cosine similarity.
     # Any other value = explicit override (e.g. "chart", "terminal", "code").
     output_type: str = "auto"
+    # Preflight (see apps/managers/preflight.py): the persona proposes before
+    # acting and no plan is approved yet -- if this run would act, it becomes a
+    # toolless planning turn. `approved_plan` is the plan a person approved,
+    # carried out with the tools back on.
+    preflight: bool = False
+    approved_plan: str | None = None
 
 
 class TriggerSwarmJob(BaseModel):
