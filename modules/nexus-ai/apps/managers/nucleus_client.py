@@ -54,6 +54,7 @@ def model_from(model_data: dict | None) -> ModelConfig:
     return ModelConfig(
         provider=model_data["provider"] if model_data else "litellm",
         model_id=model_data["model_id"] if model_data else settings.LLM_MODEL,
+        name=model_data.get("name") if model_data else None,
         api_key=model_data.get("api_key") if model_data else None,
         max_tokens=model_data.get("max_tokens", 4096) if model_data else 4096,
         temperature=model_data.get("temperature", 0.7) if model_data else 0.7,
@@ -145,6 +146,8 @@ def persona_from(data: dict) -> PersonaConfig:
         capabilities=capabilities,
         utility_model=utility_model,
         tool_levels=data.get("tool_levels") or {},
+        # Absent on an older nucleus: no fallbacks.
+        fallback_models=[model_from(m) for m in data.get("fallback_models") or []],
     )
 
 

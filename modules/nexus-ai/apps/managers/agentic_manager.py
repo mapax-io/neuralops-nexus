@@ -36,6 +36,7 @@ from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.managers.preflight import plan_turn
 from apps.managers.routines import apply_routine
+from apps.managers.fallbacks import FallbackRun
 from apps.output_types.markers import parse_output_markers
 from apps.output_types.recovery import finalise_reply
 from apps.managers.model_info import context_window_for
@@ -94,7 +95,9 @@ class NewImprovedAgenticManager:
 
         accrued_text: list[str] = []
         usage: dict = {}
-        async for event in self.runner.run_stream(job, messages, persona):
+        # The persona's model and, when it fails before answering, its fallbacks in order.
+        run = FallbackRun(self.runner, job, messages, persona)
+        async for event in run.events():
             match event.type:
 
                 # Accrue streamed text
@@ -129,7 +132,8 @@ class NewImprovedAgenticManager:
             embed_description=embed_description,
             prompt_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("output_tokens"),
-            context_window=context_window_for(persona.model),
+            context_window=context_window_for(run.model),
+            answered_by_model=run.answered_by_model,
         )
 
     async def swarm(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]: ...
@@ -375,12 +379,8 @@ class AgenticSwarmManager:
             agent_response_content = []
             hop_usage: dict = {}
 
-            async for event in self.runner.run_stream(
-                job=job,
-                messages=messages,
-                persona=persona,
-                tools=injected_tools,
-            ):
+            hop_run = FallbackRun(self.runner, job, messages, persona, tools=injected_tools)
+            async for event in hop_run.events():
                 event.id = current_sub_msg_id
 
                 if event.type == "message_delta" and event.delta:
@@ -489,6 +489,7 @@ class AgenticSwarmManager:
             yield AgentEvent(
                 type=AgentEventType.END,
                 id=current_sub_msg_id,
+                answered_by_model=hop_run.answered_by_model,
                 content=clean_hop,
                 output_type=final_type,
                 render_as=final_render_as,

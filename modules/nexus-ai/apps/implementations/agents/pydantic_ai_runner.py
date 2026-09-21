@@ -55,6 +55,7 @@ from apps.interfaces.agent import AgentRunner
 from apps.implementations.agents.stream_merge import merge_events
 from apps.implementations.agents.tool_events import tool_end_event
 from apps.managers.approvals import NucleusApprovals, ToolApprovalGate, nucleus_poll
+from apps.managers.fallbacks import MODEL_FAILURE, is_model_failure
 from apps.schemas.trigger import (
     AgentEvent,
     AgentEventType,
@@ -223,7 +224,8 @@ class PydanticAIRunner(AgentRunner):
                 type=AgentEventType.ERROR,
                 id=job.msg_id,
                 error=str(e),
-                error_code="sorry",
+                # A model that could not be used lets the fallback run try the next one.
+                error_code=MODEL_FAILURE if is_model_failure(e) else "sorry",
             )
 
     @staticmethod
