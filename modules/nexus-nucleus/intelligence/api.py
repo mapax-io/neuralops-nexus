@@ -17,7 +17,7 @@ attached, invisible to everyone under row-level visibility.
 rotating an API key used to require delete-and-recreate, and delete is
 refused while any persona references the row.
 """
-from typing import List
+from typing import List, Optional
 from ninja import Router
 from ninja.errors import HttpError
 from pathlib import Path
@@ -41,6 +41,8 @@ from .schema import (
 )
 from . import services as svc
 from .schema import RoutineIn, RoutinePatchIn, RoutineOut
+from .schema import RecallEntryOut, RecallPatchIn, RecallSourceOut
+from . import recall as recall_svc
 
 router = Router(tags=["Intelligence"], auth=SupabaseBearer())
 
@@ -171,6 +173,7 @@ def _persona_out(persona) -> PersonaOut:
         max_steps=persona.max_steps,
         acts_after_approval=persona.acts_after_approval,
         tool_levels=persona.tool_levels or {},
+        recall_enabled=persona.recall_enabled,
         prompt=prompt,
         is_active=persona.is_active,
         avatar=(
@@ -671,3 +674,57 @@ def list_output_types(request):
         {"name": "html",     "label": "HTML Page", "icon": "globe",         "render_as": "html"},
         {"name": "terminal", "label": "Terminal",  "icon": "terminal",      "render_as": "terminal"},
     ]
+
+
+# ── Recall endpoints (W5) ────────────────────────────────────────────────────
+def _recall_out(entry) -> RecallEntryOut:
+    topic = entry.source_topic if entry.source_topic_id else None
+    author = entry.author_persona if entry.author_persona_id else None
+    return RecallEntryOut(
+        id=str(entry.id), project_id=str(entry.project_id), kind=entry.kind, text=entry.text,
+        author_persona_id=str(author.id) if author else None,
+        author_name=author.name if author else (entry.created_by.display_name or entry.created_by.username) if entry.created_by_id and entry.created_by else None,
+        source=RecallSourceOut(
+            topic_id=str(topic.id), channel_id=str(topic.channel_id) if topic.channel_id else None, topic_title=topic.title,
+            message_id=str(entry.source_message_id) if entry.source_message_id else None,
+        ) if topic else None,
+        created_at=entry.created_at.isoformat(), updated_at=entry.updated_at.isoformat(),
+    )
+
+
+def _recall_project(request, project_id: str, right: str):
+    """The project a recall route acts on, under `right` -- 404 when it is not this company's."""
+    company = _company(request)
+    project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(request.auth, right, obj=project):
+        raise HttpError(403, "You don't have permission to edit what's recorded here." if right == "recall.manage" else "You don't have access to this project.")
+    return company, project
+
+
+@router.get("/projects/{project_id}/recall/", response=List[RecallEntryOut])
+def list_recall(request, project_id: str, kind: Optional[str] = None, q: Optional[str] = None):
+    """Whoever reads the project sees what its personas recorded; editing is recall.manage."""
+    _, project = _recall_project(request, project_id, "topic.list")
+    return [_recall_out(e) for e in recall_svc.list_recall(project, kind=kind, q=q)]
+
+
+@router.patch("/projects/{project_id}/recall/{entry_id}/", response=RecallEntryOut)
+def patch_recall(request, project_id: str, entry_id: str, payload: RecallPatchIn):
+    _, project = _recall_project(request, project_id, "recall.manage")
+    try:
+        entry = recall_svc.patch_recall(project, entry_id, payload.dict(exclude_none=True))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    if not entry:
+        raise HttpError(404, "Entry not found.")
+    return _recall_out(entry)
+
+
+@router.delete("/projects/{project_id}/recall/{entry_id}/", response={204: None})
+def delete_recall(request, project_id: str, entry_id: str):
+    _, project = _recall_project(request, project_id, "recall.manage")
+    if not recall_svc.delete_recall(project, entry_id):
+        raise HttpError(404, "Entry not found.")
+    return 204, None

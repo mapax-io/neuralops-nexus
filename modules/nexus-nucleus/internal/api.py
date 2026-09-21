@@ -172,6 +172,8 @@ class PersonaInternal(Schema):
     # In order, keys decrypted like the primary's: what the worker tries when
     # `model` cannot answer (W7). Retired configs are left out.
     fallback_models: list[ModelInternal] = Field(default_factory=list)
+    # Recall (W5): whether the persona records what it learns at the end of a reply.
+    recall_enabled: bool = True
 
 
 class RoutineInternal(Schema):
@@ -370,6 +372,7 @@ def get_persona_internal(request, persona_id: str):
         max_steps=persona.max_steps,
         tool_levels=persona.tool_levels or {},
         fallback_models=[_model_internal(m) for m in fallback_models_of(persona)],
+        recall_enabled=persona.recall_enabled,
     )
 
 
@@ -522,3 +525,39 @@ def get_ai_config_internal(request, company_id: str):
         embedding_base_url=config.embedding_base_url,
         default_llm_model=config.default_llm_model,
     )
+
+
+# ── Recall (W5): the worker records what a reply learnt ──────────────────────
+class RecallEntryIn(Schema):
+    kind: str
+    text: str
+
+
+class RecallWriteIn(Schema):
+    project_id: str
+    persona_id: str
+    message_id: Optional[str] = None
+    entries: list[RecallEntryIn] = Field(default_factory=list)
+
+
+@router.post("/recall/", response={201: dict})
+def write_recall(request, payload: RecallWriteIn):
+    """
+    The remember pass at the end of a reply: up to five entries, deduplicated
+    against the project (intelligence/recall.py). Answers how many were kept.
+    """
+    from intelligence.recall import record_recall
+    from nucleus.models import ChatMessage, Persona, Project
+
+    project = Project.objects.filter(id=payload.project_id, is_active=True).first()
+    if not project:
+        raise HttpError(404, "Project not found.")
+    persona = Persona.objects.filter(id=payload.persona_id, project=project, is_active=True).first()
+    if not persona:
+        raise HttpError(404, "Persona not found in this project.")
+    message = ChatMessage.objects.filter(id=payload.message_id, project=project).select_related("topic").first() if payload.message_id else None
+    try:
+        result = record_recall(project, [e.dict() for e in payload.entries], persona=persona, message=message)
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return 201, {"created": len(result["created"]), "skipped": result["skipped"]}

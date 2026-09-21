@@ -37,6 +37,7 @@ class MessageOut(Schema):
     preflight: Optional[dict] = None          # a proposed run awaiting a decision, and the decision
     approvals: list = []                      # [{call_id, tool, args_preview, status, decided_by_name, …}] — held tool calls
     answered_by_model: Optional[str] = None   # set when a fallback model answered
+    recalled: int = 0                         # entries this reply recorded in the project's Recall (W5)
     usage: Optional[dict] = None              # {prompt_tokens, output_tokens, context_window} from the worker
     sender_name: Optional[str] = None
     sender_id: Optional[str] = None

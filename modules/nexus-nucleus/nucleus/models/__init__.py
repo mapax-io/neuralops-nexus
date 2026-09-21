@@ -23,6 +23,7 @@ from .intelligence import (
     Persona,
     PersonaFallbackModel,
     Routine,
+    RecallEntry,
     AIRequestLog,
 )
 
