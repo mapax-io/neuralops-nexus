@@ -609,3 +609,53 @@ def patch_env():
     import os
     from unittest.mock import patch
     return patch.dict(os.environ, {"INTERNAL_API_KEY": "k"})
+
+
+class CatalogueTests(MentionRightFixture):
+    """W11/W18: two hand-kept content modules, served so the app can pre-fill its dialogs."""
+
+    def test_the_tool_catalog_is_readable_shaped_and_carries_no_secrets(self):
+        from intelligence import mcp_catalog
+        r = self.call("get", "/api/v1/mcp-catalog/", self.sara)
+        self.assertEqual(r.status_code, 200, r.content)
+        rows = r.json()
+        self.assertEqual({e["id"] for e in rows}, {e["id"] for e in mcp_catalog.MCP_CATALOG})
+        self.assertGreaterEqual(len(rows), 5)
+        for e in rows:
+            self.assertTrue(e["title"] and e["description"] and e["docs"].startswith("http"), e["id"])
+            self.assertIn(e["transport"], ("stdio", "http", "sse", "websocket"))
+            self.assertIn(e["server_type"], ("local", "docker", "kubernetes", "remote", "hosted"))
+            self.assertIn(e["auth_type"], ("none", "static_secrets", "oauth2"))
+            # It says what to have ready, and a stdio entry carries a command while a remote one carries a url.
+            self.assertTrue(e["command"] or e["url"], e["id"])
+            blob = " ".join([e["title"], e["description"], e["command"] or "", e["url"] or "", *e["needs"]]).lower()
+            for leak in ("ghp_", "sk-", "bearer ", "password=", "secret="):
+                self.assertNotIn(leak, blob, e["id"])
+        self.assertEqual(len({e["id"] for e in rows}), len(rows))  # ids are unique
+
+    def test_the_persona_catalogue_pre_fills_a_real_create_dialog(self):
+        from intelligence import persona_catalog
+        from intelligence.builtin_routines import BUILTIN_ROUTINES
+        builtin_names = {r["name"] for r in BUILTIN_ROUTINES}
+        capabilities = {"shell", "filesystem", "web_search", "web_fetch", "thinking"}
+        r = self.call("get", "/api/v1/persona-catalog/", self.sara)
+        self.assertEqual(r.status_code, 200, r.content)
+        rows = r.json()
+        self.assertEqual({e["id"] for e in rows}, {e["id"] for e in persona_catalog.PERSONA_CATALOG})
+        for e in rows:
+            self.assertTrue(e["name"] and e["role"] and e["purpose"], e["id"])
+            self.assertGreater(len(e["system_prompt"]), 80, e["id"])  # a real prompt, not a label
+            self.assertTrue(set(e["capabilities"]) <= capabilities, e["id"])
+            # Every routine it pairs with is one every project actually has.
+            self.assertTrue(set(e["routines"]) <= builtin_names, e["id"])
+        self.assertEqual(len({e["id"] for e in rows}), len(rows))
+
+    def test_both_need_the_right_that_lists_the_thing_they_describe(self):
+        from authn.permissions.models import Right, Role, RoleAssignment, RoleRight
+        bare = Role.objects.create(company=self.company, name="Bare")
+        for code in ("project.list", "project.view"):
+            RoleRight.objects.create(role=bare, right=Right.objects.get(code=code))
+        RoleAssignment.objects.filter(user=self.vera).delete()
+        self.assign(self.vera, "Bare")
+        self.assertEqual(self.call("get", "/api/v1/mcp-catalog/", self.vera).status_code, 403)
+        self.assertEqual(self.call("get", "/api/v1/persona-catalog/", self.vera).status_code, 403)
