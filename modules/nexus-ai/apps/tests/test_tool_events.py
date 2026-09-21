@@ -158,3 +158,14 @@ async def test_message_done_carries_usage_and_the_models_context_window(monkeypa
     done = next(e for e in events if e.type == AgentEventType.END)
     assert (done.prompt_tokens, done.output_tokens, done.context_window) == (900, 12, 200_000)
     assert done.content == "Hello"
+
+
+def test_the_end_event_says_where_a_web_tool_went():
+    from apps.implementations.agents.tool_events import url_of
+    assert url_of("web_fetch", {"url": "https://example.com/page"}) == "https://example.com/page"
+    assert url_of("web_search", {"query": "canada gdp 2024"}) == "https://www.bing.com/search?q=canada+gdp+2024"
+    assert url_of("duckduckgo_search", {"query": "x"}) == "https://www.bing.com/search?q=x"
+    assert url_of("web_fetch", {"url": "javascript:alert(1)"}) is None  # only http(s) is a page to open
+    assert url_of("run_command", {"command": "ls"}) is None
+    ev = tool_end_event("m1", "web_fetch", ok=True, started_at=time.monotonic(), content="…", url="https://example.com")
+    assert ev.tool_result.url == "https://example.com"
