@@ -10,6 +10,13 @@ class TerminalSessionOut(Schema):
     expires_in: int
 
 
+class BrowserSessionIn(Schema):
+    """How big the app will draw it, and where to start."""
+    width: int = 1280
+    height: int = 800
+    url: str = ""
+
+
 class ProjectCreateRequest(Schema):
     name: str
     description: Optional[str] = None

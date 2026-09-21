@@ -63,6 +63,10 @@ REGISTRY = [
      "Open a shell session in the project's folder on the server from the "
      "Terminal pane. Admin-tier: a person with a shell on the server is an "
      "admin's act; the container is the boundary, not the personas' allow-list."),
+    ("project.browser", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Open the live browser: a real browser running ON the server, whose picture "
+     "the app draws. Admin-tier for the same reason project.terminal is -- it can "
+     "reach whatever the server can reach, and it is inside the deployment."),
     ("project.archive", ObjectType.PROJECT, ScopeType.PROJECT,
      "Archive (soft-delete) a project, or view it once archived. Reversible in "
      "principle via Project.restore() -- there's just no endpoint for that yet. "
@@ -204,7 +208,7 @@ DEFAULT_ROLE_RIGHTS = {
 
     "Admin": [
         "company.invite_member", "company.remove_member",
-        "project.create", "project.list", "project.view", "project.archive", "project.update", "project.terminal",
+        "project.create", "project.list", "project.view", "project.archive", "project.update", "project.terminal", "project.browser",
         "channel.create", "channel.list", "channel.update", "channel.archive",
         "topic.create", "topic.list", "topic.update", "topic.mark_read", "topic.archive",
         "session.create", "session.close",

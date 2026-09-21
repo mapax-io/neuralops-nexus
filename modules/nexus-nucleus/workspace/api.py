@@ -18,6 +18,7 @@ from .schema import (
     InviteRequest, InviteResponse, MemberOut, RemoveMemberResponse,
     TeamMemberOut, AddMemberRequest, InviteToProjectRequest, InviteToProjectOut,
     AvailableUserOut, AvailablePersonaOut,
+    BrowserSessionIn,
     TerminalSessionOut,
 )
 from . import services as svc
@@ -150,6 +151,25 @@ def open_terminal_session(request, project_id: str):
     try:
         return svc.open_terminal_session(project, user)
     except svc.TerminalError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.post("/{project_id}/browser/session/", response=TerminalSessionOut)
+def open_browser_session(request, project_id: str, payload: BrowserSessionIn):
+    """
+    The live browser: a ticket for a real Chromium on the server, for whoever
+    holds project.browser. Admin-tier on purpose — a browser running inside the
+    deployment can reach whatever the server can, so it is not a member's tool.
+    """
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.browser", obj=project):
+        raise HttpError(403, "You don't have permission to open the browser in this project.")
+    try:
+        return svc.open_browser_session(project, user, width=payload.width, height=payload.height, url=payload.url)
+    except svc.BrowserError as exc:
         raise HttpError(exc.status, str(exc))
 
 
