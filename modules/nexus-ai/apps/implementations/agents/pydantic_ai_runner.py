@@ -20,6 +20,8 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolCallPart,
     FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ToolReturnPart,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -48,6 +50,7 @@ from pydantic_ai_harness import (
 )
 
 from apps.interfaces.agent import AgentRunner
+from apps.implementations.agents.tool_events import tool_end_event
 from apps.schemas.trigger import (
     AgentEvent,
     AgentEventType,
@@ -106,6 +109,9 @@ class PydanticAIRunner(AgentRunner):
         buffer: list[str] = []
         previous_flush_time = time.monotonic()
         flush_granularity: float = 0.05
+        # When each tool call began, by call id, so its end event can say how long it took.
+        tool_started_at: dict[str, float] = {}
+        usage: dict | None = None
 
         try:
             async with agent.run_stream_events(message_history=messages) as events:
@@ -140,6 +146,11 @@ class PydanticAIRunner(AgentRunner):
                                     delta=chunk
                                 )
 
+                        case FunctionToolCallEvent(part=tool_call):
+                            # Fired when the call actually runs, with its
+                            # arguments complete -- the part-start above only
+                            # knows the name while the arguments still stream.
+                            tool_started_at[tool_call.tool_call_id] = time.monotonic()
                             yield AgentEvent(
                                 type=AgentEventType.TOOL_CALL_START,
                                 id=job.msg_id,
@@ -147,6 +158,18 @@ class PydanticAIRunner(AgentRunner):
                                     name=tool_call.tool_name,
                                     args=tool_call.args_as_dict(),
                                 ),
+                            )
+                        case FunctionToolResultEvent(part=result_part):
+                            # A ToolReturnPart is a result; a RetryPromptPart is
+                            # the tool refusing or failing, sent back to the model.
+                            ok = isinstance(result_part, ToolReturnPart)
+                            yield tool_end_event(
+                                job.msg_id,
+                                result_part.tool_name or "",
+                                ok=ok,
+                                started_at=tool_started_at.pop(result_part.tool_call_id, time.monotonic()),
+                                content=result_part.content if ok else None,
+                                error=None if ok else str(result_part.content),
                             )
                         case _:
                             pass
@@ -160,11 +183,19 @@ class PydanticAIRunner(AgentRunner):
                         id=job.msg_id,
                         delta=chunk,
                     )
+                # What the run cost -- `usage` is a property on the stream --
+                # so the manager can put it on message_done.
+                run_usage = getattr(events, "usage", None)
+                usage = (
+                    {"prompt_tokens": run_usage.input_tokens, "output_tokens": run_usage.output_tokens}
+                    if run_usage is not None and not callable(run_usage)
+                    else None
+                )
                 # All the accrued internal states must persist!
                 yield AgentEvent(
                     type=AgentEventType.PERSIST,
                     id=job.msg_id,
-                    metadata={"internal_model_state": events.new_messages()}
+                    metadata={"internal_model_state": events.new_messages(), "usage": usage}
                 )
 
         except Exception as e:
