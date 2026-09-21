@@ -400,6 +400,13 @@ async def get_approval_state_internal(request, message_id: str, call_id: str):
     return await approval_state(message_id, call_id)
 
 
+@router.get("/messages/{message_id}/nudges/")
+async def take_nudges_internal(request, message_id: str):
+    """What the caller added while the reply runs (W8) -- polled by the worker after each tool call; taken once."""
+    from chat.stop_signals import stop_signals
+    return {"nudges": [n.get("text") for n in await stop_signals().take_nudges(message_id) if n.get("text")]}
+
+
 @router.get("/topics/{topic_id}/contexts/", response=list[ContextSourceInternal])
 def get_topic_contexts(request, topic_id: str):
     """

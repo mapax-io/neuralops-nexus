@@ -623,6 +623,8 @@ class WireFieldDefaultsTests(MentionRightFixture):
         self.assertEqual(out["usage"]["context_window"], 200000)
         self.assertEqual(_serialise(self.message(recalled=2))["recalled"], 2)
         self.assertEqual(out["recalled"], 0)
+        self.assertEqual(_serialise(self.message(nudges=["and cite it"]))["nudges"], ["and cite it"])
+        self.assertEqual(out["nudges"], [])
 
 
 class RelayUsageTests(RelayFixture):
@@ -1139,3 +1141,102 @@ class RunOwnershipTests(RelayFixture):
             await asyncio.gather(*pending)
         run = (await sync_to_async(self.reply_rows)())[-1]
         self.assertEqual(run.metadata["triggered_by_id"], str(self.sara.id))
+
+
+# ── W8 Nudge ─────────────────────────────────────────────────────────────────
+class NudgeSignalTests(SimpleTestCase):
+    """The signal store keeps a reply's nudges in order and hands them out once."""
+
+    async def test_nudges_queue_expire_and_are_taken_once(self):
+        clock = {"t": 0.0}
+        store = MemoryStore(now=lambda: clock["t"])
+        signals = StopSignals(store)
+        await signals.add_nudge("m1", {"text": "first", "user_id": "u1"})
+        await signals.add_nudge("m1", {"text": "second", "user_id": "u1"})
+        self.assertEqual([n["text"] for n in await signals.take_nudges("m1")], ["first", "second"])
+        self.assertEqual(await signals.take_nudges("m1"), [])
+        await signals.add_nudge("m2", {"text": "late", "user_id": "u1"})
+        clock["t"] = 601
+        self.assertEqual(await signals.take_nudges("m2"), [])  # gone after the TTL
+
+
+class NudgeRouteTests(RelayFixture):
+    """Only the caller nudges a running reply; a finished one answers 409; the worker pops what waits."""
+
+    def setUp(self):
+        super().setUp()
+        # The route and the internal poll read the process-wide store at call time.
+        patcher = patch("chat.stop_signals.stop_signals", return_value=self.signals)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def pending_reply(self, owner):
+        from chat.services import create_ai_message
+        return create_ai_message(self.company, self.p1, self.t1, self.persona_sara, triggered_by=owner)
+
+    def nudge(self, user, message_id, text="also check the 2023 figure"):
+        return self.call("post", f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t1.id}/messages/{message_id}/nudge/", user, {"text": text})
+
+    def test_the_caller_nudges_a_running_reply_and_the_worker_takes_it_once(self):
+        import asyncio
+        msg = self.pending_reply(self.owner)
+        r = self.nudge(self.sara, msg["id"])
+        self.assertEqual(r.status_code, 403, r.content)  # Sara did not call the persona
+        r = self.nudge(self.owner, msg["id"], "   ")
+        self.assertEqual(r.status_code, 422, r.content)
+        r = self.nudge(self.owner, msg["id"])
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {"queued": True})
+        waiting = asyncio.run(self.signals.take_nudges(msg["id"]))
+        self.assertEqual([(n["text"], n["user_id"]) for n in waiting], [("also check the 2023 figure", str(self.owner.id))])
+        # The internal poll pops them for the worker.
+        asyncio.run(self.signals.add_nudge(msg["id"], {"text": "and cite it", "user_id": str(self.owner.id)}))
+        import os
+        from django.test import Client
+        with patch.dict(os.environ, {"INTERNAL_API_KEY": "k"}):
+            r = Client().get(f"/api/v1/internal/messages/{msg['id']}/nudges/", HTTP_X_INTERNAL_API_KEY="k")
+        self.assertEqual(r.json(), {"nudges": ["and cite it"]})
+        self.assertEqual(asyncio.run(self.signals.take_nudges(msg["id"])), [])
+
+    def test_a_finished_reply_cannot_be_nudged(self):
+        from nucleus.models import ChatMessage
+        msg = self.pending_reply(self.owner)
+        ChatMessage.objects.filter(id=msg["id"]).update(status=ChatMessage.Status.COMPLETED)
+        self.assertEqual(self.nudge(self.owner, msg["id"]).status_code, 409)
+        self.assertEqual(self.nudge(self.owner, "00000000-0000-0000-0000-000000000000").status_code, 404)
+
+
+class NudgeRelayTests(RelayFixture):
+    """A taken nudge is announced and kept; an untaken one becomes a message when the reply ends or is stopped."""
+
+    async def test_a_taken_nudge_is_published_and_kept_on_the_row(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_delta", "delta": "Looking"},
+            {"type": "nudge_taken", "nudge": "also the 2023 figure"},
+            {"type": "message_done", "content": "Done.", "output_type": "text", "render_as": "text"},
+        )))
+        self.assertEqual(self.events("nudge_taken"), [{"type": "nudge_taken", "id": self.events("message_done")[0]["id"], "text": "also the 2023 figure"}])
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["nudges"], ["also the 2023 figure"])
+
+    async def test_an_untaken_nudge_is_posted_as_a_message_when_the_reply_ends(self):
+        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "Done.", "output_type": "text", "render_as": "text"}))
+
+        async def nudge_meanwhile():
+            pending = None
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                pending = await sync_to_async(lambda: ChatMessage.objects.filter(topic=self.t1, status="pending").first())()
+                if pending:
+                    break
+            if pending:
+                await self.signals.add_nudge(str(pending.id), {"text": "and cite it", "user_id": str(self.owner.id), "name": "Owner"})
+        task = asyncio.create_task(nudge_meanwhile())
+        await asyncio.sleep(0.02)
+        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "Done.", "output_type": "text", "render_as": "text"})))
+        await task
+        rows = await sync_to_async(lambda: list(ChatMessage.objects.filter(topic=self.t1).order_by("sequence")))()
+        human = [r for r in rows if (r.metadata or {}).get("role") == "user"]
+        self.assertEqual([r.content for r in human], ["and cite it"])
+        self.assertEqual(human[0].sender_id, self.owner.id)
+        self.assertEqual([e for e in self.published if e.get("type") == "message" and e.get("content") == "and cite it"][0]["sender_type"], "human")
