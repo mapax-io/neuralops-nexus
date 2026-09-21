@@ -608,3 +608,24 @@ verification.
 2. Read the specific files you intend to edit — do not assume their contents
 3. Check if the feature already exists before implementing it
 4. If a requirement contradicts something in this file, ask the owner before proceeding
+
+---
+
+## 22. Team AI Operations — rights and wire contract (2026-09-20)
+
+**Decision:** the capabilities in `contribution/plan-implementation-master.md` (Preflight, Routines, Recall,
+Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation, shipped first and on its own:
+
+- **Rights are seeded ahead of use.** `persona.approve_run` (topic), `routine.manage`, `runbook.manage`,
+  `runbook.run`, `hook.manage`, `recall.manage`, `deliverable.manage` (project) live in the registry now;
+  a capability PR only *uses* them. Member-tier: approve, run a runbook, curate Recall/Deliverables.
+  Admin-tier: define routines, runbooks, hooks. `manage.py seed_permissions` must run on every upgrade.
+- **Wire changes are additive and feature-detected on both sides.** `MessageOut` carries `activity_trail`,
+  `preflight`, `answered_by_model`, `usage` with defaults; `message_done` carries `prompt_tokens`,
+  `output_tokens`, `context_window` (null when the worker does not know). An older app ignores them; a newer
+  app hides a control whose endpoint answers 404. Never a breaking rename.
+- **Versions.** `NEURALOPS_VERSION` moves a MINOR only when the app *requires* a new server capability for a
+  control it shows; additive fields are a PATCH. The app's `COMPATIBLE_SERVER_VERSION` follows each MINOR.
+
+**Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
+`chat/services.py` (`_serialise`, `usage_from`, `with_usage`).
