@@ -88,6 +88,7 @@ ENV UV_TOOL_DIR=/opt/uv-tools \
     UV_TOOL_BIN_DIR=/usr/local/bin
 RUN uv tool install mcp-server-git && chmod -R a+rX /opt/uv-tools
 
+
 ARG UID=1000
 ARG GID=1000
 RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
@@ -146,7 +147,7 @@ RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
 ENV SUPABASE_URL="https://xgfsxikypxjhqlutiepw.supabase.co" \
   SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhnZnN4aWt5cHhqaHFsdXRpZXB3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNDg3MDcsImV4cCI6MjA5NzgyNDcwN30.2_OUNTHuKSeDJh6S-aUW16IqvDTmew8ZcFuKvFkt3Dk" \
   NEURALOPS_PORTAL_URL="https://neuralops-nexus-demo.mapax.io" \
-  NEURALOPS_VERSION="0.6.1"
+  NEURALOPS_VERSION="0.7.0"
 
 COPY --from=nucleus-builder /opt/venv/nucleus-env /opt/venv/nucleus-env
 COPY --from=nexus-ai-builder /opt/venv/nexus-ai-env /opt/venv/nexus-ai-env
@@ -157,6 +158,22 @@ COPY --from=transport-builder /app/nexus-transport /usr/local/bin/nexus-transpor
 # or anything else in modules/nexus-nucleus reads a file at this path either
 # (searched, no matches) -- safe to leave out, nothing depends on it.
 RUN chmod +x /usr/local/bin/nexus-transport
+
+# ── The live browser's engine ────────────────────────────────────────────────
+# Chromium plus the system libraries it needs, ~450 MB, installed with the
+# worker's own venv (which now carries playwright). Worth it when the team
+# wants a real browser beside the chat — tabs, logins, JavaScript; an iframe
+# cannot show google.com at all. Skip it with --build-arg BROWSER=0 and the
+# worker reports the pane as unavailable instead of failing at it.
+ARG BROWSER=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN if [ "$BROWSER" = "1" ]; then \
+      /opt/venv/nexus-ai-env/bin/python -m playwright install --with-deps chromium && \
+      chmod -R a+rX /opt/playwright; \
+    else \
+      echo "built without the live browser"; \
+    fi
+
 
 # App code — baked in here (this is what makes the `production` compose
 # profile self-contained, no source tree required). The `dev` compose

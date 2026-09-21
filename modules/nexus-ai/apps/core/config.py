@@ -73,6 +73,22 @@ class Settings(BaseSettings):
     # ── Terminal (apps/managers/terminal.py) ─────────────────────────────────
     # The shell a Terminal pane session runs, how long one may sit without
     # input, and how many may be open on this worker at once.
+    # ── The live browser (a real Chromium on the server, streamed to the app) ──
+    # Off unless the image was built with it; nucleus asks before offering the pane.
+    BROWSER_ENABLED: bool = True
+    BROWSER_HOME: str = "https://duckduckgo.com"
+    BROWSER_MAX_TABS: int = 8
+    BROWSER_MAX_SESSIONS: int = 4
+    BROWSER_MAX_WIDTH: int = 1920
+    BROWSER_MAX_HEIGHT: int = 1200
+    BROWSER_FRAME_QUALITY: int = 60
+    BROWSER_NAV_TIMEOUT_MS: int = 30_000
+    BROWSER_IDLE_SECONDS: int = 900
+    BROWSER_USER_AGENT: str = ""
+    # A browser INSIDE the deployment must not be a way to reach the database or
+    # a cloud metadata endpoint. Turn on only for a server with nothing private.
+    BROWSER_ALLOW_PRIVATE_NETWORK: bool = False
+
     TERMINAL_SHELL: str = "/bin/bash"
     TERMINAL_IDLE_SECONDS: int = 1800
     TERMINAL_MAX_SESSIONS: int = 20
