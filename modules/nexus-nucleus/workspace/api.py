@@ -18,6 +18,7 @@ from .schema import (
     InviteRequest, InviteResponse, MemberOut, RemoveMemberResponse,
     TeamMemberOut, AddMemberRequest, InviteToProjectRequest, InviteToProjectOut,
     AvailableUserOut, AvailablePersonaOut,
+    TerminalSessionOut,
 )
 from . import services as svc
 
@@ -132,6 +133,25 @@ def archive_project(request, project_id: str):
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
+
+@router.post("/{project_id}/terminal/session/", response=TerminalSessionOut)
+def open_terminal_session(request, project_id: str):
+    """
+    Terminal (W21): a ticket for a shell session in the project's folder on
+    the server, for whoever holds project.terminal. The app connects to the
+    worker's WebSocket with it (see workspace/services.py).
+    """
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.terminal", obj=project):
+        raise HttpError(403, "You don't have permission to open a terminal in this project.")
+    try:
+        return svc.open_terminal_session(project, user)
+    except svc.TerminalError as exc:
+        raise HttpError(exc.status, str(exc))
+
 
 @router.get("/{project_id}/channels/", response=List[ChannelOut])
 def list_channels(request, project_id: str, include_archived: bool = Query(default=False)):

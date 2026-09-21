@@ -414,6 +414,7 @@ left) — the same shape as `topic.archive` being separate from `topic.create`.
 | Schedule | **Topic** | Member-tier action; `schedule.manage` gates only other people's schedules |
 | Preflight / tool approval (`persona.approve_run`) | **Topic** | Member-tier, like calling a persona: whoever can talk to it can approve what it proposes, and allow or deny a tool call it holds; "always allow" also edits the persona, so it needs `persona.update` too |
 | Routine, Runbook, Inbound hook (`*.manage`) | **Project** | Definitions shared by the project; Admin-tier. `runbook.run` is Member-tier |
+| Terminal (`project.terminal`) | **Project** | Open a shell session in the project's folder on the server from the Terminal pane; Admin-tier |
 | Project brief and description (`project.update`) | **Project** | The instructions every persona in the project follows; Admin-tier like the other project-wide definitions |
 | Recall entry, Deliverable (`*.manage`) | **Project** | Team-curated content written by personas or kept from replies; Member-tier |
 | Company membership (invite/remove) | **Company** | *(right exists but is bypassed at the endpoint — see Part 5)* |

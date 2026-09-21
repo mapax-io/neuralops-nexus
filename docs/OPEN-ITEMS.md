@@ -678,3 +678,10 @@ has been a list of `MCPArgs` (`url`, `command`, `args`, `env`, `authorization_to
 persona payload was reshaped, so that path raises on the first attribute it reads. Tool approvals (W16) are
 therefore wired only into the pydantic-ai runner; when the LiteLLM backend is brought back, its loop should run
 each MCP call through `ToolApprovalGate` (or be dropped in favour of the pydantic-ai runner for MCP personas).
+
+## Mermaid block keeps its own theme subscription (app)
+
+`src/theme/resolved-theme.ts` (W21) is the one place that resolves the page's theme for canvases that cannot read
+CSS variables; `chart-block.tsx` and `terminal-pane.tsx` use it. `mermaid-block.tsx` still carries an older
+copy of the same MutationObserver + matchMedia logic in a `useEffect`; fold it onto `useResolvedTheme()` in a
+small follow-up so there is one implementation.

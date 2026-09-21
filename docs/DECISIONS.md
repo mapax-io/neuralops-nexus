@@ -683,6 +683,22 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   owner/admin override, by the owner's word. The app applies the same rule to a choice card (only the person the
   persona asked may pick; everyone else sees "Waiting for <name> to choose"). Preflight decisions and tool approvals
   stay team-decidable under `persona.approve_run` — a second person deciding is their point. Server `0.5.2`.
+- **Terminal pane (W21, owner's ask, 2026-09-21).** A Terminal in the app is a REAL terminal — the owner rejected a
+  one-command-per-request runner ("it should work just like an actual terminal with all its features"). The worker
+  starts a shell (`TERMINAL_SHELL`, bash) on a PTY in the project's folder, with a controlling terminal, so interactive
+  programs, job control, colours, `cd` and resizing all behave; the app is its screen (xterm.js) over a WebSocket
+  (`/terminal/ws`, nginx → worker `/api/v1/terminal/ws`; binary frames are the terminal's bytes, text frames small JSON
+  control messages: `resize` in, `exit`/`error`/`idle` out). Access: new right `project.terminal` (PROJECT scope,
+  Admin-tier; `seed_permissions` seeds it) gates `POST /projects/{id}/terminal/session/`, which answers a 60-second
+  HMAC ticket signed with the internal key (`workspace/services.py sign_terminal_ticket` ↔ worker
+  `apps/managers/terminal.py verify_ticket`; claims: project, user, cwd — the shell capability's `cwd`, else the
+  provisioned folder; 409 without a folder, 503 without the key) and logs who opened what. The worker verifies the
+  ticket on connect (close 4401), caps open sessions (`TERMINAL_MAX_SESSIONS`, 4429), ends a session after
+  `TERMINAL_IDLE_SECONDS` without input (4408) and kills the shell's whole process group when the socket goes.
+  Security stance: the personas' shell allow-list does NOT apply to a person's shell — the Admin-tier right is the
+  boundary and the container (uid 1000, the project folder as HOME) the hard one; the shell gets a sanitized
+  environment (PATH/LANG/LC_ALL/TZ only — the worker's own env holds the secrets), never the worker's. Nothing a
+  terminal does is posted to the chat. Server `0.5.3`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

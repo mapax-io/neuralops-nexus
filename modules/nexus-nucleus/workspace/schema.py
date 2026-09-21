@@ -4,6 +4,12 @@ from ninja import Schema
 
 # ── Projects / Channels / Topics ──────────────────────────────────────────────
 
+class TerminalSessionOut(Schema):
+    ticket: str
+    path: str
+    expires_in: int
+
+
 class ProjectCreateRequest(Schema):
     name: str
     description: Optional[str] = None
