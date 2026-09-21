@@ -67,10 +67,11 @@ class NewImprovedAgenticManager:
         )
 
         # The type nucleus asked for (@chart) or, failing that, what the message
-        # looks like. The spec carries both the contract the model must follow
-        # and the renderer the frontend needs -- passing the name alone was the
-        # bug this replaced.
-        resolved_type, spec = await resolve_output_spec(job)
+        # looks like -- or, for a pick, what the request behind the choice looked
+        # like. The spec carries both the contract the model must follow and the
+        # renderer the frontend needs -- passing the name alone was the bug this
+        # replaced.
+        resolved_type, spec = await resolve_output_spec(job, history)
 
         messages = await self.prompt_builder.build(
             job=job,

@@ -28,3 +28,12 @@ def test_history_keeps_the_existing_filters():
         row(content="<!DOCTYPE html><html></html>", render_as="html", output_type="html"),
     ])
     assert [m.content for m in history] == ["<!DOCTYPE html><html></html>"]
+
+
+def test_history_carries_each_reply_s_output_type():
+    """A pick's turn looks back for the choice that asked; it needs the type on the row."""
+    history = shape_history([
+        row(sender_type="human", content="ask me first"),
+        row(content='{"question": "Which?", "options": []}', render_as="choice", output_type="choice"),
+    ])
+    assert [(m.role, m.output_type) for m in history] == [("user", "text"), ("assistant", "choice")]

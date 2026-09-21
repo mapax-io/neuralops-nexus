@@ -651,3 +651,17 @@ up` of the dev profile, Docker creates the mount source, so an empty `modules/ne
 never occupy again. The frontend now lives in its own repository (`mapax-io/neuralops-nexus-web-app`) and runs
 from there; this service has nothing to serve. Remove the service (and the commented copy) from the compose
 file.
+
+---
+
+## Chart descriptions with a `fill` key fail the app's guard
+
+**Where:** `modules/nexus-ai/apps/output_types/types.py` (the `chart` spec) and the app's chart guard
+(`neuralops-nexus-web-app`, `ChartBlock`).
+
+Seen live on 2026-09-21: a line chart answered with `"fill": true` on a dataset, and the app refused it
+(`datasets.0: Unrecognized key: "fill"`), showing the raw data instead. The guard is strict on purpose
+(unknown keys are rejected rather than passed to Chart.js), but the contract the model is given lists no
+`fill` and models reach for it on line charts anyway. Either add `fill` to the description (and the guard,
+as a boolean per dataset) or state in the contract that area fills are not supported. Until then a
+fraction of line charts degrade to the data fallback.

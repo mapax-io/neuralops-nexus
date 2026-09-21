@@ -347,3 +347,30 @@ OutputTypeRegistry.register(
         example_prompts=[],
     )
 )
+
+
+# Choice: a small set of options for the person to pick from, sent by the
+# model on its own on an ordinary turn (the text type's instruction says
+# when). The app renders the options as buttons and posts the pick back as
+# the next human message.
+OutputTypeRegistry.register(
+    OutputTypeSpec(
+        name="choice",
+        render_as="choice",
+        label="Choice",
+        icon="list-checks",
+        system_instruction=(
+            "OUTPUT FORMAT — your response must be exactly this structure, nothing else:\n\n"
+            "<<<OUTPUT:choice>>>\n"
+            "{ ...the choice prompt as JSON... }\n"
+            "<<<END_OUTPUT>>>\n\n"
+            "The prompt uses exactly these keys and no others:\n"
+            "{\n"
+            '  "question": "one clear question",\n'
+            '  "options": [ { "id": "short-id", "label": "the option, a few words", "hint": "one line on what it means or costs (optional)" } ],  (two to six)\n'
+            '  "multiple": true | false  (true only when more than one may be picked together)\n'
+            "}\n"
+        ),
+        example_prompts=[],
+    )
+)

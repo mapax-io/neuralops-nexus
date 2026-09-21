@@ -9,23 +9,25 @@ JSON object shaped like a description, report it as the chart it is.
 
 Strict on purpose: the entire reply must be the object -- prose around it means
 the model was talking, not charting -- and only the resolved type is recovered,
-never a type the classifier did not pick.
+never a type the classifier did not pick. The one type every ordinary turn may
+answer with is a choice prompt (prompt_builder.CHOICE_EXCEPTION), so a reply
+shaped like one is a choice whatever the turn resolved to -- except a preflight
+turn, whose instruction never offered it.
 """
 from __future__ import annotations
 
 import json
 import re
 
+from .registry import TYPES_WITHOUT_CHOICE
+
 # A lone marker -- the model opened without closing, or closed without opening.
 _STRAY_MARKERS = re.compile(r"<{2,3}(?:OUTPUT:\w+|END_OUTPUT|EMBED|END_EMBED)>{0,3}")
 
-RECOVERABLE = {"chart": ("type", "datasets")}
+RECOVERABLE = {"chart": ("type", "datasets"), "choice": ("question", "options")}
 
 
-def recover_unmarked(resolved_type: str, content: str) -> str | None:
-    required = RECOVERABLE.get(resolved_type)
-    if not required:
-        return None
+def _whole_object(content: str) -> dict | None:
     text = _STRAY_MARKERS.sub("", content).strip()
     if not (text.startswith("{") and text.endswith("}")):
         return None
@@ -33,15 +35,29 @@ def recover_unmarked(resolved_type: str, content: str) -> str | None:
         value = json.loads(text)
     except ValueError:
         return None
-    if not isinstance(value, dict):
-        return None
+    return value if isinstance(value, dict) else None
+
+
+def _shaped_as(kind: str, value: dict) -> bool:
+    required = RECOVERABLE[kind]
+    if kind == "choice":
+        return all(key in value for key in required) and isinstance(value["options"], list) and bool(value["options"])
     # one description, or a reply of several: {"charts": [description, ...]}
     candidates = value.get("charts") if "charts" in value else [value]
     if not isinstance(candidates, list) or not candidates:
+        return False
+    return all(isinstance(c, dict) and all(key in c for key in required) for c in candidates)
+
+
+def recover_unmarked(resolved_type: str, content: str) -> str | None:
+    value = _whole_object(content)
+    if value is None:
         return None
-    if not all(isinstance(c, dict) and all(key in c for key in required) for c in candidates):
-        return None
-    return resolved_type
+    if resolved_type in RECOVERABLE and _shaped_as(resolved_type, value):
+        return resolved_type
+    if resolved_type not in TYPES_WITHOUT_CHOICE and _shaped_as("choice", value):
+        return "choice"
+    return None
 
 
 def strip_stray_markers(content: str) -> str:

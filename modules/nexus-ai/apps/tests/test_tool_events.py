@@ -148,7 +148,7 @@ class _FakeRunner:
 async def test_message_done_carries_usage_and_the_models_context_window(monkeypatch):
     async def fake_persona(_): return persona()
     async def fake_history(**_): return []
-    async def fake_resolve(_): return "text", None
+    async def fake_resolve(_, __=()): return "text", None
     monkeypatch.setattr(agentic_manager.nucleus_client, "resolve_persona", fake_persona)
     monkeypatch.setattr(agentic_manager.nucleus_client, "fetch_history", fake_history)
     monkeypatch.setattr(agentic_manager, "resolve_output_spec", fake_resolve)
