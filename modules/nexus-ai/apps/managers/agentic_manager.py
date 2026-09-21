@@ -35,6 +35,7 @@ from apps.schemas.trigger import (
 from apps.managers import nucleus_client
 from apps.output_types import OutputTypeRegistry, resolve_output_spec
 from apps.managers.preflight import plan_turn
+from apps.managers.routines import apply_routine
 from apps.output_types.markers import parse_output_markers
 from apps.output_types.recovery import finalise_reply
 from apps.managers.model_info import context_window_for
@@ -61,6 +62,11 @@ class NewImprovedAgenticManager:
         persona, output_type = plan_turn(job, persona)
         if output_type != job.output_type:
             job = job.model_copy(update={"output_type": output_type})
+        # A routine instructs, narrows and re-models the persona for this turn
+        # only (apps/managers/routines.py) -- after the plan gate, so a
+        # preflight turn plans with the routine in view.
+        if job.routine_id:
+            persona = apply_routine(persona, await nucleus_client.resolve_routine(job.routine_id))
 
         history = await nucleus_client.fetch_history(
             topic_id=job.topic_id, exclude_message_id=job.user_message_id
