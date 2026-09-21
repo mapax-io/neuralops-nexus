@@ -38,15 +38,20 @@ async def fire_hook(request, token: str, payload: HookFireIn):
     """POST /api/v1/hooks/{token}/ -- the persona answers in the hook's chat."""
     from asgiref.sync import sync_to_async
 
-    hook = await sync_to_async(hook_svc.hook_for_token)(token)
-    if hook is None:
-        return _answer(404, "No such hook.")
+    # The lookup is inside the try as well: an error raised there would otherwise
+    # reach Django's debug 500 page, which prints this frame's locals -- the token
+    # among them -- straight into the response (audit, 2026-09-21).
+    hook = None
     try:
+        hook = await sync_to_async(hook_svc.hook_for_token)(token)
+        if hook is None:
+            return _answer(404, "No such hook.")
         await hook_svc.fire(hook, payload.text, payload.data)
     except HookError as e:
         return _answer(e.status, e.detail)
     except Exception:  # noqa: BLE001 -- a sender learns nothing about our internals
-        logger.exception("[hook] fire failed for %s", hook.id)
-        await sync_to_async(hook_svc._record)(hook, ok=False, error="The server could not post this fire.")
+        logger.exception("[hook] fire failed for %s", hook.id if hook else "an unknown token")
+        if hook is not None:
+            await sync_to_async(hook_svc._record)(hook, ok=False, error="The server could not post this fire.")
         return _answer(500, "The server could not post this fire.")
     return JsonResponse({"ok": True})

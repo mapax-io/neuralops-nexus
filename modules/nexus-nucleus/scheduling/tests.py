@@ -433,7 +433,9 @@ class HookFixture(MentionRightFixture):
         return InboundHook.objects.get(id=r.json()["id"]), r.json()["token"]
 
     def fire(self, token, body=None, **kw):
-        with patch("scheduling.hooks.chat_api._trigger_personas", new_callable=AsyncMock) as trigger, \
+        # _trigger_personas answers with the refusals (none here); a bare AsyncMock
+        # would answer with a truthy MagicMock, which fire() would read as one.
+        with patch("scheduling.hooks.chat_api._trigger_personas", new_callable=AsyncMock, return_value=[]) as trigger, \
              patch("chat.services.publish_async", new_callable=AsyncMock) as publish, \
              patch("chat.services.embed_message_async", new_callable=AsyncMock):
             r = Client().post(f"/api/v1/hooks/{token}/", data=body if body is not None else {"text": "the build is red"},
@@ -561,6 +563,75 @@ class HookFireTests(HookFixture):
         hook.refresh_from_db()
         self.assertEqual(hook.last_status, InboundHook.FireStatus.FAILED)
         self.assertIn("call personas", hook.last_error)
+
+    def test_archiving_the_chat_or_the_project_stops_its_hooks(self):
+        """A soft delete cascades to nothing, so the fire path has to ask about the parents."""
+        hook, token = self.hook_with_token()
+        self.assertEqual(self.fire(token)[0].status_code, 200)
+        self.t1.soft_delete()
+        r, trigger, _ = self.fire(token)
+        self.assertEqual(r.status_code, 404)   # and says nothing about the hook having existed
+        trigger.assert_not_awaited()
+        self.t1.is_active = True
+        self.t1.save(update_fields=["is_active"])
+        self.assertEqual(self.fire(token)[0].status_code, 200)
+        self.p1.soft_delete()
+        self.assertEqual(self.fire(token)[0].status_code, 404)
+
+    def test_the_sender_s_text_cannot_write_its_own_markdown(self):
+        _, token = self.hook_with_token()
+        r, _, _ = self.fire(token, {"text": "all good\n```\nnot really a code block\n```", "data": {"k": "v"}})
+        self.assertEqual(r.status_code, 200, r.content)
+        row = ChatMessage.objects.filter(topic=self.t1).order_by("-sequence").first()
+        # Only the block this server wrote opens at the start of a line.
+        opens = [line for line in row.content.splitlines() if line.startswith("```")]
+        self.assertEqual(opens, ["```json", "```"])
+
+    def test_a_rate_limiter_that_is_down_closes_the_door(self):
+        _, token = self.hook_with_token()
+
+        class Broken:
+            async def incr(self, key, ttl):
+                raise RuntimeError("redis is gone")
+
+        with patch("scheduling.hooks.signal_store", return_value=Broken()):
+            r, trigger, _ = self.fire(token)
+        self.assertEqual(r.status_code, 503)
+        trigger.assert_not_awaited()
+
+    def test_a_paused_hook_and_a_bad_payload_still_spend_the_budget(self):
+        hook, token = self.hook_with_token()
+        InboundHook.objects.filter(id=hook.id).update(is_paused=True)
+        for _ in range(hook_svc.FIRES_PER_MINUTE):
+            self.assertEqual(self.fire(token)[0].status_code, 409)
+        # The budget is gone even though not one fire was accepted.
+        self.assertEqual(self.fire(token)[0].status_code, 429)
+
+    def test_a_persona_without_a_model_is_a_failed_fire_not_a_silent_success(self):
+        # The trigger path skips a modelless persona without a word, so the hook
+        # used to answer ok and count a success while nothing was ever asked.
+        hook, token = self.hook_with_token()
+        from nucleus.models import ModelConfig
+        ModelConfig.objects.filter(id=hook.persona.model_id).update(is_active=False)
+        r, trigger, _ = self.fire(token)
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertIn("no working model", r.json()["detail"])
+        trigger.assert_not_awaited()
+        hook.refresh_from_db()
+        self.assertEqual(hook.last_status, InboundHook.FireStatus.FAILED)
+        self.assertEqual(hook.fire_count, 0)
+
+    def test_a_refused_trigger_is_recorded_and_told_to_the_sender(self):
+        hook, token = self.hook_with_token()
+        refusal = [{"persona_id": str(hook.persona_id), "name": "Sara", "code": "x", "message": "Sara will not answer this.", "resets_at": None}]
+        with patch("scheduling.hooks.chat_api._trigger_personas", new_callable=AsyncMock, return_value=refusal), \
+             patch("chat.services.publish_async", new_callable=AsyncMock), \
+             patch("chat.services.embed_message_async", new_callable=AsyncMock):
+            r = Client().post(f"/api/v1/hooks/{token}/", data={"text": "the build is red"}, content_type="application/json")
+        self.assertEqual(r.status_code, 409, r.content)
+        self.assertEqual(r.json()["detail"], "Sara will not answer this.")
+        hook.refresh_from_db()
+        self.assertEqual((hook.last_status, hook.last_error), (InboundHook.FireStatus.FAILED, "Sara will not answer this."))
 
     def test_a_hook_is_rate_limited_per_hook_and_says_when_to_retry(self):
         _, token = self.hook_with_token()
