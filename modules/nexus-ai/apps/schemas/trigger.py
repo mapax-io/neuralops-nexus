@@ -295,6 +295,15 @@ class ToolCallData(BaseModel):
     args: dict[str, Any]
 
 
+class ToolResultData(BaseModel):
+    """How a tool call ended: what nucleus relays and the app shows on the activity trail."""
+    name: str
+    ok: bool
+    duration_ms: int
+    preview: str | None = None  # the result's text, clipped -- never the raw object
+    error: str | None = None    # short reason when ok is False
+
+
 class AgentEventType(str, Enum):
     PERSIST = "persist_internal_state"
     START = "message_start"
@@ -302,6 +311,7 @@ class AgentEventType(str, Enum):
     END = "message_done"
     ERROR = "message_error"
     TOOL_CALL_START = "tool_call_start"
+    TOOL_CALL_END = "tool_call_end"
     SWARM_TRANSITION = "swarm_transition"
 
 
@@ -319,6 +329,15 @@ class AgentEvent(BaseModel):
 
     # tool_call_start only
     tool_call: ToolCallData | None = None
+
+    # tool_call_end only
+    tool_result: ToolResultData | None = None
+
+    # message_done only: what the turn cost in context, so the app can show
+    # how full the model's window is. Null when the provider does not say.
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    context_window: int | None = None
 
     # message_done only
     content: str | None = None  # full assembled response (markers stripped) for DB save
