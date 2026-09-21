@@ -22,6 +22,15 @@ class ProjectOut(Schema):
     slug: str
     description: Optional[str] = None
     channels: List[ChannelOut] = []
+    # The brief rides only on the detail route; lists carry its length so the
+    # app can say "Brief: 1,200 chars" without shipping every project's text.
+    brief: Optional[str] = None
+    brief_length: int = 0
+
+
+class ProjectUpdateRequest(Schema):
+    brief: Optional[str] = None
+    description: Optional[str] = None
 
 
 class ChannelCreateRequest(Schema):

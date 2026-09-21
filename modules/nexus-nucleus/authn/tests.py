@@ -235,6 +235,7 @@ TEAM_OPS_RIGHTS = {
     "hook.manage": {"Admin"},
     "recall.manage": {"Admin", "Member"},
     "deliverable.manage": {"Admin", "Member"},
+    "project.update": {"Admin"},
 }
 
 

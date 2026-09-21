@@ -49,6 +49,10 @@ REGISTRY = [
     # Owner/Admin of just one project) as well as inherited from COMPANY.
     ("project.view", ObjectType.PROJECT, ScopeType.PROJECT,
      "View a specific project's details."),
+    ("project.update", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Edit a project's details -- its brief (the instructions every persona "
+     "in the project follows) and description. Admin-tier, like the other "
+     "project-wide definitions."),
     ("model_config.attach", ObjectType.PROJECT, ScopeType.PROJECT,
      "Attach an already-existing model config to a project (does not create "
      "the config or touch its API key -- that's model_config.create, "
@@ -196,7 +200,7 @@ DEFAULT_ROLE_RIGHTS = {
 
     "Admin": [
         "company.invite_member", "company.remove_member",
-        "project.create", "project.list", "project.view", "project.archive",
+        "project.create", "project.list", "project.view", "project.archive", "project.update",
         "channel.create", "channel.list", "channel.update", "channel.archive",
         "topic.create", "topic.list", "topic.update", "topic.mark_read", "topic.archive",
         "session.create", "session.close",

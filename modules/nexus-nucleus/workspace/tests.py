@@ -743,3 +743,63 @@ class ListMembersTests(InviteGrantsFixture):
         self.assertEqual(sara["invited_by"], "owner@acme.test")
         self.assertEqual(sara["invited_by_name"], "The_Boss")
         self.assertIsNone(self.by_email("owner@acme.test")["invited_by_name"])
+
+
+class ProjectBriefTests(InviteGrantsFixture):
+    """Project Brief: always-on instructions every persona turn in the project honours."""
+
+    def patch(self, user, project, body: dict):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            return Client().patch(
+                f"/api/v1/projects/{project.id}/", data=body, content_type="application/json", HTTP_AUTHORIZATION="Bearer t",
+            )
+
+    def get(self, user, path: str):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            return Client().get(path, HTTP_AUTHORIZATION="Bearer t")
+
+    def test_the_service_saves_the_brief_and_who_set_it(self):
+        from workspace.services import update_project
+        update_project(self.p1, self.owner, brief="Always answer in bullet points.\n")
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.brief, "Always answer in bullet points.")
+        self.assertEqual(self.p1.brief_updated_by, self.owner)
+        self.assertIsNotNone(self.p1.brief_updated_at)
+
+    def test_a_brief_over_the_cap_is_refused_and_nothing_changes(self):
+        from workspace.services import PROJECT_BRIEF_MAX, update_project
+        with self.assertRaises(ValueError):
+            update_project(self.p1, self.owner, brief="x" * (PROJECT_BRIEF_MAX + 1))
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.brief, "")
+        update_project(self.p1, self.owner, brief="x" * PROJECT_BRIEF_MAX)  # the cap itself is fine
+
+    def test_owner_patches_the_brief_and_reads_it_back_on_the_detail_route(self):
+        r = self.patch(self.owner, self.p1, {"brief": "Ship the Q4 launch."})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["brief"], "Ship the Q4 launch.")
+        r = self.get(self.owner, f"/api/v1/projects/{self.p1.id}/")
+        self.assertEqual(r.json()["brief"], "Ship the Q4 launch.")
+        self.assertEqual(r.json()["brief_length"], len("Ship the Q4 launch."))
+
+    def test_the_list_ships_the_length_but_not_the_text(self):
+        self.p1.brief = "Ship the Q4 launch."
+        self.p1.save(update_fields=["brief"])
+        r = self.get(self.owner, "/api/v1/projects/")
+        row = next(p for p in r.json() if p["id"] == str(self.p1.id))
+        self.assertEqual(row["brief_length"], 19)
+        self.assertIsNone(row["brief"])
+
+    def test_a_member_cannot_edit_the_brief(self):
+        r = self.patch(self.sara, self.p1, {"brief": "nope"})
+        self.assertEqual(r.status_code, 403, r.content)
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.brief, "")
+
+    def test_a_too_long_brief_is_a_400_with_the_reason(self):
+        from workspace.services import PROJECT_BRIEF_MAX
+        r = self.patch(self.owner, self.p1, {"brief": "x" * (PROJECT_BRIEF_MAX + 1)})
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("8,000", r.json()["detail"])

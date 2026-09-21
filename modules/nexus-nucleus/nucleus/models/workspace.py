@@ -21,6 +21,14 @@ class Project(TenantOperationModel):
         help_text="URL-safe identifier, unique per company. Auto-generated from name.",
     )
     description = models.TextField(blank=True, null=True)
+    # Project Brief: always-on instructions every persona turn in this project
+    # honours (the worker puts it ahead of the persona's own prompt). Plain
+    # text/markdown, capped in workspace/services.py, empty = none.
+    brief = models.TextField(blank=True, default="")
+    brief_updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    brief_updated_at = models.DateTimeField(null=True, blank=True)
 
     members = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
