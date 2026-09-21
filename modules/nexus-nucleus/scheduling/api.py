@@ -296,11 +296,9 @@ def start_runbook(request, project_id: str, runbook_id: str, payload: RunbookSta
     if bool(payload.topic_id) == bool(payload.channel_id):
         raise HttpError(400, "Say where to run it: a topic, or a channel for a new one.")
     if payload.topic_id:
-        topic = None
-        for channel in ws_svc.list_channels(user, project):
-            topic = ws_svc.list_topics(user, channel).filter(id=payload.topic_id).first()
-            if topic:
-                break
+        from authn.permissions.row_rules import visible_topic
+
+        topic = visible_topic(user, project, payload.topic_id)
         if not topic:
             raise HttpError(404, "Topic not found.")
     else:
