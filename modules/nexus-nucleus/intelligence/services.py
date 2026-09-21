@@ -166,6 +166,9 @@ def delete_model_config(company, config_id: str) -> bool:
         )
 
     config.soft_delete()
+    # A retired config cannot stay the server's utility model.
+    from nucleus.models import CompanyAIConfig
+    CompanyAIConfig.objects.filter(company=company, utility_model=config).update(utility_model=None)
     return True
 
 
@@ -638,6 +641,33 @@ def get_ai_config(company):
     from nucleus.models import CompanyAIConfig
     config, _ = CompanyAIConfig.objects.get_or_create(company=company)
     return config
+
+
+def set_utility_model(company, user, config_id: str | None):
+    """
+    Choose (or clear, with None) the server's utility model. Returns the
+    chosen ModelConfig, or None when cleared; raises LookupError for a config
+    that is not this company's or is retired.
+    """
+    from nucleus.models import CompanyAIConfig, ModelConfig
+    config = None
+    if config_id is not None:
+        config = ModelConfig.objects.filter(company=company, id=config_id, is_active=True).first()
+        if not config:
+            raise LookupError("Model config not found.")
+    ai_config, _ = CompanyAIConfig.objects.get_or_create(company=company)
+    ai_config.utility_model = config
+    ai_config.updated_by = user
+    ai_config.save(update_fields=["utility_model", "updated_by", "updated_at"])
+    return config
+
+
+def utility_model_of(company):
+    """The company's utility model config, or None when unset or retired."""
+    from nucleus.models import CompanyAIConfig
+    ai_config = CompanyAIConfig.objects.filter(company=company).select_related("utility_model").first()
+    model = ai_config.utility_model if ai_config else None
+    return model if model and model.is_active else None
 
 
 def update_ai_config(company, user, data: dict):

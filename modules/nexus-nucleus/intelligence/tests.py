@@ -12,6 +12,8 @@ from unittest.mock import patch
 from django.core import signing
 from django.test import TestCase
 
+from chat.tests import MentionRightFixture
+
 from intelligence import oauth_client
 from nucleus.models import Company, MCPServer
 
@@ -155,3 +157,79 @@ class ClientOAuthTests(TestCase):
         secrets = self.server.get_secrets()
         self.assertEqual(secrets["FAKE_PROVIDER_TOKEN"], "t2")
         self.assertEqual(secrets["refresh_token"], "r1")   # unchanged from the first call
+
+class UtilityModelTests(MentionRightFixture):
+    """
+    W17: one model config per server is the utility model -- the model the
+    server's own small jobs run on (recall passes, runbook conditions, titles)
+    so a persona's model is not spent on them.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from nucleus.models import ModelConfig
+        self.small = ModelConfig.objects.create(
+            company=self.company, name="Small", provider="openai", model_id="gpt-4o-mini", context_window=128000,
+        )
+
+    def call(self, method, path, user, body=None):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            return getattr(Client(), method)(path, data=body, content_type="application/json", HTTP_AUTHORIZATION="Bearer t")
+
+    def test_owner_sets_and_clears_the_utility_model_and_the_list_marks_it(self):
+        r = self.call("post", f"/api/v1/model-configs/{self.small.id}/utility/", self.owner)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertTrue(r.json()["is_utility"])
+        rows = {m["id"]: m["is_utility"] for m in self.call("get", "/api/v1/model-configs/", self.owner).json()}
+        self.assertEqual(rows[str(self.small.id)], True)
+        self.assertEqual(rows[str(self.model_config.id)], False)
+        self.assertEqual(self.call("get", "/api/v1/ai-config/", self.owner).json()["utility_model_id"], str(self.small.id))
+        r = self.call("delete", f"/api/v1/model-configs/{self.small.id}/utility/", self.owner)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertFalse(r.json()["is_utility"])
+        self.assertIsNone(self.call("get", "/api/v1/ai-config/", self.owner).json()["utility_model_id"])
+
+    def test_only_a_model_config_editor_may_choose_it(self):
+        r = self.call("post", f"/api/v1/model-configs/{self.small.id}/utility/", self.sara)
+        self.assertEqual(r.status_code, 403, r.content)
+        r = self.call("post", f"/api/v1/model-configs/{self.small.id}/utility/", self.owner)
+        self.assertEqual(r.status_code, 200, r.content)
+        r = self.call("delete", f"/api/v1/model-configs/{self.small.id}/utility/", self.sara)
+        self.assertEqual(r.status_code, 403, r.content)
+
+    def test_an_unknown_or_deleted_config_cannot_be_the_utility_model(self):
+        r = self.call("post", "/api/v1/model-configs/00000000-0000-0000-0000-000000000000/utility/", self.owner)
+        self.assertEqual(r.status_code, 404, r.content)
+        self.small.soft_delete()
+        r = self.call("post", f"/api/v1/model-configs/{self.small.id}/utility/", self.owner)
+        self.assertEqual(r.status_code, 404, r.content)
+
+    def test_deleting_the_utility_model_config_clears_the_pointer(self):
+        from intelligence.services import delete_model_config, get_ai_config, set_utility_model
+        set_utility_model(self.company, self.owner, str(self.small.id))
+        self.assertTrue(delete_model_config(self.company, str(self.small.id)))
+        self.assertIsNone(get_ai_config(self.company).utility_model)
+
+    def test_the_persona_payload_carries_the_utility_model_with_its_key(self):
+        import os
+        from django.test import Client
+        from intelligence.services import set_utility_model
+        from nucleus.models import Prompt
+        Prompt.objects.get_or_create(persona=self.persona_sara, defaults={"company": self.company, "system_prompt": "You are Sara.", "output_type": "text"})
+        def payload():
+            with patch.dict(os.environ, {"INTERNAL_API_KEY": "k"}):
+                r = Client().get(f"/api/v1/internal/personas/{self.persona_sara.id}/", HTTP_X_INTERNAL_API_KEY="k")
+            self.assertEqual(r.status_code, 200, r.content)
+            return r.json()
+        self.assertIsNone(payload()["utility_model"])
+        set_utility_model(self.company, self.owner, str(self.small.id))
+        u = payload()["utility_model"]
+        self.assertEqual((u["id"], u["model_id"], u["qualified_id"]), (str(self.small.id), "gpt-4o-mini", "openai:gpt-4o-mini"))
+        self.small.soft_delete()
+        self.assertIsNone(payload()["utility_model"])  # a retired config is never handed out
+
+    def test_the_ai_config_update_needs_the_same_right(self):
+        body = {"embedding_provider": "fastembed", "embedding_model": "x", "embedding_base_url": "", "default_llm_model": "openai:gpt-4o-mini"}
+        self.assertEqual(self.call("put", "/api/v1/ai-config/", self.sara, body).status_code, 403)
+        self.assertEqual(self.call("put", "/api/v1/ai-config/", self.owner, body).status_code, 200)
