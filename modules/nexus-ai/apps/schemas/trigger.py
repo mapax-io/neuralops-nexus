@@ -172,6 +172,10 @@ class Shell(BaseModel):
     )
 
 class MCPArgs(BaseModel):
+    # Which server this is, so its tools can carry a level ("mcp:<id>") and
+    # an approval row can name it. Absent on an older nucleus.
+    id: str | None = None
+    name: str | None = None
     url: str | None = Field(
         default=None,
         description=""
@@ -223,6 +227,9 @@ class PersonaConfig(BaseModel):
     # runbook conditions, titles); None means "use this persona's model" --
     # ask nucleus_client.utility_model_for, never read this directly.
     utility_model: ModelConfig | None = None
+    # Tool approvals: {capability id or "<capability>/<tool>": "auto"|"ask"|"off"};
+    # the defaults for anything unset live in apps/managers/approvals.py.
+    tool_levels: dict[str, str] = Field(default_factory=dict)
 
 
 class HistoryMessage(BaseModel):
@@ -273,6 +280,9 @@ class TriggerJob(BaseModel):
     # carried out with the tools back on.
     preflight: bool = False
     approved_plan: str | None = None
+    # Someone is watching this run (a chat turn, not a schedule): an Ask tool
+    # may wait for their decision. Absent on an older nucleus -- assume so.
+    interactive: bool = True
 
 
 class TriggerSwarmJob(BaseModel):
@@ -310,6 +320,14 @@ class ToolCallData(BaseModel):
     args: dict[str, Any]
 
 
+class ApprovalRequestData(BaseModel):
+    """A tool call held for a person's decision: what nucleus stores and the app shows."""
+    call_id: str
+    tool: str
+    capability_id: str
+    args_preview: str
+
+
 class ToolResultData(BaseModel):
     """How a tool call ended: what nucleus relays and the app shows on the activity trail."""
     name: str
@@ -328,6 +346,10 @@ class AgentEventType(str, Enum):
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
     SWARM_TRANSITION = "swarm_transition"
+    # A tool call waiting for a person (apps/managers/approvals.py).
+    APPROVAL_REQUESTED = "approval_requested"
+    # Nothing to say yet; keeps the relay's idle timeout from ending the run.
+    KEEPALIVE = "keepalive"
 
 
 class AgentEvent(BaseModel):
@@ -347,6 +369,9 @@ class AgentEvent(BaseModel):
 
     # tool_call_end only
     tool_result: ToolResultData | None = None
+
+    # approval_requested only
+    approval: ApprovalRequestData | None = None
 
     # message_done only: what the turn cost in context, so the app can show
     # how full the model's window is. Null when the provider does not say.
