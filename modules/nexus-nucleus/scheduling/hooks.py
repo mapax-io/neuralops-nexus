@@ -19,6 +19,7 @@ import logging
 import secrets
 
 from asgiref.sync import sync_to_async
+from django.db.models import F
 from django.utils import timezone
 
 from chat import api as chat_api
@@ -144,19 +145,38 @@ def hook_for_token(token: str):
     from nucleus.models import InboundHook
     if not token:
         return None
+    # Archiving a project, channel or topic is a soft delete on THAT row only --
+    # nothing cascades -- so a hook's own is_active is not enough: without these,
+    # a token kept firing into an archived chat forever (audit, 2026-09-21).
     return (
-        InboundHook.objects.filter(token_hash=token_hash(token), is_active=True)
-        .select_related("persona", "topic", "project", "company", "created_by")
+        InboundHook.objects.filter(
+            token_hash=token_hash(token), is_active=True,
+            topic__is_active=True, topic__channel__is_active=True,
+            project__is_active=True, company__is_active=True,
+        )
+        .select_related("persona", "persona__model", "topic", "project", "company", "created_by")
         .first()
     )
 
 
 def message_for(persona, text: str, data=None) -> str:
-    """What the topic sees: the mention and the sender's line, with any structured data fenced under it."""
-    body = f"@{persona.name} {text.strip()}"
+    """
+    What the topic sees: the mention and the sender's line, with any structured
+    data fenced under it. The sender's text is not trusted markdown -- a line of
+    backticks in it would otherwise close the fence and let it write its own.
+    """
+    body = f"@{persona.name} {fence_safe(text.strip())}"
     if data is None:
         return body
     return f"{body}\n\n```json\n{json.dumps(data, indent=2, sort_keys=True, default=str)}\n```"
+
+
+def fence_safe(text: str) -> str:
+    """The text with any line that opens or closes a code fence defused."""
+    return "\n".join(
+        (" " + line) if line.lstrip().startswith("```") else line
+        for line in text.splitlines()
+    ) or text
 
 
 def validate_payload(text: str | None, data) -> tuple[str, object | None]:
@@ -177,14 +197,18 @@ def validate_payload(text: str | None, data) -> tuple[str, object | None]:
 
 
 async def within_rate_limit(hook) -> bool:
-    """One fire's worth of budget for this hook this minute; a store hiccup never blocks a fire."""
+    """
+    One fire's worth of budget for this hook this minute. A store outage closes
+    the door rather than opening it: this is the one endpoint anyone on the
+    internet can reach, so "the limiter is down" must not mean "no limit".
+    """
     window = int(timezone.now().timestamp() // RATE_WINDOW_SECONDS)
     key = _RATE_KEY.format(hook_id=hook.id, window=window)
     try:
         count = await signal_store().incr(key, RATE_WINDOW_SECONDS)
     except Exception as exc:  # noqa: BLE001
         logger.warning("[hook] rate limit unavailable for %s: %s", hook.id, type(exc).__name__)
-        return True
+        raise HookError(503, "This hook cannot be accepted right now; try again shortly.") from exc
     return count <= FIRES_PER_MINUTE
 
 
@@ -197,7 +221,9 @@ def _record(hook, *, ok: bool, error: str = "") -> None:
         "last_error": "" if ok else error[:2000],
     }
     if ok:
-        fields["fire_count"] = hook.fire_count + 1
+        # Counted in the database, not from a value read a moment ago: two fires
+        # at once would otherwise record one.
+        fields["fire_count"] = F("fire_count") + 1
     InboundHook.objects.filter(id=hook.id).update(**fields)
 
 
@@ -211,6 +237,13 @@ def _actor_problem(hook) -> str | None:
         return "The person who created this hook can no longer call personas in that chat."
     if not hook.persona.is_active:
         return "The persona this hook calls is gone."
+    # model is NOT NULL, so "no model" means the model row was removed (a soft
+    # delete leaves the pointer). The trigger path would then fail the reply out
+    # of the sender's sight, while the hook answered ok and counted a success
+    # (audit, 2026-09-21).
+    model = hook.persona.model
+    if model is None or not model.is_active:
+        return "The persona this hook calls has no working model, so it cannot answer."
     return None
 
 
@@ -219,11 +252,13 @@ async def fire(hook, text: str, data=None) -> dict:
     Post the sender's line as the hook's creator and let the persona answer.
     Raises HookError for anything the sender should be told.
     """
+    # The budget is spent FIRST: a paused hook or a bad payload is still work
+    # this server did for whoever holds the token, so it must count.
+    if not await within_rate_limit(hook):
+        raise HookError(429, f"More than {FIRES_PER_MINUTE} fires in a minute; try again shortly.")
     if hook.is_paused:
         raise HookError(409, "This hook is paused.")
     text, data = validate_payload(text, data)
-    if not await within_rate_limit(hook):
-        raise HookError(429, f"More than {FIRES_PER_MINUTE} fires in a minute; try again shortly.")
 
     problem = await sync_to_async(_actor_problem)(hook)
     if problem:
@@ -235,9 +270,15 @@ async def fire(hook, text: str, data=None) -> dict:
     )
     channel = chat_svc.topic_channel(str(hook.topic_id))
     await chat_svc.publish_async(channel, {**msg, "type": "message"})
-    await chat_api._trigger_personas(
+    refusals = await chat_api._trigger_personas(
         [hook.persona], hook.company, hook.project, hook.topic, str(hook.topic_id),
         msg, text, "auto", False, None, hook.created_by,
     )
+    if refusals:
+        # The message posted; the persona will not answer it. Say so rather than
+        # report a success the sender cannot verify.
+        why = refusals[0].get("message") or "The persona did not answer this fire."
+        await sync_to_async(_record)(hook, ok=False, error=why)
+        raise HookError(409, why)
     await sync_to_async(_record)(hook, ok=True)
     return msg
