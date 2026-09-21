@@ -202,6 +202,61 @@ class PersonaSchedule(ProjectBaseModel):
         return f"{what} @ {self.topic.title} ({self.schedule_kind})"
 
 
+class InboundHook(ProjectBaseModel):
+    """
+    A URL another system POSTs to so a persona answers in a topic, with nobody
+    signed in (W12): build monitors, alert managers, cron jobs, form handlers.
+
+    The token is never stored -- only its sha256 and its last four characters,
+    which is all a person needs to tell two hooks apart. A fire acts as the
+    person who created the hook: their right to call personas in the topic is
+    re-checked every time, exactly as a schedule's creator's is.
+    """
+
+    class FireStatus(models.TextChoices):
+        NEVER_FIRED = "never_fired", "Never fired"
+        SUCCESS = "success", "Success"
+        FAILED = "failed", "Failed"
+
+    topic = models.ForeignKey(
+        "nucleus.ChatTopic", on_delete=models.CASCADE, related_name="inbound_hooks",
+        help_text="The chat a fire posts into.",
+    )
+    persona = models.ForeignKey(
+        "nucleus.Persona", on_delete=models.CASCADE, related_name="inbound_hooks",
+        help_text="The persona a fire calls.",
+    )
+    label = models.CharField(
+        max_length=80, blank=True, default="",
+        help_text="What sends to this hook -- shown in the pane, never to the sender.",
+    )
+    token_hash = models.CharField(
+        max_length=64, unique=True, db_index=True,
+        help_text="sha256 of the token. The token itself is shown once, at creation, and never stored.",
+    )
+    token_hint = models.CharField(
+        max_length=8, blank=True, default="",
+        help_text="The token's last few characters, so two hooks can be told apart.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_hooks",
+    )
+    # The disable switch a person flips, distinct from is_active (soft delete) --
+    # the same split PersonaSchedule makes.
+    is_paused = models.BooleanField(default=False)
+    last_fired_at = models.DateTimeField(null=True, blank=True)
+    fire_count = models.PositiveIntegerField(default=0)
+    last_status = models.CharField(max_length=20, choices=FireStatus.choices, default=FireStatus.NEVER_FIRED)
+    last_error = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["topic", "is_active"])]
+
+    def __str__(self) -> str:
+        return f"hook -> @{self.persona.name} in {self.topic.title}"
+
+
 class Runbook(ProjectBaseModel):
     """
     An ordered list of persona steps a project runs as one unit (W6). Each

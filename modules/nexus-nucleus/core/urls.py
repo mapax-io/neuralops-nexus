@@ -11,6 +11,7 @@ from intelligence.api import router as intelligence_router
 from internal.api import router as internal_router
 from context.api import router as context_router
 from scheduling.api import router as scheduling_router
+from scheduling.hooks_api import router as hooks_router
 
 api = NinjaAPI(
     title="NeuralOps Nucleus API",
@@ -27,6 +28,9 @@ api.add_router("/", intelligence_router)
 api.add_router("/internal/", internal_router)
 api.add_router("/projects/", context_router)
 api.add_router("/projects/", scheduling_router)
+# Public on purpose (W12): the token in the path is the credential. nginx does
+# not block it -- an inbound hook is only useful from outside.
+api.add_router("/hooks/", hooks_router)
 
 urlpatterns = [
     path("admin/", admin.site.urls),

@@ -131,3 +131,39 @@ class RunbookRunOut(Schema):
     ended_at: Optional[str] = None
     error: str = ""
     created_at: str
+
+
+# ── Inbound hooks (W12) ───────────────────────────────────────────────────────
+
+class HookIn(Schema):
+    persona_id: str
+    label: str = ""
+
+
+class HookPatchIn(Schema):
+    label: Optional[str] = None
+    is_paused: Optional[bool] = None
+
+
+class HookOut(Schema):
+    id: str
+    topic_id: str
+    persona_id: str
+    persona_name: str
+    label: str
+    token_hint: str                      # the token's last characters; the token itself is shown once
+    created_by_id: Optional[str] = None
+    created_by_name: Optional[str] = None
+    is_paused: bool
+    fire_count: int
+    last_fired_at: Optional[str] = None
+    last_status: str
+    last_error: str = ""
+    created_at: str
+    token: Optional[str] = None          # ONLY on create and regenerate
+
+
+class HookFireIn(Schema):
+    """What a sender POSTs. `data` is any JSON object; it rides under the text as a fenced block."""
+    text: str = ""
+    data: Optional[dict] = None

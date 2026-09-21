@@ -783,6 +783,23 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   (`apps/managers/runbooks.py`, clipped to `RUNBOOK_STEP_CONTEXT_MAX` = 12 000 chars). Phase 2 (condition/output
   steps, Describe, evidence, catch-up) stays in the master plan. Server `0.6.0` (MINOR: new tables and a
   schedule field).
+- **Inbound hooks (W12, 2026-09-21).** `InboundHook(project, topic, persona, label, token_hash, token_hint,
+  created_by, is_paused, last_fired_at, fire_count, last_status, last_error)` (migration 0027). The token is
+  generated once (`secrets.token_urlsafe(32)`), returned by create and regenerate ONLY, and stored as its sha256
+  plus its last four characters — nucleus cannot show it again, and says so in the dialog. Management under the
+  topic, like schedules (`scheduling/api.py`): list/create/patch/regenerate/delete under `hook.manage` (Admin),
+  and creating or regenerating ALSO needs `persona.mention` in that topic — a hook lends a persona's reach to a
+  machine, so it may not lend more reach than its maker has. Firing is the ONE public write path in nucleus:
+  `POST /api/v1/hooks/{token}/` on a router with no auth (`scheduling/hooks_api.py`; nginx blocks only
+  `/api/v1/internal/`), body `{text ≤ 4000, data? ≤ 32 KB}`. It answers 404 for an unknown or removed token (a
+  public route must not confirm that a token ever existed), 409 paused, 400 empty text or non-JSON data, 413 too
+  large, 429 over 30 fires a minute for that hook (with `Retry-After`), 403 when the creator may no longer call
+  personas there — recorded on the hook as `last_error`, which the pane shows, rather than posting a line into
+  the chat on every blocked fire. A fire posts `@persona <text>` (plus a fenced json block when `data` came) as
+  the creator through `save_user_message`, publishes it, and calls `chat/api.py:_trigger_personas` — the reply is
+  the creator's (W22). Rate limiting extends the process's existing shared store (`chat/stop_signals.py` gained
+  `incr` and `signal_store()`) rather than opening a second Redis client; a store hiccup never blocks a fire.
+  Server `0.6.1` (additive).
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).
