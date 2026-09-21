@@ -726,6 +726,26 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   the dialogs are where the rule lives; an older server (404 on the check) saves as before. Side fix: the worker
   now passes `api_base` to OpenAI-shaped providers (it was dropped, so compatible endpoints never worked).
   Server `0.5.5`.
+- **Recall (W5, 2026-09-21).** What the team's personas record about a project outlives the topic it came up in.
+  `RecallEntry(ProjectBaseModel)`: kind (decision|fact|preference), text ≤ 500, `normalized` (the dedupe key,
+  enforced in `intelligence/recall.py` — not a DB constraint, so a removed entry can be recorded again), source
+  topic/message, author persona, created_by; migration `nucleus 0025` (with `Persona.recall_enabled`, default on,
+  which gates both what the persona is fed and what it records). Caps: 5 entries per reply, 500 per project.
+  Nucleus is the writer of record and the worker owns the vectors: every create/edit → worker
+  `POST /api/v1/embed/recall/` into `company_{id}_recall` (doc id = entry id, so an edit upserts), soft delete →
+  `DELETE /api/v1/embed/recall/{id}/` — both best effort (a missing vector is weaker recall, not a failed write).
+  Every trigger carries a `recall` context source (`source_id` = the project id) unless the persona has recall
+  off; the worker's third plugin `RecallContextSource` retrieves top-k `RECALL_TOP_K` (8) by project and the prompt
+  builder puts them in their OWN block "What the team has recorded" after the attached sources and before the
+  conversation. The remember pass (`apps/managers/recall.py`): after a successful reply, the persona's utility
+  model (else its own) reads the exchange and answers `{entries: [{kind, text}]}` (structured output, max_tokens
+  400, `RECALL_REMEMBER_TIMEOUT_SECONDS` 15, "nothing durable → empty list"); the worker POSTs
+  `/internal/recall/` and `message_done.recalled` says how many were kept (`metadata.recalled`,
+  `MessageOut.recalled`); any failure in the pass is logged and never touches the reply. Rights: reading needs
+  project access (`topic.list`); editing/removing is `recall.manage`, which the registry places in the MEMBER tier
+  (a member curates what personas recorded; Viewers read only). Routes `GET/PATCH/DELETE /projects/{id}/recall/…`.
+  Follow-ups kept out of this item and logged in OPEN-ITEMS: the persona-callable `remember` tool, the nightly
+  consolidation, per-project exclusions, the Routine proposal. Server `0.5.6`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

@@ -390,7 +390,7 @@ from asgiref.sync import sync_to_async  # noqa: E402
 from django.test import override_settings  # noqa: E402
 
 from chat.reasons import WORKER_ENDED_EARLY_REASON  # noqa: E402
-from chat.services import trigger_ai_response_async, trigger_ai_swarm_response_async  # noqa: E402
+from chat.services import _serialise, trigger_ai_response_async, trigger_ai_swarm_response_async  # noqa: E402
 
 
 def sse(*events: dict) -> list[str]:
@@ -621,6 +621,8 @@ class WireFieldDefaultsTests(MentionRightFixture):
         self.assertEqual(_serialise(self.message(approvals=[{"call_id": "c1", "tool": "run_command", "status": "denied"}]))["approvals"][0]["status"], "denied")
         self.assertEqual(out["answered_by_model"], "gpt-4o-mini (fallback)")
         self.assertEqual(out["usage"]["context_window"], 200000)
+        self.assertEqual(_serialise(self.message(recalled=2))["recalled"], 2)
+        self.assertEqual(out["recalled"], 0)
 
 
 class RelayUsageTests(RelayFixture):
@@ -651,6 +653,16 @@ class RelayUsageTests(RelayFixture):
         row = (await sync_to_async(self.reply_rows)())[-1]
         self.assertNotIn("answered_by_model", row.metadata)
         self.assertIsNone(self.events("message_done")[-1]["answered_by_model"])
+
+    async def test_what_the_reply_recorded_is_kept_and_republished(self):
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text", "recalled": 2},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["recalled"], 2)
+        self.assertEqual(self.events("message_done")[0]["recalled"], 2)
+        await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
+        self.assertEqual(self.events("message_done")[-1]["recalled"], 0)
 
     async def test_a_done_without_usage_stores_none(self):
         await self.run_single(FakeResponse(sse(

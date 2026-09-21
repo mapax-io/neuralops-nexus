@@ -701,3 +701,11 @@ either, so a persona on such a model fails at call time (the model check now say
 pydantic-ai Google model and an OpenAI-compatible route for Ollama. Also: `apps/routers/embed.py` and
 `apps/routers/trigger.py` each carry their own `_verify_key`; `apps/routers/internal_key.py` (model check) is the
 shared one — point the other two at it.
+
+## Recall follow-ups (W5 amendments not in the first cut)
+
+The master plan's amendments to W5 are still open: a persona-callable `remember` tool (memory-directed phrasing
+in the chat: "remember that…"), a nightly consolidation task (dedupe/merge/stale) capped by the per-project
+ceiling, per-project exclusions (topics or patterns never recorded), and a Routine proposal when a method
+repeats. The first cut ships the entry model, the embedding/retrieval path, the end-of-reply remember pass, the
+pane and the persona switch.

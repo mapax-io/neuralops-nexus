@@ -440,6 +440,7 @@ def update_ai_message(
     activity_trail: list | None = None,
     preflight: dict | None = None,
     answered_by_model: str | None = None,
+    recalled: int | None = None,
 ) -> None:
     """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
@@ -461,6 +462,8 @@ def update_ai_message(
         metadata["activity_trail"] = activity_trail
     if answered_by_model:
         metadata["answered_by_model"] = answered_by_model
+    if recalled:
+        metadata["recalled"] = recalled
     if preflight:
         metadata["preflight"] = preflight
 
@@ -865,7 +868,7 @@ async def trigger_ai_response_async(
     #    Left as a separate, explicitly flagged follow-up -- see #131.
 
     # _build_context_sources does sync ORM queries — must be wrapped for async context
-    context_sources = await sync_to_async(_build_context_sources)(topic, company)
+    context_sources = await sync_to_async(_build_context_sources)(topic, company, persona)
 
     job_payload = {
         "job_id": str(uuid.uuid4()),
@@ -898,6 +901,7 @@ async def trigger_ai_response_async(
     ai_error_code: str | None = None
     usage: dict | None = None
     answered_by_model: str | None = None
+    recalled: int | None = None
     activity_trail: list = []
     stopped = False
 
@@ -982,6 +986,8 @@ async def trigger_ai_response_async(
                             usage = usage_from(event)
                             # "<model> (fallback)" when the persona's own model could not answer.
                             answered_by_model = event.get("answered_by_model") or None
+                            # How many entries the reply recorded in the project's Recall (W5).
+                            recalled = int(event.get("recalled") or 0) or None
                             break
 
                         elif event_type == "message_error":
@@ -1051,6 +1057,7 @@ async def trigger_ai_response_async(
                 activity_trail=activity_trail,
                 preflight=preflight,
                 answered_by_model=answered_by_model,
+                recalled=recalled,
             )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
@@ -1068,6 +1075,7 @@ async def trigger_ai_response_async(
         "stopped": False,                    # a stopped run ends in end_stopped_reply()
         "preflight": preflight,              # the proposal, so the card can be decided without a reload
         "answered_by_model": answered_by_model,
+        "recalled": recalled or 0,
     }, usage))
 
     # M8: Embed AI response — smart content selection
@@ -1299,6 +1307,7 @@ async def trigger_ai_swarm_response_async(
                                 usage=hop_usage,
                                 activity_trail=trails.get(active_msg_id),
                                 answered_by_model=event.get("answered_by_model") or None,
+                                recalled=int(event.get("recalled") or 0) or None,
                             )
                             event["id"] = active_msg_id
                             await publish_async(channel, with_usage(event, hop_usage))
@@ -1478,12 +1487,13 @@ def save_user_message(company, project, topic, user, content: str) -> dict:
 
 # ── Context sources for TriggerJob ────────────────────────────────────────────
 
-def _build_context_sources(topic, company) -> list[dict]:
+def _build_context_sources(topic, company, persona=None) -> list[dict]:
     """
     Build the context_sources list for TriggerJob.
 
     Always includes a ChatContext ref (semantic search over past messages).
-    Plus any file/web sources attached to the topic that are ready.
+    Plus any file/web sources attached to the topic that are ready, and the
+    project's Recall (W5) unless the persona has recall off.
     """
     sources = []
 
@@ -1508,6 +1518,15 @@ def _build_context_sources(topic, company) -> list[dict]:
             "type": "file",
             "label": src.name,
             "collection_id": src.collection_id,
+        })
+
+    # 3. Recall -- what the team's personas recorded about the project (W5).
+    if persona is None or persona.recall_enabled:
+        sources.append({
+            "source_id": str(topic.project_id),
+            "type": "recall",
+            "label": "Recall",
+            "collection_id": f"company_{company.id}_recall",
         })
 
     return sources
@@ -1539,6 +1558,7 @@ def _serialise(msg) -> dict:
         "preflight": metadata.get("preflight"),
         "approvals": metadata.get("approvals") or [],
         "answered_by_model": metadata.get("answered_by_model"),
+        "recalled": int(metadata.get("recalled") or 0),
         "usage": metadata.get("usage"),
         "sender_name": sender_name,
         "sender_id": str(msg.sender_id) if msg.sender_id else None,

@@ -485,3 +485,127 @@ class ModelCheckTests(MentionRightFixture):
         with self.settings(NEXUS_AI_URL=""):
             r = self.call("post", "/api/v1/model-configs/check/", self.owner, {"provider": "openai", "model_id": "gpt-4o-mini", "api_key": "k"})
         self.assertEqual(r.status_code, 503, r.content)
+
+
+# ── W5 Recall ────────────────────────────────────────────────────────────────
+class RecallTests(MentionRightFixture):
+    """What personas record about a project: stored once, attributed, embedded by the worker, edited under recall.manage."""
+
+    def setUp(self):
+        super().setUp()
+        from unittest.mock import MagicMock, patch
+        self.embed_calls = []
+        self.delete_calls = []
+        def fake_post(url, json=None, headers=None, timeout=None):
+            self.embed_calls.append(json)
+            response = MagicMock(status_code=200)
+            response.raise_for_status.return_value = None
+            return response
+        def fake_delete(url, params=None, headers=None, timeout=None):
+            self.delete_calls.append((url, params))
+            return MagicMock(status_code=200)
+        for target, value in (("intelligence.recall.httpx.post", fake_post), ("intelligence.recall.httpx.delete", fake_delete)):
+            patcher = patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # Inline here so the calls can be asserted; in production they run off the request.
+        self.settings_patch = self.settings(NEXUS_AI_URL="http://worker.test", INTERNAL_API_KEY="k", RECALL_EMBED_INLINE=True)
+        self.settings_patch.enable()
+        self.addCleanup(self.settings_patch.disable)
+        from nucleus.models import ChatMessage
+        self.msg = ChatMessage.objects.create(company=self.company, project=self.p1, topic=self.t1, sender=self.owner, content="let's use Postgres", sequence=1)
+
+    def record(self, entries, **kw):
+        from intelligence.recall import record_recall
+        return record_recall(self.p1, entries, **kw)
+
+    def test_entries_are_stored_once_attributed_and_embedded(self):
+        out = self.record([
+            {"kind": "decision", "text": "We use Postgres for the warehouse."},
+            {"kind": "fact", "text": "  The API   lives in nucleus.  "},
+            {"kind": "Decision", "text": "we use postgres for the warehouse"},  # the same thing, said again
+        ], persona=self.persona_sara, message=self.msg)
+        self.assertEqual((len(out["created"]), out["skipped"]), (2, 1))
+        first = out["created"][0]
+        self.assertEqual((first.kind, first.text, first.normalized), ("decision", "We use Postgres for the warehouse.", "we use postgres for the warehouse"))
+        self.assertEqual((first.author_persona, first.source_message, first.source_topic), (self.persona_sara, self.msg, self.t1))
+        self.assertEqual(out["created"][1].text, "The API lives in nucleus.")
+        self.assertEqual([c["text"] for c in self.embed_calls], ["We use Postgres for the warehouse.", "The API lives in nucleus."])
+        self.assertEqual(self.embed_calls[0]["collection_id"] if "collection_id" in self.embed_calls[0] else self.embed_calls[0]["project_id"], str(self.p1.id))
+        self.assertEqual(self.embed_calls[0]["author_name"], "Sara")
+        # Recorded again later: skipped, not duplicated.
+        out = self.record([{"kind": "decision", "text": "We use Postgres for the warehouse!"}], persona=self.persona_sara)
+        self.assertEqual((len(out["created"]), out["skipped"]), (0, 1))
+
+    def test_invalid_entries_are_refused_and_the_caps_hold(self):
+        for bad in ({"kind": "wish", "text": "x"}, {"kind": "fact", "text": "   "}, {"kind": "fact", "text": "x" * 501}):
+            with self.assertRaises(ValueError):
+                self.record([bad])
+        out = self.record([{"kind": "fact", "text": f"fact number {i}"} for i in range(7)])
+        self.assertEqual((len(out["created"]), out["skipped"]), (5, 2))
+        from unittest.mock import patch
+        with patch("intelligence.recall.RECALL_PER_PROJECT_MAX", 6):
+            out = self.record([{"kind": "fact", "text": "one more"}, {"kind": "fact", "text": "and another"}])
+        self.assertEqual((len(out["created"]), out["skipped"]), (1, 1))
+
+    def test_the_worker_writes_through_the_internal_route(self):
+        from django.test import Client
+        import os
+        body = {"project_id": str(self.p1.id), "persona_id": str(self.persona_sara.id), "message_id": str(self.msg.id),
+                "entries": [{"kind": "preference", "text": "Answer in bullet points."}, {"kind": "preference", "text": "answer in bullet points"}]}
+        with patch_env():
+            r = Client().post("/api/v1/internal/recall/", data=body, content_type="application/json", HTTP_X_INTERNAL_API_KEY="k")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json(), {"created": 1, "skipped": 1})
+        entry = self.p1.recallentry_items.get(is_active=True)
+        self.assertEqual((entry.author_persona, entry.source_topic), (self.persona_sara, self.t1))
+        with patch_env():
+            r = Client().post("/api/v1/internal/recall/", data={**body, "persona_id": str(self.persona_bob.id), "project_id": str(self.p2.id)}, content_type="application/json", HTTP_X_INTERNAL_API_KEY="k")
+        self.assertEqual(r.status_code, 404, r.content)  # Bob is not in Beta
+
+    def test_reading_needs_the_project_editing_needs_the_right_and_the_vector_follows(self):
+        entry = self.record([{"kind": "fact", "text": "Deploys go out on Tuesdays."}], persona=self.persona_sara, message=self.msg)["created"][0]
+        r = self.call("get", f"/api/v1/projects/{self.p1.id}/recall/", self.sara)
+        self.assertEqual(r.status_code, 200, r.content)
+        row = r.json()[0]
+        self.assertEqual((row["kind"], row["text"], row["author_name"], row["source"]["topic_title"], row["source"]["message_id"]), ("fact", "Deploys go out on Tuesdays.", "Sara", "t1", str(self.msg.id)))
+        self.assertEqual(self.call("get", f"/api/v1/projects/{self.p1.id}/recall/?kind=decision", self.sara).json(), [])
+        self.assertEqual(len(self.call("get", f"/api/v1/projects/{self.p1.id}/recall/?q=tuesday", self.sara).json()), 1)
+        self.assertEqual(self.call("get", f"/api/v1/projects/{self.p1.id}/recall/", self.vera).status_code, 200)  # a viewer reads
+        r = self.call("patch", f"/api/v1/projects/{self.p1.id}/recall/{entry.id}/", self.vera, {"text": "Deploys go out on Wednesdays."})
+        self.assertEqual(r.status_code, 403, r.content)  # a viewer reads; curating what is recorded is recall.manage (Member tier)
+        r = self.call("patch", f"/api/v1/projects/{self.p1.id}/recall/{entry.id}/", self.sara, {"text": "Deploys go out on Wednesdays.", "kind": "decision"})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual((r.json()["text"], r.json()["kind"]), ("Deploys go out on Wednesdays.", "decision"))
+        self.assertEqual(self.embed_calls[-1]["text"], "Deploys go out on Wednesdays.")  # re-embedded
+        self.record([{"kind": "fact", "text": "Standup is at ten."}])
+        r = self.call("patch", f"/api/v1/projects/{self.p1.id}/recall/{entry.id}/", self.owner, {"text": "standup is at ten"})
+        self.assertEqual(r.status_code, 400, r.content)  # already recorded
+        self.assertEqual(self.call("delete", f"/api/v1/projects/{self.p1.id}/recall/{entry.id}/", self.vera).status_code, 403)
+        self.assertEqual(self.call("delete", f"/api/v1/projects/{self.p1.id}/recall/{entry.id}/", self.sara).status_code, 204)
+        self.assertEqual(self.delete_calls[-1][0], f"http://worker.test/api/v1/embed/recall/{entry.id}/")
+        self.assertEqual(len(self.call("get", f"/api/v1/projects/{self.p1.id}/recall/", self.owner).json()), 1)
+        # A removed entry can be recorded again.
+        self.assertEqual(len(self.record([{"kind": "decision", "text": "Deploys go out on Wednesdays."}])["created"]), 1)
+
+    def test_recall_enabled_round_trips_and_gates_the_source_the_worker_gets(self):
+        from intelligence.api import _persona_out
+        from intelligence.services import patch_persona
+        from internal.api import get_persona_internal
+        from chat.services import _build_context_sources
+        from nucleus.models import Prompt
+        self.assertTrue(_persona_out(self.persona_sara).recall_enabled)
+        self.assertEqual([s["type"] for s in _build_context_sources(self.t1, self.company, self.persona_sara)], ["chat", "recall"])
+        self.assertEqual(_build_context_sources(self.t1, self.company, self.persona_sara)[-1]["collection_id"], f"company_{self.company.id}_recall")
+        patch_persona(self.company, str(self.persona_sara.id), {"recall_enabled": False})
+        self.persona_sara.refresh_from_db()
+        self.assertFalse(_persona_out(self.persona_sara).recall_enabled)
+        self.assertEqual([s["type"] for s in _build_context_sources(self.t1, self.company, self.persona_sara)], ["chat"])
+        Prompt.objects.create(company=self.company, persona=self.persona_sara, system_prompt="You are Sara.")
+        self.assertFalse(get_persona_internal(None, str(self.persona_sara.id)).model_dump()["recall_enabled"])
+
+
+def patch_env():
+    import os
+    from unittest.mock import patch
+    return patch.dict(os.environ, {"INTERNAL_API_KEY": "k"})
