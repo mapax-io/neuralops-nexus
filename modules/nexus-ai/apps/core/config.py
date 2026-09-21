@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     # relay reads with a two-minute idle timeout.
     STREAM_KEEPALIVE_SECONDS: float = 30
 
+    # ── Terminal (apps/managers/terminal.py) ─────────────────────────────────
+    # The shell a Terminal pane session runs, how long one may sit without
+    # input, and how many may be open on this worker at once.
+    TERMINAL_SHELL: str = "/bin/bash"
+    TERMINAL_IDLE_SECONDS: int = 1800
+    TERMINAL_MAX_SESSIONS: int = 20
+
     class Config:
         env_file = ".env"
         extra = "ignore"
