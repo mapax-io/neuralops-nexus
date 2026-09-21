@@ -61,6 +61,7 @@ def tool_activity_end_event(msg_id: str, event: dict) -> dict | None:
         "duration_ms": int(result.get("duration_ms") or 0),
         "preview": result.get("preview"),
         "error": result.get("error"),
+        "url": result.get("url"),
     }
 
 

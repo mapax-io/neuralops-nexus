@@ -746,6 +746,10 @@ Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation
   (a member curates what personas recorded; Viewers read only). Routes `GET/PATCH/DELETE /projects/{id}/recall/…`.
   Follow-ups kept out of this item and logged in OPEN-ITEMS: the persona-callable `remember` tool, the nightly
   consolidation, per-project exclusions, the Routine proposal. Server `0.5.6`.
+- **Follow along (W9, 2026-09-21).** A web tool call's trail row carries the page it went to:
+  `ToolResultData.url` (worker `tool_events.url_of`: `web_fetch`'s http(s) `url`; a search query becomes a Bing
+  results page — Bing allows framing, DuckDuckGo does not), relayed on `tool_activity_end` and kept on the trail
+  row (`chat/services.py remember_tool_call`). The app's Web pane opens it beside the chat. Server `0.5.7`.
 
 **Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
 `chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

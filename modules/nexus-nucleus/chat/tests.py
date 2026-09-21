@@ -676,18 +676,19 @@ class RelayUsageTests(RelayFixture):
 # ── the activity trail: every tool call, closed, on the wire and on the row ──
 class ToolActivityEndEventTests(SimpleTestCase):
     def test_carries_outcome_duration_and_preview(self):
-        ev = tool_activity_end_event("m1", {"tool_result": {"name": "web_search", "ok": True, "duration_ms": 412, "preview": "Canada …", "error": None}})
-        self.assertEqual(ev, {"type": "tool_activity_end", "id": "m1", "tool": "web_search", "ok": True, "duration_ms": 412, "preview": "Canada …", "error": None})
+        ev = tool_activity_end_event("m1", {"tool_result": {"name": "web_search", "ok": True, "duration_ms": 412, "preview": "Canada …", "error": None, "url": "https://www.bing.com/search?q=canada"}})
+        self.assertEqual(ev, {"type": "tool_activity_end", "id": "m1", "tool": "web_search", "ok": True, "duration_ms": 412, "preview": "Canada …", "error": None, "url": "https://www.bing.com/search?q=canada"})
+        self.assertIsNone(tool_activity_end_event("m1", {"tool_result": {"name": "shell", "ok": True, "duration_ms": 1}})["url"])  # no page for a shell call
 
     def test_nothing_to_show_publishes_nothing(self):
         self.assertIsNone(tool_activity_end_event("m1", {"tool_result": {"name": "", "ok": True, "duration_ms": 1}}))
         self.assertIsNone(tool_activity_end_event("m1", {}))
 
 
-def tool_pair(name, ok=True, duration_ms=100, preview="…", error=None):
+def tool_pair(name, ok=True, duration_ms=100, preview="…", error=None, url=None):
     return [
         {"type": "tool_call_start", "tool_call": {"name": name, "args": {}}},
-        {"type": "tool_call_end", "tool_result": {"name": name, "ok": ok, "duration_ms": duration_ms, "preview": preview if ok else None, "error": error}},
+        {"type": "tool_call_end", "tool_result": {"name": name, "ok": ok, "duration_ms": duration_ms, "preview": preview if ok else None, "error": error, "url": url}},
     ]
 
 
@@ -703,8 +704,8 @@ class RelayActivityTrailTests(RelayFixture):
         self.assertEqual(ends[1]["error"], "command not allowed")
         row = (await sync_to_async(self.reply_rows)())[0]
         self.assertEqual(row.metadata["activity_trail"], [
-            {"tool": "web_search", "ok": True, "duration_ms": 100, "preview": "Canada GDP …", "error": None},
-            {"tool": "shell", "ok": False, "duration_ms": 30, "preview": None, "error": "command not allowed"},
+            {"tool": "web_search", "ok": True, "duration_ms": 100, "preview": "Canada GDP …", "error": None, "url": None},
+            {"tool": "shell", "ok": False, "duration_ms": 30, "preview": None, "error": "command not allowed", "url": None},
         ])
         # and the start events still drive the activity label as before
         self.assertEqual([e["tool"] for e in self.events("tool_activity")], ["web_search", "shell"])
