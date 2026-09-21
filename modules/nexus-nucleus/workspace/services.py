@@ -124,7 +124,7 @@ def open_terminal_session(project, user) -> dict:
         raise TerminalError(409, "This project has no folder on the server, so there is nowhere to open a shell.")
     logger.info("[terminal] session user=%s project=%s cwd=%s", user.id, project.id, cwd)
     ticket = sign_terminal_ticket(
-        {"project_id": str(project.id), "project_name": project.name, "user_id": str(user.id), "cwd": cwd},
+        {"kind": "terminal", "project_id": str(project.id), "project_name": project.name, "user_id": str(user.id), "cwd": cwd},
         settings.INTERNAL_API_KEY,
     )
     return {"ticket": ticket, "path": TERMINAL_WS_PATH, "expires_in": TERMINAL_TICKET_TTL}
@@ -155,6 +155,10 @@ def open_browser_session(project, user, *, width: int = 1280, height: int = 800,
     logger.info("[browser] session user=%s project=%s", user.id, project.id)
     ticket = sign_terminal_ticket(
         {
+            # A ticket says what it is for: both kinds are signed with the same
+            # key, so without this a terminal ticket would open a browser for
+            # someone who holds only project.terminal (audit, 2026-09-21).
+            "kind": "browser",
             "project_id": str(project.id), "project_name": project.name, "user_id": str(user.id),
             "width": int(width), "height": int(height), "url": (url or "")[:2000],
         },
