@@ -364,6 +364,8 @@ class AgentEventType(str, Enum):
     APPROVAL_REQUESTED = "approval_requested"
     # Nothing to say yet; keeps the relay's idle timeout from ending the run.
     KEEPALIVE = "keepalive"
+    # The caller added to the running reply and the persona took it (apps/managers/nudges.py).
+    NUDGE_TAKEN = "nudge_taken"
 
 
 class AgentEvent(BaseModel):
@@ -409,6 +411,9 @@ class AgentEvent(BaseModel):
     answered_by_model: str | None = None
     # message_done only: how many entries the reply recorded in the project's Recall (W5).
     recalled: int | None = None
+
+    # nudge_taken only: what the caller added.
+    nudge: str | None = None
 
     # message_error only -- see apps/routers/trigger.py:_event_stream. Emitted
     # when anything in AgenticManager.run() raises (persona resolve, history

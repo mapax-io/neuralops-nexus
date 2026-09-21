@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     # Recall (W5): entries retrieved per turn, and how long the remember pass may take.
     RECALL_TOP_K: int = 8
     RECALL_REMEMBER_TIMEOUT_SECONDS: float = 15
+    # Nudge (W8): the poll after each tool call must not slow the run.
+    NUDGE_POLL_TIMEOUT_SECONDS: float = 1.5
 
     class Config:
         env_file = ".env"
