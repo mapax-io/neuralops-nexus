@@ -202,6 +202,7 @@ def shape_history(raw: list[dict]) -> list[HistoryMessage]:
             role=role,
             content=m.get("content") or "",
             sender_name=m.get("sender_name"),
+            output_type=(m.get("output_type") or "text") if role == "assistant" else "text",
         ))
 
     return history

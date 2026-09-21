@@ -24,6 +24,13 @@ class OutputTypeSpec:
     example_prompts: list[str] = field(default_factory=list)
 
 
+# Types whose turn must not be interrupted by a question: a plan is itself the
+# question, and a choice prompt asks nothing further. The prompt builder leaves
+# the choice exception out of these turns and recovery never files their reply
+# as a choice.
+TYPES_WITHOUT_CHOICE = frozenset({"preflight", "choice"})
+
+
 class _OutputTypeRegistry:
     def __init__(self) -> None:
         self._types: dict[str, OutputTypeSpec] = {}

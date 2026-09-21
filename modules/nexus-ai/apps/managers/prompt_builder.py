@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from apps.factories.context_source import ContextSourceFactory
+from apps.output_types.registry import TYPES_WITHOUT_CHOICE
 from apps.schemas.trigger import (
     HistoryMessage,
     PersonaConfig,
@@ -48,6 +49,31 @@ def compose_system_prompt(project_brief: str | None, persona_prompt: str) -> str
     if not brief:
         return persona_prompt
     return f"{BRIEF_HEADING}\n{brief}\n\n{persona_prompt}"
+
+CHOICE_EXCEPTION = (
+    "One exception to the format above: when you genuinely cannot continue without the person choosing "
+    "between a few concrete options (not a rhetorical question, not something you could decide or look up "
+    "yourself), answer with ONLY a choice prompt, in exactly this form and nothing else:\n"
+    "<<<OUTPUT:choice>>>\n"
+    '{ "question": "one clear question", "options": [ { "id": "short-id", "label": "the option", "hint": "one line of consequence, optional" } ], "multiple": false }\n'
+    "<<<END_OUTPUT>>>\n"
+    "Two to six options; multiple is true only when more than one may be picked together. "
+    "The person's pick comes back as their next message, and you carry on from there."
+)
+
+
+def with_output_instruction(system_content: str, output_type_instruction: str | None) -> str:
+    """
+    The system prompt with the resolved type's format instruction, plus the one
+    standing exception -- a choice prompt when the persona must ask -- for
+    every type but a plan or a choice itself. Both prompt paths use this.
+    """
+    if not output_type_instruction:
+        return system_content
+    block = output_type_instruction
+    if not any(f"<<<OUTPUT:{name}>>>" in output_type_instruction for name in TYPES_WITHOUT_CHOICE):
+        block = f"{output_type_instruction}\n\n{CHOICE_EXCEPTION}"
+    return f"{system_content}\n\n--- OUTPUT FORMAT INSTRUCTION ---\n{block}"
 
 class NewImprovedPromptBuilder:
     async def build(
@@ -88,12 +114,7 @@ class NewImprovedPromptBuilder:
             )
             context_chunks.extend(source_chunks)
 
-        if output_type_instruction:
-            system_content = (
-                f"{system_content}\n\n"
-                f"--- OUTPUT FORMAT INSTRUCTION ---\n"
-                f"{output_type_instruction}"
-            )
+        system_content = with_output_instruction(system_content, output_type_instruction)
 
         messages.append(ModelRequest(parts=[SystemPromptPart(content=system_content)]))
 
@@ -209,12 +230,7 @@ class PromptBuilder:
 
         # 1. System prompt — persona prompt + optional output type instruction
         system_content = persona.system_prompt
-        if output_type_instruction:
-            system_content = (
-                f"{system_content}\n\n"
-                f"--- OUTPUT FORMAT INSTRUCTION ---\n"
-                f"{output_type_instruction}"
-            )
+        system_content = with_output_instruction(system_content, output_type_instruction)
 
         if swarm_mode:
             system_content = (

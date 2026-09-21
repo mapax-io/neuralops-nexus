@@ -229,6 +229,9 @@ class HistoryMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
     sender_name: str | None = None  # display only, not sent to LLM
+    # the output type an assistant row was stored with ("choice" marks a
+    # question the person answered with a pick); "text" for user rows
+    output_type: str = "text"
 
 
 class ContextSourceRef(BaseModel):
