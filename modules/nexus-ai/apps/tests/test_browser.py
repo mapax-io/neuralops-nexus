@@ -110,3 +110,84 @@ async def test_back_forward_and_reload_say_why_they_did_not_work():
 def test_availability_is_reported_not_assumed():
     # Whatever this image has, the answer is a bool and the router gates on it.
     assert isinstance(is_available(), bool)
+
+
+def test_the_browser_is_launched_as_the_browser_people_use():
+    # The full Chromium in its new headless mode, not the headless shell; and
+    # without Playwright's automation flag, which a person browsing does not
+    # carry. Nothing is spoofed: no user agent is set here.
+    from apps.managers.browser import LAUNCH_ARGS, launch_options
+    opts = launch_options()
+    assert opts["channel"] == "chromium"
+    assert "--enable-automation" in opts["ignore_default_args"]
+    assert "--no-sandbox" in opts["args"] and opts["args"] == LAUNCH_ARGS
+    assert "user_agent" not in opts
+
+
+def test_a_project_s_browser_state_lives_outside_the_project_folder_and_the_id_is_checked(monkeypatch, tmp_path):
+    from apps.managers.browser import state_path
+    monkeypatch.setattr(settings, "BROWSER_STATE_DIR", str(tmp_path / "state"))
+    assert state_path("80b04b52-01ae-449d-9114-91c45eb674a1") == tmp_path / "state" / "80b04b52-01ae-449d-9114-91c45eb674a1.json"
+    assert state_path(None) is None
+    for bad in ("../../etc/passwd", "a/b", "", "x" * 65):
+        assert state_path(bad) is None, bad
+
+
+class _FakeContext:
+    def __init__(self):
+        self.closed = False
+
+    async def storage_state(self, path):
+        import json
+        import pathlib
+        pathlib.Path(path).write_text(json.dumps({"cookies": [{"name": "cf_clearance", "value": "ok"}], "origins": []}))
+
+    async def route(self, *a, **k):
+        pass
+
+    async def close(self):
+        self.closed = True
+
+
+class _FakeBrowser:
+    def __init__(self):
+        self.context_kwargs = None
+
+    async def new_context(self, **kwargs):
+        self.context_kwargs = kwargs
+        return _FakeContext()
+
+
+@pytest.mark.asyncio
+async def test_a_session_remembers_its_project_s_cookies_for_the_next_one(monkeypatch, tmp_path):
+    # A browser that forgot everything at every session re-asked every login
+    # and every challenge a person had already passed (2026-09-22).
+    import apps.managers.browser as mod
+    monkeypatch.setattr(settings, "BROWSER_STATE_DIR", str(tmp_path / "state"))
+    fake = _FakeBrowser()
+
+    async def shared():
+        return fake
+    monkeypatch.setattr(mod, "_shared_browser", shared)
+
+    async def no_tab(url=None):
+        return None
+
+    first = BrowserSession(on_frame=lambda b: None, on_state=lambda s: None, project_id="p1")
+    first.open_tab = no_tab
+    await first.start()
+    assert fake.context_kwargs["storage_state"] is None      # nothing remembered yet
+    await first.close()
+    kept = tmp_path / "state" / "p1.json"
+    assert kept.exists() and "cf_clearance" in kept.read_text()
+    assert oct(kept.stat().st_mode & 0o777) == "0o600"
+
+    second = BrowserSession(on_frame=lambda b: None, on_state=lambda s: None, project_id="p1")
+    second.open_tab = no_tab
+    await second.start()
+    assert fake.context_kwargs["storage_state"] == str(kept)   # the next session starts from it
+
+    other = BrowserSession(on_frame=lambda b: None, on_state=lambda s: None, project_id="p2")
+    other.open_tab = no_tab
+    await other.start()
+    assert fake.context_kwargs["storage_state"] is None       # another project shares nothing

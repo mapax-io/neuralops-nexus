@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     BROWSER_NAV_TIMEOUT_MS: int = 30_000
     BROWSER_IDLE_SECONDS: int = 900
     BROWSER_USER_AGENT: str = ""
+    # Where a project's browser keeps its cookies and local storage between
+    # sessions (a login, a challenge already passed). Outside the project
+    # folder on purpose: personas' file tools can read that, and a cookie jar
+    # is not theirs to read. Mounted as a volume in compose so it survives
+    # the container.
+    BROWSER_STATE_DIR: str = "/home/nexus/.cache/neuralops-browser"
     # A browser INSIDE the deployment must not be a way to reach the database or
     # a cloud metadata endpoint. Turn on only for a server with nothing private.
     BROWSER_ALLOW_PRIVATE_NETWORK: bool = False
