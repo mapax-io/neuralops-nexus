@@ -508,12 +508,15 @@ async def stop_message(request, project_id: str, channel_id: str, topic_id: str,
     if outcome == "orphaned":
         # No relay is running this reply (nucleus restarted mid-run). It has
         # just been failed with that reason; tell everyone in the topic.
+        from .events import message_error_event
         from .reasons import ORPHANED_RUN_REASON
-        await chat_svc.publish_async(chat_svc.topic_channel(topic_id), {
-            "type": "message_error", "id": message_id, "content": ORPHANED_RUN_REASON,
-        })
+        await chat_svc.publish_async(chat_svc.topic_channel(topic_id), message_error_event(message_id, ORPHANED_RUN_REASON))
         return {"stopping": True}
     await stop_signals().request_stop(message_id)
+    # A live relay ends the reply within seconds of the signal. If nothing has
+    # by the grace, no relay is there, and this ends it -- a stop must always
+    # end something (2026-09-22, the deployed server).
+    asyncio.create_task(chat_svc.end_if_still_pending(topic_id, message_id))
     return {"stopping": True}
 
 

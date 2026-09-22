@@ -33,6 +33,11 @@ TOOL_ACTIVITY_LABELS = {
 }
 
 
+def message_error_event(msg_id: str, content: str) -> dict:
+    """The terminal error event, in the one shape every path that ends a reply publishes."""
+    return {"type": "message_error", "id": msg_id, "content": content, "output_type": "text", "render_as": "text", "stopped": False}
+
+
 def mention_refused_event(msg_id: str, actor_user_id: str, refusals: list[dict]) -> dict:
     """
     For the sender only: the personas in their message that will not answer,

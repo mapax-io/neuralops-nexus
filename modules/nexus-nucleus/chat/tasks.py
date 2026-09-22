@@ -25,6 +25,26 @@ from . import services as svc
 
 logger = logging.getLogger(__name__)
 
+
+@shared_task(name="chat.tasks.reap_orphaned_replies")
+def reap_orphaned_replies() -> int:
+    """
+    Every minute, from beat (the row is created by nucleus migration 0029):
+    fail persona replies still PENDING long after they started -- a nucleus
+    redeploy mid-run leaves them with no relay to finish -- and tell each
+    topic. Until this existed they ended only when someone clicked Stop late
+    enough or reloaded the chat.
+    """
+    from chat.events import message_error_event
+    from chat.reasons import ORPHANED_RUN_REASON
+
+    failed = svc.reap_orphaned_replies_everywhere()
+    for topic_id, msg_id in failed:
+        svc.publish(svc.topic_channel(topic_id), message_error_event(msg_id, ORPHANED_RUN_REASON))
+    if failed:
+        logger.warning("[reaper] ended %d orphaned persona repl%s", len(failed), "y" if len(failed) == 1 else "ies")
+    return len(failed)
+
 # ---------------------------------------------------------------------------
 # Centrifugo helper
 # ---------------------------------------------------------------------------
