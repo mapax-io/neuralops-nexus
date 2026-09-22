@@ -65,6 +65,7 @@ async def browser_ws(ws: WebSocket) -> None:
         on_state=lambda state: _say(ws, state),
         width=int(claims.get("width") or 1280),
         height=int(claims.get("height") or 800),
+        project_id=str(claims.get("project_id") or "") or None,
     )
     _open_sessions += 1
     log.info("[browser] open user=%s project=%s", claims.get("user_id"), claims.get("project_id"))

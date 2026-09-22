@@ -173,6 +173,14 @@ RUN if [ "$BROWSER" = "1" ]; then \
     else \
       echo "built without the live browser"; \
     fi
+# A virtual display, so the browser runs WINDOWED rather than in headless mode.
+# Headless Chromium calls itself HeadlessChrome and many sites refuse it on
+# sight; a windowed one on Xvfb is the ordinary browser, with the ordinary user
+# agent. Its own layer, after Chromium's, so changing it never refetches the
+# 450 MB above.
+RUN if [ "$BROWSER" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends xvfb && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 
 # App code — baked in here (this is what makes the `production` compose

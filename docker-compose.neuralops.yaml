@@ -204,6 +204,8 @@ services:
       - "${NEXUS_AI_HOST_PORT:-8020}:8000"
     volumes:
       - neuralops_fastembed_cache:/home/nexus/.cache/fastembed
+      # The live browser's cookies and local storage, per project (see BROWSER_STATE_DIR).
+      - neuralops_browser_state:/home/nexus/.cache/neuralops-browser
       - ./projects:/nexus/projects
     env_file:
       - ./neuralops/secrets.env
@@ -414,6 +416,7 @@ services:
     volumes:
       - ./modules/nexus-ai:/nexus/ai
       - neuralops_fastembed_cache_dev:/home/nexus/.cache/fastembed
+      - neuralops_browser_state_dev:/home/nexus/.cache/neuralops-browser
       # Bind mount, not a named volume -- see nucleus-dev's comment above.
       - ./projects:/nexus/projects
       - /data/mcp-keys:/nexus/keys:ro
@@ -605,9 +608,11 @@ volumes:
   neuralops_redis_data:
   neuralops_chroma_data:
   neuralops_fastembed_cache:
+  neuralops_browser_state:
   neuralops_postgres_data_dev:
   neuralops_redis_data_dev:
   neuralops_chroma_data_dev:
   neuralops_fastembed_cache_dev:
+  neuralops_browser_state_dev:
   neuralops_projects_dev:
   neuralops_web_app_node_modules:

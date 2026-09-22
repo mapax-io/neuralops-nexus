@@ -24,8 +24,11 @@ import asyncio
 import base64
 import ipaddress
 import logging
+import os
 import re
+import shutil
 import socket
+import subprocess
 import uuid
 from typing import Any, Callable, Awaitable
 from urllib.parse import urlparse
@@ -39,6 +42,8 @@ log = logging.getLogger(__name__)
 _browser: Any = None
 _playwright: Any = None
 _launch_lock: asyncio.Lock | None = None
+# The virtual display the windowed browser draws on, started with the browser.
+_xvfb: subprocess.Popen | None = None
 
 BLOCKED_SCHEME_MESSAGE = "Only http and https pages can be opened here."
 PRIVATE_MESSAGE = "That address is inside the server's own network, which this browser may not open."
@@ -73,6 +78,73 @@ def _lock() -> asyncio.Lock:
     return _launch_lock
 
 
+LAUNCH_ARGS = [
+    "--no-sandbox",  # the container is the sandbox; Chromium's needs privileges we do not grant
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+]
+
+
+def launch_options(display: str | None = None) -> dict:
+    """
+    How the one Chromium is launched, so that it is the browser people use
+    and not a test harness:
+
+    - `channel="chromium"` runs the full Chromium, not Playwright's default
+      "headless shell" -- a stripped build that lacks features a real browser
+      has and that sites refuse on sight.
+    - With a virtual display (`display`, an Xvfb started by _ensure_display)
+      it runs WINDOWED: measured in the worker's own image, that is what turns
+      the user agent from "HeadlessChrome/153" into the ordinary
+      "Chrome/153" -- the headless token comes from headless mode itself, not
+      from any flag. Without a display it runs the full Chromium headless.
+    - `--enable-automation` is a default Playwright passes for test control
+      (the automation infobar); a person browsing is not automating anything,
+      so it is left out, as Playwright documents.
+
+    What this does NOT do, on purpose: spoof a user agent, patch what the page
+    can see, or solve a challenge. Playwright marks every page it controls as
+    automated (navigator.webdriver stays true), and that marker stays -- a site
+    that refuses automated browsers will refuse this one, and the pane's
+    "open in your own browser" button is the honest way round. A challenge
+    that does appear is the person's to pass; what they pass is then kept (see
+    state_path).
+    """
+    opts: dict = {"args": list(LAUNCH_ARGS), "channel": "chromium", "ignore_default_args": ["--enable-automation"]}
+    if display:
+        opts["headless"] = False
+        opts["env"] = {**os.environ, "DISPLAY": display}
+    return opts
+
+
+def _ensure_display() -> str | None:
+    """
+    The virtual display for a windowed browser: Xvfb, started once and kept for
+    the worker's life. None when windowed mode is off or the image has no Xvfb,
+    and the browser runs headless instead.
+    """
+    global _xvfb
+    if not settings.BROWSER_WINDOWED:
+        return None
+    if _xvfb is not None and _xvfb.poll() is None:
+        return settings.BROWSER_DISPLAY
+    binary = shutil.which("Xvfb")
+    if not binary:
+        log.warning("[browser] BROWSER_WINDOWED is on but the image has no Xvfb; running headless")
+        return None
+    try:
+        _xvfb = subprocess.Popen(
+            [binary, settings.BROWSER_DISPLAY, "-screen", "0", f"{settings.BROWSER_MAX_WIDTH}x{settings.BROWSER_MAX_HEIGHT}x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        log.warning("[browser] could not start Xvfb (%s); running headless", type(exc).__name__)
+        _xvfb = None
+        return None
+    log.info("[browser] virtual display %s started", settings.BROWSER_DISPLAY)
+    return settings.BROWSER_DISPLAY
+
+
 async def _shared_browser():
     """The one Chromium, launched on first use."""
     global _browser, _playwright
@@ -82,15 +154,41 @@ async def _shared_browser():
         from playwright.async_api import async_playwright
 
         _playwright = await async_playwright().start()
-        _browser = await _playwright.chromium.launch(
-            args=[
-                "--no-sandbox",  # the container is the sandbox; Chromium's needs privileges we do not grant
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ],
-        )
-        log.info("[browser] chromium launched")
+        display = await asyncio.to_thread(_ensure_display)
+        if display:
+            # Xvfb needs a moment to accept connections; a launch that beats it
+            # fails with a confusing X error. A tenth of a second is plenty.
+            await asyncio.sleep(0.1)
+        try:
+            _browser = await _playwright.chromium.launch(**launch_options(display))
+            log.info("[browser] chromium launched (full browser, %s)", "windowed on " + display if display else "new headless")
+        except Exception as exc:  # noqa: BLE001
+            # An image built with only the headless shell, or an older
+            # Playwright without the chromium channel: still a browser, but one
+            # more sites will challenge. Say so rather than fail the pane.
+            log.warning("[browser] full chromium unavailable (%s); falling back to the headless shell", type(exc).__name__)
+            _browser = await _playwright.chromium.launch(args=list(LAUNCH_ARGS))
+            log.info("[browser] chromium launched (headless shell)")
         return _browser
+
+
+_PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def state_path(project_id: str | None):
+    """
+    Where this project's browser keeps its cookies and local storage between
+    sessions, or None when there is no project to keep them for. A shared
+    browser that forgot everything at every session re-asked every login and
+    every challenge; a real browser remembers. Per project, because the pane
+    is the team's browser for that project. The id is checked, not trusted:
+    it names a file.
+    """
+    from pathlib import Path
+
+    if not project_id or not _PROJECT_ID_RE.match(project_id):
+        return None
+    return Path(settings.BROWSER_STATE_DIR) / f"{project_id}.json"
 
 
 async def shutdown() -> None:
@@ -106,6 +204,17 @@ async def shutdown() -> None:
                 await _playwright.stop()
             finally:
                 _playwright = None
+        _stop_display()
+
+
+def _stop_display() -> None:
+    global _xvfb
+    if _xvfb is not None:
+        try:
+            _xvfb.terminate()
+        except OSError:
+            pass
+        _xvfb = None
 
 
 # ── What the browser may open ────────────────────────────────────────────────
@@ -218,9 +327,11 @@ class BrowserSession:
         on_state: Callable[[dict], Awaitable[None]],
         width: int = 1280,
         height: int = 800,
+        project_id: str | None = None,
     ):
         self.on_frame = on_frame
         self.on_state = on_state
+        self.state_file = state_path(project_id)
         self.width = max(320, min(width, settings.BROWSER_MAX_WIDTH))
         self.height = max(240, min(height, settings.BROWSER_MAX_HEIGHT))
         self.context: Any = None
@@ -232,7 +343,11 @@ class BrowserSession:
 
     async def start(self, url: str | None = None) -> None:
         browser = await _shared_browser()
+        # What this project's browser remembered last time -- if the file is
+        # unreadable the session simply starts fresh, as a new profile would.
+        remembered = str(self.state_file) if self.state_file is not None and self.state_file.exists() else None
         self.context = await browser.new_context(
+            storage_state=remembered,
             viewport={"width": self.width, "height": self.height},
             user_agent=settings.BROWSER_USER_AGENT or None,
             locale="en-US",
@@ -266,6 +381,7 @@ class BrowserSession:
         self._closed = True
         for tab in self.tabs:
             await self._stop_cast(tab)
+        await self._remember()
         try:
             if self.context is not None:
                 await self.context.close()
@@ -274,6 +390,17 @@ class BrowserSession:
         self.context = None
         self.tabs = []
         self.active = None
+
+    async def _remember(self) -> None:
+        """Write the context's cookies and local storage for the next session of this project."""
+        if self.context is None or self.state_file is None:
+            return
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            await self.context.storage_state(path=str(self.state_file))
+            self.state_file.chmod(0o600)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[browser] could not keep the browser state for %s: %s", self.state_file.name, type(exc).__name__)
 
     # ── tabs ─────────────────────────────────────────────────────────────────
 
