@@ -14,19 +14,25 @@ it does not quietly rot.
 # id: stable, referenced by the app. url: what goes in the create dialog, with
 # {placeholders} the person must replace. needs: what they should have ready
 # BEFORE clicking add -- a token, a workspace name -- never the secret itself.
+# The docs links are checked by hand when this file changes -- they 404 silently
+# otherwise, which is how every card but Git pointed at folders that had moved
+# (2026-09-22). The reference servers for Postgres, SQLite, Slack and Google
+# Drive now live in modelcontextprotocol/servers-archived: still installable,
+# no longer maintained, and the link says so. GitHub and Sentry run official
+# hosted servers with a sign-in, so those entries point there instead.
 MCP_CATALOG = [
     {
         "id": "github",
         "title": "GitHub",
-        "description": "Issues, pull requests, code search and file contents in a repository.",
+        "description": "GitHub's hosted server: issues, pull requests, code search and file contents, through your own GitHub sign-in.",
         "category": "Software",
-        "server_type": "local",
-        "transport": "stdio",
-        "command": "npx -y @modelcontextprotocol/server-github",
-        "url": None,
-        "auth_type": "static_secrets",
-        "needs": ["A GitHub personal access token with the scopes you want the persona to have"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+        "server_type": "hosted",
+        "transport": "http",
+        "command": None,
+        "url": "https://api.githubcopilot.com/mcp/",
+        "auth_type": "oauth2",
+        "needs": ["A GitHub account with access to the repositories you want the persona to reach"],
+        "docs": "https://github.com/github/github-mcp-server",
     },
     {
         "id": "atlassian",
@@ -39,7 +45,7 @@ MCP_CATALOG = [
         "url": "https://mcp.atlassian.com/v1/mcp",
         "auth_type": "oauth2",
         "needs": ["An Atlassian account with access to the site you want to reach"],
-        "docs": "https://support.atlassian.com/atlassian-rovo-mcp-server/",
+        "docs": "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/",
     },
     {
         "id": "postgres",
@@ -52,7 +58,7 @@ MCP_CATALOG = [
         "url": None,
         "auth_type": "static_secrets",
         "needs": ["A connection URL for a role that may only read"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+        "docs": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres",
     },
     {
         "id": "sqlite",
@@ -65,7 +71,7 @@ MCP_CATALOG = [
         "url": None,
         "auth_type": "none",
         "needs": ["A path the server can read, inside the project folder"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/sqlite",
+        "docs": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite",
     },
     {
         "id": "slack",
@@ -78,20 +84,20 @@ MCP_CATALOG = [
         "url": None,
         "auth_type": "static_secrets",
         "needs": ["A Slack bot token", "The workspace (team) id"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/slack",
+        "docs": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/slack",
     },
     {
         "id": "sentry",
         "title": "Sentry",
-        "description": "Pull an issue's stack trace and context so a persona can work on the actual error.",
+        "description": "Sentry's hosted server: pull an issue's stack trace and context so a persona can work on the actual error, through your own Sentry sign-in.",
         "category": "Software",
-        "server_type": "local",
-        "transport": "stdio",
-        "command": "npx -y @modelcontextprotocol/server-sentry",
-        "url": None,
-        "auth_type": "static_secrets",
-        "needs": ["A Sentry auth token"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/sentry",
+        "server_type": "hosted",
+        "transport": "http",
+        "command": None,
+        "url": "https://mcp.sentry.dev/mcp",
+        "auth_type": "oauth2",
+        "needs": ["A Sentry account with access to the organisation you want to reach"],
+        "docs": "https://docs.sentry.io/product/sentry-mcp/",
     },
     {
         "id": "google-drive",
@@ -104,7 +110,7 @@ MCP_CATALOG = [
         "url": None,
         "auth_type": "oauth2",
         "needs": ["A Google Cloud project with the Drive API on, and its OAuth client"],
-        "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive",
+        "docs": "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gdrive",
     },
     {
         "id": "git",
