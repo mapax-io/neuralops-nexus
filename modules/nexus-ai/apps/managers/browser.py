@@ -24,8 +24,11 @@ import asyncio
 import base64
 import ipaddress
 import logging
+import os
 import re
+import shutil
 import socket
+import subprocess
 import uuid
 from typing import Any, Callable, Awaitable
 from urllib.parse import urlparse
@@ -39,6 +42,8 @@ log = logging.getLogger(__name__)
 _browser: Any = None
 _playwright: Any = None
 _launch_lock: asyncio.Lock | None = None
+# The virtual display the windowed browser draws on, started with the browser.
+_xvfb: subprocess.Popen | None = None
 
 BLOCKED_SCHEME_MESSAGE = "Only http and https pages can be opened here."
 PRIVATE_MESSAGE = "That address is inside the server's own network, which this browser may not open."
@@ -80,27 +85,64 @@ LAUNCH_ARGS = [
 ]
 
 
-def launch_options() -> dict:
+def launch_options(display: str | None = None) -> dict:
     """
     How the one Chromium is launched, so that it is the browser people use
     and not a test harness:
 
-    - `channel="chromium"` runs the full Chromium in its new headless mode.
-      Playwright's default headless target is the "headless shell", a
-      stripped build that calls itself HeadlessChrome and lacks features a
-      real browser has; sites that look for automated browsers challenge it
-      on every page and never accept the answer (a site behind a bot check
-      looped on its "verify you are human" step, 2026-09-22).
-    - `--enable-automation` is a default Playwright passes for test control:
-      it sets navigator.webdriver and shows the automation infobar. A person
-      browsing through this pane is not automating anything, so it is left
-      out, as Playwright documents for exactly this case.
+    - `channel="chromium"` runs the full Chromium, not Playwright's default
+      "headless shell" -- a stripped build that lacks features a real browser
+      has and that sites refuse on sight.
+    - With a virtual display (`display`, an Xvfb started by _ensure_display)
+      it runs WINDOWED: measured in the worker's own image, that is what turns
+      the user agent from "HeadlessChrome/153" into the ordinary
+      "Chrome/153" -- the headless token comes from headless mode itself, not
+      from any flag. Without a display it runs the full Chromium headless.
+    - `--enable-automation` is a default Playwright passes for test control
+      (the automation infobar); a person browsing is not automating anything,
+      so it is left out, as Playwright documents.
 
-    Nothing is spoofed and no challenge is solved on anyone's behalf: the user
-    agent is Chromium's own, and a challenge that does appear is the person's
-    to pass, as in any browser. What they pass is then kept (see state_path).
+    What this does NOT do, on purpose: spoof a user agent, patch what the page
+    can see, or solve a challenge. Playwright marks every page it controls as
+    automated (navigator.webdriver stays true), and that marker stays -- a site
+    that refuses automated browsers will refuse this one, and the pane's
+    "open in your own browser" button is the honest way round. A challenge
+    that does appear is the person's to pass; what they pass is then kept (see
+    state_path).
     """
-    return {"args": list(LAUNCH_ARGS), "channel": "chromium", "ignore_default_args": ["--enable-automation"]}
+    opts: dict = {"args": list(LAUNCH_ARGS), "channel": "chromium", "ignore_default_args": ["--enable-automation"]}
+    if display:
+        opts["headless"] = False
+        opts["env"] = {**os.environ, "DISPLAY": display}
+    return opts
+
+
+def _ensure_display() -> str | None:
+    """
+    The virtual display for a windowed browser: Xvfb, started once and kept for
+    the worker's life. None when windowed mode is off or the image has no Xvfb,
+    and the browser runs headless instead.
+    """
+    global _xvfb
+    if not settings.BROWSER_WINDOWED:
+        return None
+    if _xvfb is not None and _xvfb.poll() is None:
+        return settings.BROWSER_DISPLAY
+    binary = shutil.which("Xvfb")
+    if not binary:
+        log.warning("[browser] BROWSER_WINDOWED is on but the image has no Xvfb; running headless")
+        return None
+    try:
+        _xvfb = subprocess.Popen(
+            [binary, settings.BROWSER_DISPLAY, "-screen", "0", f"{settings.BROWSER_MAX_WIDTH}x{settings.BROWSER_MAX_HEIGHT}x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        log.warning("[browser] could not start Xvfb (%s); running headless", type(exc).__name__)
+        _xvfb = None
+        return None
+    log.info("[browser] virtual display %s started", settings.BROWSER_DISPLAY)
+    return settings.BROWSER_DISPLAY
 
 
 async def _shared_browser():
@@ -112,9 +154,14 @@ async def _shared_browser():
         from playwright.async_api import async_playwright
 
         _playwright = await async_playwright().start()
+        display = await asyncio.to_thread(_ensure_display)
+        if display:
+            # Xvfb needs a moment to accept connections; a launch that beats it
+            # fails with a confusing X error. A tenth of a second is plenty.
+            await asyncio.sleep(0.1)
         try:
-            _browser = await _playwright.chromium.launch(**launch_options())
-            log.info("[browser] chromium launched (full browser, new headless)")
+            _browser = await _playwright.chromium.launch(**launch_options(display))
+            log.info("[browser] chromium launched (full browser, %s)", "windowed on " + display if display else "new headless")
         except Exception as exc:  # noqa: BLE001
             # An image built with only the headless shell, or an older
             # Playwright without the chromium channel: still a browser, but one
@@ -157,6 +204,17 @@ async def shutdown() -> None:
                 await _playwright.stop()
             finally:
                 _playwright = None
+        _stop_display()
+
+
+def _stop_display() -> None:
+    global _xvfb
+    if _xvfb is not None:
+        try:
+            _xvfb.terminate()
+        except OSError:
+            pass
+        _xvfb = None
 
 
 # ── What the browser may open ────────────────────────────────────────────────

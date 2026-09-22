@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     # is not theirs to read. Mounted as a volume in compose so it survives
     # the container.
     BROWSER_STATE_DIR: str = "/home/nexus/.cache/neuralops-browser"
+    # Run the browser windowed on a virtual display (Xvfb, in the image) rather
+    # than in headless mode. Off, or with no Xvfb on the image, it runs the
+    # full Chromium headless instead.
+    BROWSER_WINDOWED: bool = True
+    BROWSER_DISPLAY: str = ":99"
     # A browser INSIDE the deployment must not be a way to reach the database or
     # a cloud metadata endpoint. Turn on only for a server with nothing private.
     BROWSER_ALLOW_PRIVATE_NETWORK: bool = False

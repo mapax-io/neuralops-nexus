@@ -122,6 +122,20 @@ def test_the_browser_is_launched_as_the_browser_people_use():
     assert "--enable-automation" in opts["ignore_default_args"]
     assert "--no-sandbox" in opts["args"] and opts["args"] == LAUNCH_ARGS
     assert "user_agent" not in opts
+    assert "headless" not in opts          # no display: Playwright's default, headless
+    # With a virtual display it runs windowed, on that display -- the ordinary browser.
+    windowed = launch_options(":99")
+    assert windowed["headless"] is False and windowed["env"]["DISPLAY"] == ":99"
+
+
+def test_the_display_is_optional_and_never_a_failure(monkeypatch):
+    # Windowed off, or an image without Xvfb: no display, and the browser runs headless.
+    import apps.managers.browser as mod
+    monkeypatch.setattr(settings, "BROWSER_WINDOWED", False)
+    assert mod._ensure_display() is None
+    monkeypatch.setattr(settings, "BROWSER_WINDOWED", True)
+    monkeypatch.setattr(mod.shutil, "which", lambda name: None)
+    assert mod._ensure_display() is None
 
 
 def test_a_project_s_browser_state_lives_outside_the_project_folder_and_the_id_is_checked(monkeypatch, tmp_path):
