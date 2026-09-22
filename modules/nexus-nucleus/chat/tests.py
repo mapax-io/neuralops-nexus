@@ -1457,3 +1457,79 @@ class MessageSearchTests(MentionRightFixture):
         # A search box must answer. The rows are searched directly instead.
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual([h["message_id"] for h in r.json()], [str(self.mine.id)])
+
+
+class OrphanedReplyTests(MentionRightFixture):
+    """A reply the server abandoned mid-run must end -- on a Stop, and on its own."""
+
+    def pending_reply(self, topic=None, age_seconds=0):
+        from datetime import timedelta
+        from django.utils import timezone
+        from chat.services import create_ai_message
+        from nucleus.models import ChatMessage
+        msg = create_ai_message(self.company, self.p1, topic or self.t1, self.persona_sara)
+        if age_seconds:
+            ChatMessage.objects.filter(id=msg["id"]).update(created_at=timezone.now() - timedelta(seconds=age_seconds))
+        return msg["id"]
+
+    def stop_path(self, msg_id):
+        return f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t1.id}/messages/{msg_id}/stop/"
+
+    async def test_a_stop_nobody_answers_ends_the_reply_after_the_grace(self):
+        # A Stop inside the orphan window used to set a signal and return; with
+        # the relay gone (a redeploy mid-run) nothing ever ended the row, and the
+        # reader sat on "Stopping…" for good (2026-09-22).
+        from chat import services as chat_svc
+        from nucleus.models import ChatMessage
+        msg_id = await sync_to_async(self.pending_reply)()
+        with patch("chat.services.publish_async", new_callable=AsyncMock) as publish:
+            ended = await chat_svc.end_if_still_pending(str(self.t1.id), msg_id, grace=0)
+        self.assertTrue(ended)
+        row = await sync_to_async(ChatMessage.objects.get)(id=msg_id)
+        self.assertEqual(row.status, ChatMessage.Status.FAILED)
+        from chat.reasons import ORPHANED_RUN_REASON
+        event = publish.call_args.args[1]
+        self.assertEqual((event["type"], event["id"], event["render_as"], event["content"]), ("message_error", msg_id, "text", ORPHANED_RUN_REASON))
+
+    async def test_a_reply_the_relay_did_end_in_time_is_left_alone(self):
+        from chat import services as chat_svc
+        from nucleus.models import ChatMessage
+        msg_id = await sync_to_async(self.pending_reply)()
+        await sync_to_async(ChatMessage.objects.filter(id=msg_id).update)(status=ChatMessage.Status.COMPLETED, content="done")
+        with patch("chat.services.publish_async", new_callable=AsyncMock) as publish:
+            ended = await chat_svc.end_if_still_pending(str(self.t1.id), msg_id, grace=0)
+        self.assertFalse(ended)
+        publish.assert_not_awaited()
+        row = await sync_to_async(ChatMessage.objects.get)(id=msg_id)
+        self.assertEqual(row.content, "done")
+
+    def test_the_stop_route_schedules_the_grace_check(self):
+        msg_id = self.pending_reply()
+        with patch("chat.stop_signals.stop_signals") as signals, \
+             patch("chat.api.chat_svc.end_if_still_pending", new_callable=AsyncMock) as grace, \
+             patch("chat.api.asyncio.create_task", side_effect=lambda coro: asyncio.ensure_future(coro)):
+            signals.return_value.request_stop = AsyncMock()
+            r = self.call("post", self.stop_path(msg_id), self.owner)
+        self.assertEqual(r.status_code, 200, r.content)
+        grace.assert_awaited_once_with(str(self.t1.id), msg_id)
+
+    def test_the_reaper_ends_every_old_orphan_and_tells_each_topic(self):
+        from chat.tasks import reap_orphaned_replies
+        from nucleus.models import ChatMessage, ChatTopic
+        other = ChatTopic.objects.create(company=self.company, project=self.p1, channel=self.t1.channel, title="other", slug="other-t")
+        old_here = self.pending_reply(age_seconds=600)
+        old_there = self.pending_reply(topic=other, age_seconds=600)
+        fresh = self.pending_reply(age_seconds=5)
+        with patch("chat.services.publish") as publish:
+            self.assertEqual(reap_orphaned_replies(), 2)
+        statuses = {str(m.id): m.status for m in ChatMessage.objects.filter(id__in=[old_here, old_there, fresh])}
+        self.assertEqual(statuses[old_here], ChatMessage.Status.FAILED)
+        self.assertEqual(statuses[old_there], ChatMessage.Status.FAILED)
+        self.assertEqual(statuses[fresh], ChatMessage.Status.PENDING)   # still the relay's, for now
+        told = {(c.args[0], c.args[1]["id"]) for c in publish.call_args_list}
+        self.assertEqual(told, {(f"topic-{self.t1.id}", old_here), (f"topic-{other.id}", old_there)})
+
+    def test_the_reaper_is_on_beat_s_schedule_after_migrate(self):
+        from django_celery_beat.models import PeriodicTask
+        row = PeriodicTask.objects.get(name="nucleus-reap-orphaned-replies")
+        self.assertEqual((row.task, row.enabled, row.interval.every, row.interval.period), ("chat.tasks.reap_orphaned_replies", True, 1, "minutes"))

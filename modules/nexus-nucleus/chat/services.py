@@ -24,7 +24,7 @@ import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
 from authn.permissions.checker import PermissionChecker
-from .events import preflight_decided_event, tool_activity_end_event, tool_activity_event, tool_approval_decided_event, tool_approval_event
+from .events import preflight_decided_event, tool_activity_end_event, tool_activity_event, tool_approval_decided_event, tool_approval_event, message_error_event
 from .stop_signals import StopRequested, stop_signals, stoppable, stoppable_lines
 from .reasons import ORPHANED_RUN_REASON, WORKER_ENDED_EARLY_REASON, explain_ai_error
 
@@ -1541,6 +1541,51 @@ def list_messages(topic_id: str, limit: int = 100, before_sequence: int = None) 
 
 
 ORPHAN_AFTER_SECONDS = 180
+# How long a Stop waits for the relay to end the reply before concluding that
+# no relay is there to hear it.
+STOP_GRACE_SECONDS = 20
+
+
+async def end_if_still_pending(topic_id: str, message_id: str, grace: float | None = None) -> bool:
+    """
+    A stop was asked for and the signal set. A live relay ends the reply within
+    a second or two of that; one that is gone never will. On the deployed
+    server (2026-09-22) a redeploy killed the relay mid-run, and a Stop inside
+    the orphan window only set a signal nobody was listening for -- the reader
+    sat on "Stopping…" for good and the composer kept queueing behind it. So:
+    wait a grace, re-read, and if the row is still PENDING end it as orphaned
+    and tell the topic. Returns whether it had to.
+    """
+    from nucleus.models import ChatMessage
+
+    await asyncio.sleep(STOP_GRACE_SECONDS if grace is None else grace)
+    still = await sync_to_async(
+        lambda: ChatMessage.objects.filter(id=message_id, status=ChatMessage.Status.PENDING).exists()
+    )()
+    if not still:
+        return False
+    logger.warning("[stop] no relay answered the stop for %s; ending it as orphaned", message_id)
+    await sync_to_async(fail_ai_message)(message_id, "orphaned: no relay answered the stop", ORPHANED_RUN_REASON)
+    await publish_async(topic_channel(topic_id), message_error_event(message_id, ORPHANED_RUN_REASON))
+    return True
+
+
+def reap_orphaned_replies_everywhere(older_than_seconds: int = ORPHAN_AFTER_SECONDS) -> list[tuple[str, str]]:
+    """
+    Every topic's orphans, for the periodic task: the (topic_id, message_id)
+    pairs it failed, so the caller can tell each topic. Nobody should have to
+    click Stop, or reload, for a bubble the server abandoned to end.
+    """
+    from nucleus.models import ChatMessage
+
+    cutoff = timezone.now() - timedelta(seconds=older_than_seconds)
+    rows = list(
+        ChatMessage.objects.filter(status=ChatMessage.Status.PENDING, created_at__lt=cutoff, metadata__has_key="persona_id")
+        .values_list("topic_id", "id")
+    )
+    for _topic_id, msg_id in rows:
+        fail_ai_message(str(msg_id), "orphaned: no relay finished this reply", ORPHANED_RUN_REASON)
+    return [(str(t), str(m)) for t, m in rows]
 
 
 def reap_orphaned_replies(topic_id: str, older_than_seconds: int = ORPHAN_AFTER_SECONDS) -> list[str]:
