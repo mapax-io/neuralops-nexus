@@ -15,7 +15,12 @@ from fastmcp.client.transports import StdioTransport
 class ModelConfig(BaseModel):
     provider: str  # "litellm" | "local"
     model_id: str  # "anthropic/claude-haiku-4-5-20251001"
+    # The name the team gave this model on the AI models page -- what a reply
+    # says when a fallback answered. None when nucleus did not send one.
+    name: str | None = None
     api_key: str | None = None  # decrypted key from AIModel — passed per-call
+    # An OpenAI-compatible endpoint or a proxy; None means the provider's own.
+    api_base: str | None = None
     max_tokens: int = 4096
     temperature: float = 0.7
     supports_vision: bool = False
@@ -172,6 +177,10 @@ class Shell(BaseModel):
     )
 
 class MCPArgs(BaseModel):
+    # Which server this is, so its tools can carry a level ("mcp:<id>") and
+    # an approval row can name it. Absent on an older nucleus.
+    id: str | None = None
+    name: str | None = None
     url: str | None = Field(
         default=None,
         description=""
@@ -213,16 +222,32 @@ class PersonaCapabilities(BaseModel):
 class PersonaConfig(BaseModel):
     id: str
     name: str  # "NeuralBot"
+    # Already composed: the project's brief (when any) ahead of the persona's
+    # own prompt -- see nucleus_client.persona_from / prompt_builder.
     system_prompt: str
     model: ModelConfig
     mcp_servers: list[MCPArgs]
     capabilities: PersonaCapabilities
+    # The server's utility model for the worker's own small passes (recall,
+    # runbook conditions, titles); None means "use this persona's model" --
+    # ask nucleus_client.utility_model_for, never read this directly.
+    utility_model: ModelConfig | None = None
+    # Tool approvals: {capability id or "<capability>/<tool>": "auto"|"ask"|"off"};
+    # the defaults for anything unset live in apps/managers/approvals.py.
+    tool_levels: dict[str, str] = Field(default_factory=dict)
+    # Models to answer with when `model` cannot, in order (apps/managers/fallbacks.py).
+    fallback_models: list[ModelConfig] = Field(default_factory=list)
+    # Recall (W5): whether the persona records what it learns after a reply.
+    recall_enabled: bool = True
 
 
 class HistoryMessage(BaseModel):
     role: str  # "user" | "assistant"
     content: str
     sender_name: str | None = None  # display only, not sent to LLM
+    # the output type an assistant row was stored with ("choice" marks a
+    # question the person answered with a pick); "text" for user rows
+    output_type: str = "text"
 
 
 class ContextSourceRef(BaseModel):
@@ -258,6 +283,19 @@ class TriggerJob(BaseModel):
     # "auto" = nexus-ai should classify intent via cosine similarity.
     # Any other value = explicit override (e.g. "chart", "terminal", "code").
     output_type: str = "auto"
+    # Preflight (see apps/managers/preflight.py): the persona proposes before
+    # acting and no plan is approved yet -- if this run would act, it becomes a
+    # toolless planning turn. `approved_plan` is the plan a person approved,
+    # carried out with the tools back on.
+    preflight: bool = False
+    approved_plan: str | None = None
+    # Someone is watching this run (a chat turn, not a schedule): an Ask tool
+    # may wait for their decision. Absent on an older nucleus -- assume so.
+    interactive: bool = True
+    # Routines (W4): the team method this reply runs with, fetched like the persona.
+    routine_id: str | None = None
+    # Runbooks (W6): the previous step's reply, for this step to build on.
+    step_context: str | None = None
 
 
 class TriggerSwarmJob(BaseModel):
@@ -295,6 +333,26 @@ class ToolCallData(BaseModel):
     args: dict[str, Any]
 
 
+class ApprovalRequestData(BaseModel):
+    """A tool call held for a person's decision: what nucleus stores and the app shows."""
+    call_id: str
+    tool: str
+    capability_id: str
+    args_preview: str
+
+
+class ToolResultData(BaseModel):
+    """How a tool call ended: what nucleus relays and the app shows on the activity trail."""
+    name: str
+    ok: bool
+    duration_ms: int
+    preview: str | None = None  # the result's text, clipped -- never the raw object
+    error: str | None = None    # short reason when ok is False
+    # The page a web tool went to (web_fetch's url; a search's results page),
+    # so the app can open it beside the chat (W9 Follow along).
+    url: str | None = None
+
+
 class AgentEventType(str, Enum):
     PERSIST = "persist_internal_state"
     START = "message_start"
@@ -302,7 +360,14 @@ class AgentEventType(str, Enum):
     END = "message_done"
     ERROR = "message_error"
     TOOL_CALL_START = "tool_call_start"
+    TOOL_CALL_END = "tool_call_end"
     SWARM_TRANSITION = "swarm_transition"
+    # A tool call waiting for a person (apps/managers/approvals.py).
+    APPROVAL_REQUESTED = "approval_requested"
+    # Nothing to say yet; keeps the relay's idle timeout from ending the run.
+    KEEPALIVE = "keepalive"
+    # The caller added to the running reply and the persona took it (apps/managers/nudges.py).
+    NUDGE_TAKEN = "nudge_taken"
 
 
 class AgentEvent(BaseModel):
@@ -320,16 +385,37 @@ class AgentEvent(BaseModel):
     # tool_call_start only
     tool_call: ToolCallData | None = None
 
+    # tool_call_end only
+    tool_result: ToolResultData | None = None
+
+    # approval_requested only
+    approval: ApprovalRequestData | None = None
+
+    # message_done only: what the turn cost in context, so the app can show
+    # how full the model's window is. Null when the provider does not say.
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    context_window: int | None = None
+
     # message_done only
     content: str | None = None  # full assembled response (markers stripped) for DB save
 
     # M7: output type metadata — populated in message_done
     output_type: str | None = None  # resolved type: "chart", "terminal", "text", etc.
-    render_as: str | None = None  # renderer hint: "html" | "code" | "text" | "terminal"
+    render_as: str | None = None  # renderer hint: "html" | "code" | "text" | "terminal" | "chart"
 
     # M8: embed description — text inside <<<EMBED>>>...<<<END_EMBED>>> block
     # Only present for html/form/terminal render_as. Used instead of raw HTML for embedding.
     embed_description: str | None = None
+
+    # message_done only: "<model name> (fallback)" when a fallback model answered
+    # because the persona's own could not; None otherwise.
+    answered_by_model: str | None = None
+    # message_done only: how many entries the reply recorded in the project's Recall (W5).
+    recalled: int | None = None
+
+    # nudge_taken only: what the caller added.
+    nudge: str | None = None
 
     # message_error only -- see apps/routers/trigger.py:_event_stream. Emitted
     # when anything in AgenticManager.run() raises (persona resolve, history

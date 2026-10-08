@@ -31,6 +31,7 @@ from fastmcp.client.transports import (
 from pydantic_ai.mcp import FastMCPClient
 
 from apps.interfaces.agent import AgentRunner
+from apps.implementations.agents.tool_events import execute_mcp_tool, tool_end_event
 from apps.schemas.trigger import (
     PersonaConfig,
     TriggerJob,
@@ -140,6 +141,12 @@ class LiteLLMRunner(AgentRunner):
                     tool_call=ToolCallData(name=tc["name"], args=args),
                 )
 
+            yield AgentEvent(
+                type=AgentEventType.PERSIST,
+                id=job.msg_id,
+                metadata={"usage": {"prompt_tokens": prompt_tokens, "output_tokens": completion_tokens}},
+            )
+
         except Exception as exc:
             status = "error"
             error_msg = str(exc)
@@ -183,6 +190,8 @@ class LiteLLMRunner(AgentRunner):
         t0 = time.monotonic()
         status = "success"
         error_msg = None
+        prompt_tokens = 0
+        completion_tokens = 0
 
         # Build MCP transport configs
         client_configs = []
@@ -291,6 +300,10 @@ class LiteLLMRunner(AgentRunner):
                         kwargs["tools"] = all_tools + (injected_tools or [])
 
                     response = await litellm.acompletion(**kwargs)
+                    round_usage = getattr(response, "usage", None)
+                    if round_usage:
+                        prompt_tokens += getattr(round_usage, "prompt_tokens", 0) or 0
+                        completion_tokens += getattr(round_usage, "completion_tokens", 0) or 0
                     msg = response.choices[0].message
                     tool_calls = getattr(msg, "tool_calls", None) or []
 
@@ -317,6 +330,10 @@ class LiteLLMRunner(AgentRunner):
                                     id=job.msg_id,
                                     delta=delta,
                                 )
+                            chunk_usage = getattr(chunk, "usage", None)
+                            if chunk_usage:
+                                prompt_tokens += getattr(chunk_usage, "prompt_tokens", 0) or 0
+                                completion_tokens += getattr(chunk_usage, "completion_tokens", 0) or 0
                         break
 
                     # Append assistant message with tool calls
@@ -359,38 +376,24 @@ class LiteLLMRunner(AgentRunner):
                             # Hand control back to the orchestrator immediately!
                             return
 
-                        # 2. Otherwise, it's a normal MCP tool
+                        # 2. Otherwise, it's a normal MCP tool: say it started,
+                        #    run it, say how it went.
                         client = tool_client_map.get(tc.function.name)
-                        if client is None:
-                            content = f"Tool '{tc.function.name}' not found."
-                        else:
-                            try:
-                                args = json.loads(tc.function.arguments or "{}")
-                                result = await client.call_tool(tc.function.name, args)
-                                items = (
-                                    result
-                                    if isinstance(result, list)
-                                    else getattr(result, "content", [result])
-                                )
-                                content = "\n".join(
-                                    item.text if hasattr(item, "text") else str(item)
-                                    for item in items
-                                )
-                                is_error = getattr(
-                                    result,
-                                    "is_error",
-                                    getattr(result, "isError", False),
-                                )
-
-                                is_error = getattr(
-                                    result,
-                                    "is_error",
-                                    getattr(result, "isError", False),
-                                )
-                                if is_error:
-                                    content = f"Error from tool: {content}"
-                            except Exception as exc:
-                                content = f"Tool error: {exc}"
+                        try:
+                            args = json.loads(tc.function.arguments or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        yield AgentEvent(
+                            type=AgentEventType.TOOL_CALL_START,
+                            id=job.msg_id,
+                            tool_call=ToolCallData(name=tc.function.name, args=args),
+                        )
+                        started = time.monotonic()
+                        content, ok = await execute_mcp_tool(client, tc.function.name, args)
+                        yield tool_end_event(
+                            job.msg_id, tc.function.name, ok=ok, started_at=started,
+                            content=content if ok else None, error=None if ok else content,
+                        )
 
                         current_messages.append(
                             {
@@ -399,6 +402,12 @@ class LiteLLMRunner(AgentRunner):
                                 "tool_call_id": tc.id,
                             }
                         )
+
+            yield AgentEvent(
+                type=AgentEventType.PERSIST,
+                id=job.msg_id,
+                metadata={"usage": {"prompt_tokens": prompt_tokens, "output_tokens": completion_tokens}},
+            )
 
         except Exception as exc:
             status = "error"
@@ -412,8 +421,8 @@ class LiteLLMRunner(AgentRunner):
                 persona=persona,
                 messages=messages,
                 response=full_response,
-                prompt_tokens=0,
-                completion_tokens=0,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
                 latency_ms=latency_ms,
                 status=status,
                 error=error_msg,

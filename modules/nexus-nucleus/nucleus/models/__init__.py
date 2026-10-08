@@ -21,6 +21,9 @@ from .intelligence import (
     ModelConfig,
     MCPServer,
     Persona,
+    PersonaFallbackModel,
+    Routine,
+    RecallEntry,
     AIRequestLog,
 )
 
@@ -34,6 +37,7 @@ from .workspace import (
     Channel,
     ChatTopic,
     ChatMessage,
+    Deliverable,
     ChatReadMarker,
     ChatReaction,
     ChatSession,
@@ -47,7 +51,10 @@ from .context import (
 )
 
 from .scheduling import (
+    InboundHook,
     PersonaSchedule,
+    Runbook,
+    RunbookRun,
 )
 
 from .extended import (

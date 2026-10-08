@@ -58,7 +58,8 @@ lookup is a secondary fallback only if the record happens to exist.
 `User.get_display_name()` returns `display_name` if set (assigned via
 `assign_display_name()` on first login), else derives from email local-part.
 
-**Files:** `workspace/services.py` → `_format_member()`
+**Files:** `workspace/services.py` → `_format_member()`, `list_members()` (server members carry `name`
+the same way — the app never derives a name from the email itself)
 
 ---
 
@@ -607,3 +608,240 @@ verification.
 2. Read the specific files you intend to edit — do not assume their contents
 3. Check if the feature already exists before implementing it
 4. If a requirement contradicts something in this file, ask the owner before proceeding
+
+---
+
+## 22. Team AI Operations — rights and wire contract (2026-09-20)
+
+**Decision:** the capabilities in `contribution/plan-implementation-master.md` (Preflight, Routines, Recall,
+Runbooks, Inbound hooks, Deliverables, Tool approvals, …) share one foundation, shipped first and on its own:
+
+- **Rights are seeded ahead of use.** `persona.approve_run` (topic), `routine.manage`, `runbook.manage`,
+  `runbook.run`, `hook.manage`, `recall.manage`, `deliverable.manage` (project) live in the registry now;
+  a capability PR only *uses* them. Member-tier: approve, run a runbook, curate Recall/Deliverables.
+  Admin-tier: define routines, runbooks, hooks. `manage.py seed_permissions` must run on every upgrade.
+- **Wire changes are additive and feature-detected on both sides.** `MessageOut` carries `activity_trail`,
+  `preflight`, `answered_by_model`, `usage` with defaults; `message_done` carries `prompt_tokens`,
+  `output_tokens`, `context_window` (null when the worker does not know). An older app ignores them; a newer
+  app hides a control whose endpoint answers 404. Never a breaking rename.
+- **Versions.** `NEURALOPS_VERSION` moves a MINOR only when the app *requires* a new server capability for a
+  control it shows; additive fields are a PATCH. The app's `COMPATIBLE_SERVER_VERSION` follows each MINOR.
+- **Project Brief (W1, 2026-09-21).** `Project.brief` (≤ 8,000 chars, `workspace/services.py
+  update_project`) is edited under the new `project.update` right (Admin-tier) via `PATCH /projects/{id}/`;
+  the detail route returns `brief`, the list only `brief_length`. The internal persona payload carries
+  `project_brief`, and the worker puts it in its own system block *ahead of* the persona prompt — order is
+  brief → persona → output instruction. First app-required capability: server `0.3.0`.
+- **Utility model (W17, 2026-09-21).** `CompanyAIConfig.utility_model` (FK ModelConfig, SET_NULL; cleared
+  when that config is deleted) is the one model the server's own small passes run on (recall, runbook
+  conditions, titles — nothing consumes it yet; the worker falls back to the persona's model). Chosen from the
+  AI models tab via `POST/DELETE /model-configs/{id}/utility/` under `model_config.update`; lists mark it with
+  `is_utility`; the persona payload carries `utility_model`. `PUT /ai-config/` now requires the same right — it
+  had no gate before.
+- **Preflight (W3, 2026-09-21).** `Persona.acts_after_approval` (off by default) makes a persona propose
+  before acting: nucleus flags the job (`preflight`) whenever no plan is approved yet, and the WORKER decides
+  whether the run would act (any MCP server, or a shell/filesystem capability — nucleus never reads capability
+  configs); if so the turn runs with no tools in the `preflight` output type (`{summary, steps[{title, tools,
+  writes}], risks}`, ≤ 12 steps). Nucleus stores the parsed plan in `metadata.preflight` (`status: proposed`,
+  with the asking message) and `POST …/messages/{id}/preflight/` (`approve | adjust | decline`, right
+  `persona.approve_run` at the topic) decides it once: approve re-triggers with `approved_plan` ahead of the
+  persona prompt and the tools back on; adjust re-triggers a planning turn with the note; decline posts a system
+  line. Every decision publishes `preflight_decided`. Scheduled and swarm runs never plan (nobody is waiting).
+  Server `0.4.0` — the app relies on the endpoint.
+- **Tool approvals (W16, 2026-09-21).** `Persona.tool_levels` (`{capability id | "<capability>/<tool>":
+  "auto"|"ask"|"off"}`, keys `shell`, `filesystem`, `web_search`, `web_fetch`, `mcp:<server id>`) is stored and
+  shape-validated by nucleus; the WORKER owns the defaults (reading is automatic; `run_command`, `start_command`,
+  `write_file`, `edit_file`, `create_directory` ask; an MCP tool asks unless its annotations say `readOnlyHint`)
+  and hides `off` tools from the model. An Ask tool holds the run in process: the worker sends
+  `approval_requested {call_id, tool, capability_id, args_preview}`, the relay stores it at once under
+  `metadata.approvals` (status `pending`) and publishes `tool_approval`; the worker polls
+  `GET /internal/messages/{id}/approvals/{call_id}/` (pending | allowed | denied | stopped) and sends `keepalive`
+  events so the relay's two-minute idle timeout never ends the reply. `POST …/messages/{id}/approvals/{call_id}/`
+  (`allow | deny`, `always`) decides once under `persona.approve_run` at the topic; `always` writes
+  `"<capability>/<tool>": "auto"` onto the persona and therefore also needs `persona.update`. Denied, timed out
+  (`APPROVAL_TIMEOUT_SECONDS`, 600) and stopped calls are skipped with a one-line reason the model sees; a reply
+  that ends expires its pending calls. Scheduled (`interactive=False`) and swarm runs refuse Ask tools at once —
+  nobody can answer there. Not the plan's Redis wait: the worker has no Redis, and Stop already works as
+  nucleus-held state that a poll reads. Server `0.5.0` — the app relies on the decision endpoint.
+- **Routines (W4, 2026-09-21).** `Routine` (project-owned: `name` `[a-z0-9-]{1,40}` unique per project, `title`,
+  `purpose` ≤ 200, `instructions` ≤ 8 000, `allowed_capabilities` null | list of capability ids, `model_config` null,
+  `is_builtin`) under `/projects/{id}/routines/` — list needs `topic.list` at the project, writes `routine.manage`;
+  built-ins are editable, never deletable (409). Four are seeded per project on creation and by
+  `manage.py seed_routines` (idempotent by name). The send path reads the FIRST standalone `/name` token
+  (`MessageDirectives.routine_name`, stripped from the message; `/swarm`, paths and mid-word slashes are not
+  tokens): known in the topic's project → `routine_id` on the job; unknown with personas to answer → refusal
+  `unknown_routine` (the message still posts, they do not reply); no persona → plain text. The WORKER fetches the
+  routine (`GET /internal/routines/{id}/`, key decrypted there) and applies it for that turn only: instructions as
+  their own block after brief + persona prompt, `allowed_capabilities` INTERSECTS the persona's tools (never widens),
+  `model_config` replaces the model. Swarm runs ignore routines. Server `0.5.1` (additive).
+- **Run ownership (W22, owner's rule, 2026-09-21).** A persona reply belongs to the person who called it:
+  `create_ai_message` records `metadata.triggered_by_id` / `triggered_by_name` (the sender; a schedule's creator; on a
+  preflight approve/adjust the person who ASKED, resolved from the asking message, else the decider; a swarm and its
+  delegate replies the sender), and `MessageOut` + `message_start` carry `triggered_by_id`. **Only the caller may stop
+  the reply** — `request_stop_for_message(topic, id, user)` answers `not_owner` → 403 — which replaces the earlier
+  "anyone who can read the topic can stop a run in it"; a reply with no recorded caller (created before this) keeps
+  that earlier rule so nothing running becomes unstoppable, and the worker's own timeouts still end a stuck run. No
+  owner/admin override, by the owner's word. The app applies the same rule to a choice card (only the person the
+  persona asked may pick; everyone else sees "Waiting for <name> to choose"). Preflight decisions and tool approvals
+  stay team-decidable under `persona.approve_run` — a second person deciding is their point. Server `0.5.2`.
+- **Terminal pane (W21, owner's ask, 2026-09-21).** A Terminal in the app is a REAL terminal — the owner rejected a
+  one-command-per-request runner ("it should work just like an actual terminal with all its features"). The worker
+  starts a shell (`TERMINAL_SHELL`, bash) on a PTY in the project's folder, with a controlling terminal, so interactive
+  programs, job control, colours, `cd` and resizing all behave; the app is its screen (xterm.js) over a WebSocket
+  (`/terminal/ws`, nginx → worker `/api/v1/terminal/ws`; binary frames are the terminal's bytes, text frames small JSON
+  control messages: `resize` in, `exit`/`error`/`idle` out). Access: new right `project.terminal` (PROJECT scope,
+  Admin-tier; `seed_permissions` seeds it) gates `POST /projects/{id}/terminal/session/`, which answers a 60-second
+  HMAC ticket signed with the internal key (`workspace/services.py sign_terminal_ticket` ↔ worker
+  `apps/managers/terminal.py verify_ticket`; claims: project, user, cwd — the shell capability's `cwd`, else the
+  provisioned folder; 409 without a folder, 503 without the key) and logs who opened what. The worker verifies the
+  ticket on connect (close 4401), caps open sessions (`TERMINAL_MAX_SESSIONS`, 4429), ends a session after
+  `TERMINAL_IDLE_SECONDS` without input (4408) and kills the shell's whole process group when the socket goes.
+  Security stance: the personas' shell allow-list does NOT apply to a person's shell — the Admin-tier right is the
+  boundary and the container (uid 1000, the project folder as HOME) the hard one; the shell gets a sanitized
+  environment (PATH/LANG/LC_ALL/TZ only — the worker's own env holds the secrets), never the worker's. Nothing a
+  terminal does is posted to the chat. Server `0.5.3`.
+- **Model fallbacks (W7, 2026-09-21).** A persona names up to three fallback models, in order
+  (`Persona.fallback_models` through `PersonaFallbackModel(position)`, migration `nucleus 0024`;
+  `fallback_model_config_ids` on create/patch — `[]` clears, unsent leaves; ≤ 3, no repeats, never the primary,
+  attached to the project, enforced in `_validate_persona_wiring`; the model detach/delete guards count fallback use).
+  The WORKER retries (`apps/managers/fallbacks.py FallbackRun`, one place for the single-persona manager and the
+  swarm loop): when the runner's exception is a model failure (`is_model_failure`: HTTP 401/402/403/404/408/409/425/429
+  or ≥ 500, or the litellm/pydantic-ai classes for a revoked key, no credit, rate limit, unknown model, provider
+  down/unreachable/timeout — NOT 400/422, context length, content policy or `UnexpectedModelBehavior`, which are the
+  model answering) and NOTHING has reached the reader yet (no delta, tool call or approval request), the same turn
+  runs again on the next model; a failure after text streamed is reported, never silently restarted; the last
+  candidate's error passes through unchanged so `chat/reasons.py` words it as today. The reply then carries
+  `message_done.answered_by_model = "<model name> (fallback)"`, which nucleus keeps in `metadata.answered_by_model`
+  (serialised since Wave 0) and republishes; the app shows "Answered by <name> · fallback" under the bubble.
+  `chat/reasons.py` decides the wording of a failure, the worker decides the retry — two small classifiers on
+  purpose. Server `0.5.4`.
+- **Model check on register / edit (owner's ask, 2026-09-21).** The Register and Edit model dialogs verify a model
+  with the provider BEFORE saving it, and show what is wrong otherwise: `POST /model-configs/check/`
+  (`model_config.create` or `.update`; `intelligence/services.py check_model_config`) asks the worker's
+  `POST /api/v1/models/check/` (`apps/managers/model_check.py`: one tiny call, `max_tokens` 5, built by the same
+  `PydanticAIRunner.build_model` a persona runs on, `MODEL_CHECK_TIMEOUT_SECONDS` 20) and answers `{ok, reason,
+  latency_ms}` — the reason is the `chat/reasons.py` sentence (bad key, no credit, rate limit, unknown model,
+  unreachable, timeout), or "This server's AI worker cannot run <provider> models yet" when the worker has no
+  runner for the provider; never the provider's raw text (it can carry the key). An edit without a new key checks
+  with the stored one (`config_id`). The API create/patch stay unguarded (scripts and tests register models offline);
+  the dialogs are where the rule lives; an older server (404 on the check) saves as before. Side fix: the worker
+  now passes `api_base` to OpenAI-shaped providers (it was dropped, so compatible endpoints never worked).
+  Server `0.5.5`.
+- **Recall (W5, 2026-09-21).** What the team's personas record about a project outlives the topic it came up in.
+  `RecallEntry(ProjectBaseModel)`: kind (decision|fact|preference), text ≤ 500, `normalized` (the dedupe key,
+  enforced in `intelligence/recall.py` — not a DB constraint, so a removed entry can be recorded again), source
+  topic/message, author persona, created_by; migration `nucleus 0025` (with `Persona.recall_enabled`, default on,
+  which gates both what the persona is fed and what it records). Caps: 5 entries per reply, 500 per project.
+  Nucleus is the writer of record and the worker owns the vectors: every create/edit → worker
+  `POST /api/v1/embed/recall/` into `company_{id}_recall` (doc id = entry id, so an edit upserts), soft delete →
+  `DELETE /api/v1/embed/recall/{id}/` — both best effort (a missing vector is weaker recall, not a failed write).
+  Every trigger carries a `recall` context source (`source_id` = the project id) unless the persona has recall
+  off; the worker's third plugin `RecallContextSource` retrieves top-k `RECALL_TOP_K` (8) by project and the prompt
+  builder puts them in their OWN block "What the team has recorded" after the attached sources and before the
+  conversation. The remember pass (`apps/managers/recall.py`): after a successful reply, the persona's utility
+  model (else its own) reads the exchange and answers `{entries: [{kind, text}]}` (structured output, max_tokens
+  400, `RECALL_REMEMBER_TIMEOUT_SECONDS` 15, "nothing durable → empty list"); the worker POSTs
+  `/internal/recall/` and `message_done.recalled` says how many were kept (`metadata.recalled`,
+  `MessageOut.recalled`); any failure in the pass is logged and never touches the reply. Rights: reading needs
+  project access (`topic.list`); editing/removing is `recall.manage`, which the registry places in the MEMBER tier
+  (a member curates what personas recorded; Viewers read only). Routes `GET/PATCH/DELETE /projects/{id}/recall/…`.
+  Follow-ups kept out of this item and logged in OPEN-ITEMS: the persona-callable `remember` tool, the nightly
+  consolidation, per-project exclusions, the Routine proposal. Server `0.5.6`.
+- **Follow along (W9, 2026-09-21).** A web tool call's trail row carries the page it went to:
+  `ToolResultData.url` (worker `tool_events.url_of`: `web_fetch`'s http(s) `url`; a search query becomes a Bing
+  results page — Bing allows framing, DuckDuckGo does not), relayed on `tool_activity_end` and kept on the trail
+  row (`chat/services.py remember_tool_call`). The app's Web pane opens it beside the chat. Server `0.5.7`.
+- **Nudge (W8 part 2, 2026-09-21).** The caller adds to a persona reply that is still running:
+  `POST …/messages/{id}/nudge/ {text ≤ 2000}` (`request_nudge_for_message`: the reply is its caller's to steer —
+  403 for anyone else, 409 once finished) queues it on the signal store (`nx:nudge:{msg_id}`, TTL 600 s; the store
+  gained list ops for Memory and Redis). The worker's `NudgeGate` (`apps/managers/nudges.py`, interactive runs
+  only) polls `GET /internal/messages/{id}/nudges/` after each tool call — pydantic-ai's `after_tool_execute` is
+  the one place a running agent reads new words — appends "[The reader adds while you work: …]" to that tool's
+  result and emits `nudge_taken`; the relay publishes `{type: nudge_taken, id, text}` and keeps `metadata.nudges`
+  (`MessageOut.nudges`). Never lost: when the reply ends or is stopped, `repost_untaken_nudges` posts what the
+  persona never reached as an ordinary message from the nudger. A run without tool calls therefore never takes a
+  nudge (it arrives as a message). pydantic-ai only (the LiteLLM runner is unmaintained, OPEN-ITEMS). Server `0.5.8`.
+- **Runbooks (W6 phase 1, 2026-09-21).** `Runbook(project, title ≤ 120, description ≤ 500, steps JSON 1–12 of
+  {persona_id, prompt ≤ 4000, routine_id|null, output_type, on_failure stop|skip|retry})` and
+  `RunbookRun(runbook, topic, started_by, status queued|running|done|failed|stopped, current_step, step_results,
+  started_at, ended_at, error)` in `nucleus/models/scheduling.py` (migration 0026, which also makes
+  `PersonaSchedule.persona` nullable and adds `PersonaSchedule.runbook`: a schedule runs a persona OR starts a
+  runbook, `scheduling/services.py` refuses both or neither). Routes under `/projects/{id}/runbooks/`
+  (`scheduling/api.py`; the fixed `runs/` paths register before `{runbook_id}/`): reading needs `topic.list` at the
+  project, defining `runbook.manage` (Admin), starting and stopping `runbook.run` (Member) PLUS `persona.mention` in
+  the topic — a run is the starter's series of mentions — and `topic.create` on the channel when "Run now" makes a
+  new topic. Execution is the Celery task `scheduling.tasks.run_runbook` → `scheduling/runbooks.py execute_run`:
+  the starter's mention right is re-checked (as a schedule's creator is); every step goes through the ONE trigger,
+  `trigger_ai_response_async(..., interactive=False, routine=, output_type=, step_context=<previous reply>,
+  runbook_run={id, title, step, of}, triggered_by=starter)`, which now returns the reply's id; the row decides:
+  completed → its content is the next step's context, failed → `on_failure` (stop: run failed and the line says
+  which step and why; skip: recorded, context unchanged; retry: one more attempt, then the stop rule), a stopped
+  reply or a run marked stopped → run stopped. A step's model override comes through its routine (one mechanism;
+  the plan's per-step `model_config_id` was dropped as a second path to the same thing). Every transition
+  publishes `{type: "runbook_run", id, run}` on the topic and posts system lines (started / finished / failed at
+  step n / stopped …); the reply rows carry `metadata.runbook_run` (`MessageOut.runbook_run`, `message_start`
+  too). The worker puts `TriggerJob.step_context` into the persona prompt as its own block after the routine's
+  (`apps/managers/runbooks.py`, clipped to `RUNBOOK_STEP_CONTEXT_MAX` = 12 000 chars). Phase 2 (condition/output
+  steps, Describe, evidence, catch-up) stays in the master plan. Server `0.6.0` (MINOR: new tables and a
+  schedule field).
+- **Inbound hooks (W12, 2026-09-21).** `InboundHook(project, topic, persona, label, token_hash, token_hint,
+  created_by, is_paused, last_fired_at, fire_count, last_status, last_error)` (migration 0027). The token is
+  generated once (`secrets.token_urlsafe(32)`), returned by create and regenerate ONLY, and stored as its sha256
+  plus its last four characters — nucleus cannot show it again, and says so in the dialog. Management under the
+  topic, like schedules (`scheduling/api.py`): list/create/patch/regenerate/delete under `hook.manage` (Admin),
+  and creating or regenerating ALSO needs `persona.mention` in that topic — a hook lends a persona's reach to a
+  machine, so it may not lend more reach than its maker has. Firing is the ONE public write path in nucleus:
+  `POST /api/v1/hooks/{token}/` on a router with no auth (`scheduling/hooks_api.py`; nginx blocks only
+  `/api/v1/internal/`), body `{text ≤ 4000, data? ≤ 32 KB}`. It answers 404 for an unknown or removed token (a
+  public route must not confirm that a token ever existed), 409 paused, 400 empty text or non-JSON data, 413 too
+  large, 429 over 30 fires a minute for that hook (with `Retry-After`), 403 when the creator may no longer call
+  personas there — recorded on the hook as `last_error`, which the pane shows, rather than posting a line into
+  the chat on every blocked fire. A fire posts `@persona <text>` (plus a fenced json block when `data` came) as
+  the creator through `save_user_message`, publishes it, and calls `chat/api.py:_trigger_personas` — the reply is
+  the creator's (W22). Rate limiting extends the process's existing shared store (`chat/stop_signals.py` gained
+  `incr` and `signal_store()`) rather than opening a second Redis client; a store hiccup never blocks a fire.
+  Server `0.6.1` (additive).
+- **The live browser (owner's ask, 2026-09-21).** The Web pane's iframe cannot show most of the web: google.com,
+  github.com and the rest send `X-Frame-Options` / `frame-ancestors`, and the BROWSER enforces that — no client
+  code can override it, which is why the pane showed "refused to connect". The only way to put the real web beside
+  a chat is to run a real browser somewhere and stream it, so the server now runs one: Chromium in the worker
+  image (`neuralops/Dockerfile`, `--build-arg BROWSER=0` leaves it out, ~450 MB), one browser per server, one
+  isolated context per session, one Playwright page per TAB, frames out as JPEG over Chromium's own screencast,
+  mouse and keyboard back in (`modules/nexus-ai/apps/managers/browser.py`, `apps/routers/browser.py`, WS
+  `/api/v1/browser/ws` exposed by nginx as `/browser/ws` in both profiles). Tabs, history, forms, logins and
+  JavaScript work because it IS a browser; popups open as tabs.
+  **What it may reach is the point:** the browser sits INSIDE the deployment, so by default it refuses any private
+  address — every request, not just the address bar (`BROWSER_ALLOW_PRIVATE_NETWORK=false`, loopback, RFC1918,
+  link-local, `.local`/`.internal`, cloud metadata) — and only `http`/`https` (a `javascript:` or `file:` address
+  is refused, never rewritten). The right is `project.browser`, Admin-tier for the same reason `project.terminal`
+  is. Nucleus signs the same short-lived ticket the terminal uses (the helpers now live in
+  `apps/managers/tickets.py`, shared). The app draws frames on a canvas with a real tab strip
+  (`live-browser-pane.tsx`); a server built without the engine answers 4503 and the pane says so, and the old
+  iframe Web pane stays for what it is good at. Server `0.7.0` (MINOR: a new capability).
+- **Wave 7 — catalogues, deliverables, search, first steps (2026-09-21).** The last wave of the team-AI-operations
+  plan, all additive, server `0.8.0`:
+  - **Tool catalog (W11)** and **persona catalogue (W18)** are hand-kept CONTENT modules
+    (`intelligence/mcp_catalog.py`, `intelligence/persona_catalog.py`) served by `GET /mcp-catalog/` and
+    `GET /persona-catalog/` under the rights that already list those things. Nothing is fetched at runtime and no
+    secret is in either file: picking an entry PRE-FILLS the create dialog the person already uses, and every
+    field stays editable. The app renders both through one shared `Catalogue` component, built once as the plan
+    asked, which also marks what is already set up.
+  - **Deliverables (W10)**: `Deliverable(project, title, kind, version, content, source_message, created_by)`
+    (migration 0028) with a unique (project, title, version) over LIVE rows only, so removing a version frees its
+    number. Keeping is by title — the same title again is a new version, never an overwrite, because someone who
+    linked v1 still has v1. `deliverable.manage` is Member-tier per the registry; the keep route additionally
+    refuses a message from a topic the person cannot see, and one from another project outright.
+  - **Message search (W19)**: `GET /search/messages/?q=`. The worker ranks by meaning over the embeddings it
+    already keeps (`POST /api/v1/search/messages/`, ids and scores only — it decides nothing about access);
+    nucleus keeps the hits whose topics the person can see and builds every result from its own rows. When the
+    worker cannot answer, the same visible messages are searched literally, so a search box always answers. The
+    command palette shows hits and jumps to the message itself.
+  - **First steps (W20, app only)**: what a fresh server still needs, computed from data already loaded
+    (`lib/shell/first-steps.ts`) rather than a checklist anyone ticks, so it cannot claim something is done that
+    is not. A model without a key does not count. Dismissal is device-scoped: it is a state of the server, not a
+    preference to sync. The Intelligence setup guide now shares the model/persona judgement with it.
+  **The app's `COMPATIBLE_SERVER_VERSION` moves with this** (`src/lib/version.ts`): while MAJOR is 0 the app
+  treats MINOR drift as breaking, so leaving it behind disables Connect for the very server the app ships with —
+  found in the 2026-09-21 audit, when it still read `0.2.0` against a `0.7.0` server.
+
+**Files:** `authn/permissions/rights.py`, `authn/permissions/models.py` (`ObjectType`), `chat/schema.py`,
+`chat/services.py` (`_serialise`, `usage_from`, `with_usage`).

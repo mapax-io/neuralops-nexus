@@ -161,6 +161,29 @@ class PersonaInternal(Schema):
     temperature: float
     max_tokens: int
     max_steps: int
+    # The project's brief, for the worker to put ahead of the persona prompt.
+    # None when the project has none (not an empty block).
+    project_brief: Optional[str] = None
+    # The server's utility model for the worker's own small passes; None means
+    # "use this persona's model".
+    utility_model: Optional[ModelInternal] = None
+    # Tool approvals: the persona's levels; the worker applies the defaults.
+    tool_levels: dict = Field(default_factory=dict)
+    # In order, keys decrypted like the primary's: what the worker tries when
+    # `model` cannot answer (W7). Retired configs are left out.
+    fallback_models: list[ModelInternal] = Field(default_factory=list)
+    # Recall (W5): whether the persona records what it learns at the end of a reply.
+    recall_enabled: bool = True
+
+
+class RoutineInternal(Schema):
+    """One routine, ready to apply for a turn: instructions, the tool narrowing, the model swap (key decrypted)."""
+    id: str
+    name: str
+    title: str
+    instructions: str
+    allowed_capabilities: Optional[list[str]] = None
+    model: Optional[ModelInternal] = None
 
 
 class ContextSourceInternal(Schema):
@@ -206,6 +229,7 @@ class HistoryMessageInternal(Schema):
     content: str
     render_as: str = "text"
     output_type: str = "text"
+    stopped: bool = False   # the reader ended it; content is a partial
     sequence: int
 
 
@@ -278,10 +302,11 @@ def get_persona_internal(request, persona_id: str):
     """
     from nucleus.models import Persona
     from intelligence import oauth_client
+    from intelligence.services import fallback_models_of, utility_model_of
 
     persona = (
         Persona.objects.filter(id=persona_id, is_active=True)
-        .select_related("prompt", "model", "advisor_model")
+        .select_related("prompt", "model", "advisor_model", "project")
         .prefetch_related("mcp_servers")
         .first()
     )
@@ -342,8 +367,44 @@ def get_persona_internal(request, persona_id: str):
         capabilities=capabilities,
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
+        project_brief=persona.project.brief or None,
+        utility_model=_model_internal(utility) if (utility := utility_model_of(persona.company)) else None,
         max_steps=persona.max_steps,
+        tool_levels=persona.tool_levels or {},
+        fallback_models=[_model_internal(m) for m in fallback_models_of(persona)],
+        recall_enabled=persona.recall_enabled,
     )
+
+
+@router.get("/routines/{routine_id}/", response=RoutineInternal)
+def get_routine_internal(request, routine_id: str):
+    """The routine a job names (TriggerJob.routine_id) -- fetched by the worker like the persona."""
+    from nucleus.models import Routine
+    routine = Routine.objects.filter(id=routine_id, is_active=True).select_related("model_config").first()
+    if not routine:
+        raise HttpError(404, "Routine not found.")
+    model = routine.model_config if routine.model_config_id and routine.model_config and routine.model_config.is_active else None
+    return RoutineInternal(
+        id=str(routine.id), name=routine.name, title=routine.title, instructions=routine.instructions,
+        allowed_capabilities=routine.allowed_capabilities, model=_model_internal(model) if model else None,
+    )
+
+
+@router.get("/messages/{message_id}/approvals/{call_id}/")
+async def get_approval_state_internal(request, message_id: str, call_id: str):
+    """
+    What a held tool call has become -- polled by nexus-ai (apps/managers/
+    approvals.py) while the call waits: pending | allowed | denied | stopped.
+    """
+    from chat.services import approval_state
+    return await approval_state(message_id, call_id)
+
+
+@router.get("/messages/{message_id}/nudges/")
+async def take_nudges_internal(request, message_id: str):
+    """What the caller added while the reply runs (W8) -- polled by the worker after each tool call; taken once."""
+    from chat.stop_signals import stop_signals
+    return {"nudges": [n.get("text") for n in await stop_signals().take_nudges(message_id) if n.get("text")]}
 
 
 @router.get("/topics/{topic_id}/contexts/", response=list[ContextSourceInternal])
@@ -446,6 +507,7 @@ def get_topic_history_internal(
             content=m.content or "",
             render_as=metadata.get("render_as", "text"),
             output_type=metadata.get("output_type", "text"),
+            stopped=bool(metadata.get("stopped")),
             sequence=m.sequence,
         ))
     return result
@@ -470,3 +532,39 @@ def get_ai_config_internal(request, company_id: str):
         embedding_base_url=config.embedding_base_url,
         default_llm_model=config.default_llm_model,
     )
+
+
+# ── Recall (W5): the worker records what a reply learnt ──────────────────────
+class RecallEntryIn(Schema):
+    kind: str
+    text: str
+
+
+class RecallWriteIn(Schema):
+    project_id: str
+    persona_id: str
+    message_id: Optional[str] = None
+    entries: list[RecallEntryIn] = Field(default_factory=list)
+
+
+@router.post("/recall/", response={201: dict})
+def write_recall(request, payload: RecallWriteIn):
+    """
+    The remember pass at the end of a reply: up to five entries, deduplicated
+    against the project (intelligence/recall.py). Answers how many were kept.
+    """
+    from intelligence.recall import record_recall
+    from nucleus.models import ChatMessage, Persona, Project
+
+    project = Project.objects.filter(id=payload.project_id, is_active=True).first()
+    if not project:
+        raise HttpError(404, "Project not found.")
+    persona = Persona.objects.filter(id=payload.persona_id, project=project, is_active=True).first()
+    if not persona:
+        raise HttpError(404, "Persona not found in this project.")
+    message = ChatMessage.objects.filter(id=payload.message_id, project=project).select_related("topic").first() if payload.message_id else None
+    try:
+        result = record_recall(project, [e.dict() for e in payload.entries], persona=persona, message=message)
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    return 201, {"created": len(result["created"]), "skipped": result["skipped"]}

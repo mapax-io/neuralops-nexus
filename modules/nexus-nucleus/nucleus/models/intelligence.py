@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.core.exceptions import ImproperlyConfigured
 
-from .base import BaseModel, TenantBaseModel
+from .base import BaseModel, ProjectBaseModel, TenantBaseModel
 
 
 def _fernet():
@@ -86,6 +86,13 @@ class CompanyAIConfig(BaseModel):
     )
 
     # -- Session --------------------------------------------------------------
+    # The one model the server's own small jobs run on -- recall passes,
+    # runbook conditions, titles -- so a persona's model is not spent on them.
+    # Nothing consumes it until those land; unset means "use the persona's".
+    utility_model = models.ForeignKey(
+        "nucleus.ModelConfig", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+        help_text="Model config used for the server's utility passes; falls back to the persona's model when unset.",
+    )
     session_timeout_minutes = models.PositiveIntegerField(
         default=30,
         help_text="How long an @session stays active without explicit close (minutes).",
@@ -427,6 +434,16 @@ class Persona(TenantBaseModel):
         ),
     )
 
+    # Models to answer with when `model` cannot (its key revoked, no credit,
+    # rate-limited, the provider down), in order -- the through rows carry the
+    # position. The worker tries them one by one before giving up (W7).
+    fallback_models = models.ManyToManyField(
+        ModelConfig,
+        through="PersonaFallbackModel",
+        related_name="fallback_personas",
+        blank=True,
+    )
+
     mcp_servers = models.ManyToManyField(
         "nucleus.MCPServer",
         blank=True,
@@ -446,6 +463,22 @@ class Persona(TenantBaseModel):
     temperature = models.FloatField(default=0.7)
 
     max_tokens = models.PositiveIntegerField(default=4096)
+
+    # Preflight: the persona proposes before acting. When set, a turn that
+    # would use a tool that acts first answers with a plan for a person to
+    # approve, adjust or decline (the worker judges "would act" -- nucleus
+    # never reads capability configs). Off by default; never for scheduled
+    # or swarm runs, which have nobody waiting to answer.
+    acts_after_approval = models.BooleanField(default=False)
+    # Tool approvals: {capability id or "<capability>/<tool>": "auto"|"ask"|"off"}.
+    # Nucleus stores and validates the shape (intelligence/services.py);
+    # the worker owns the defaults for anything unset and applies them.
+    tool_levels = models.JSONField(default=dict, blank=True)
+
+    # Recall (W5): whether this persona reads what the team has recorded
+    # and records what it learns. Off keeps the project's Recall out of its
+    # prompt and its replies out of Recall.
+    recall_enabled = models.BooleanField(default=True)
 
     max_steps = models.PositiveIntegerField(
         default=10,
@@ -493,6 +526,22 @@ class Persona(TenantBaseModel):
 
     def __str__(self):
         return self.name
+
+
+class PersonaFallbackModel(models.Model):
+    """One fallback model of a persona and its place in the order (W7)."""
+
+    persona = models.ForeignKey(Persona, on_delete=models.CASCADE, related_name="fallback_links")
+    model = models.ForeignKey(ModelConfig, on_delete=models.CASCADE, related_name="fallback_links")
+    position = models.PositiveSmallIntegerField()
+
+    class Meta:
+        db_table = "intelligence_persona_fallback_model"
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(fields=["persona", "model"], name="uniq_persona_fallback_model"),
+            models.UniqueConstraint(fields=["persona", "position"], name="uniq_persona_fallback_position"),
+        ]
 
 
 class MCPServer(TenantBaseModel):
@@ -777,3 +826,65 @@ class MCPServer(TenantBaseModel):
 
     def __str__(self):
         return self.name
+
+
+class Routine(ProjectBaseModel):
+    """
+    A team-shared, named method a persona runs with for one reply:
+    `@Sara /weekly-digest last week`. The instructions ride the system prompt
+    after the project brief and the persona's own prompt; allowed_capabilities
+    narrows the persona's tools for that turn (never widens); model_config
+    swaps the model for that turn. Four built-ins are seeded per project
+    (intelligence/builtin_routines.py) -- editable, never deletable.
+    """
+    name = models.CharField(max_length=40, help_text="The /token: lowercase letters, digits and hyphens; unique per project.")
+    title = models.CharField(max_length=120)
+    purpose = models.CharField(max_length=200, blank=True, default="")
+    instructions = models.TextField(help_text="Markdown, at most 8,000 characters.")
+    # None = the persona's own tools; a list of capability ids (shell, filesystem,
+    # web_search, web_fetch, thinking, mcp:<server id>) keeps only those.
+    allowed_capabilities = models.JSONField(null=True, blank=True)
+    model_config = models.ForeignKey(
+        ModelConfig, on_delete=models.SET_NULL, null=True, blank=True, related_name="routines",
+        help_text="Overrides the persona's model for a reply run with this routine.",
+    )
+    is_builtin = models.BooleanField(default=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_routines")
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return f"/{self.name}"
+
+
+class RecallEntry(ProjectBaseModel):
+    """
+    What the team's personas have recorded about the project (W5): a
+    decision, a fact or a preference -- short, attributed to the persona and
+    the message it came from, read into every persona's turn in the project.
+    Edited and removed under recall.manage. `normalized` is the dedupe key
+    (intelligence/recall.py); it is not a database constraint so a removed
+    entry can be recorded again.
+    """
+
+    class Kind(models.TextChoices):
+        DECISION = "decision", "Decision"
+        FACT = "fact", "Fact"
+        PREFERENCE = "preference", "Preference"
+
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    text = models.CharField(max_length=500)
+    normalized = models.CharField(max_length=500, db_index=True)
+    source_topic = models.ForeignKey("nucleus.ChatTopic", on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
+    source_message = models.ForeignKey("nucleus.ChatMessage", on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
+    author_persona = models.ForeignKey(Persona, on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
+
+    class Meta:
+        db_table = "intelligence_recall_entry"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["project", "is_active"])]
+
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.text[:40]}"

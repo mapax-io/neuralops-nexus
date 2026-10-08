@@ -11,13 +11,18 @@ from ninja.errors import HttpError
 
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
+from workspace import deliverables
 from .schema import (
     MemberAccessOut, SetMemberAccessIn,
-    ProjectCreateRequest, ProjectOut, ChannelOut, ChannelCreateRequest,
+    ProjectCreateRequest, ProjectUpdateRequest, ProjectOut, ChannelOut, ChannelCreateRequest,
     TopicCreateRequest, TopicUpdateRequest, TopicOut,
     InviteRequest, InviteResponse, MemberOut, RemoveMemberResponse,
     TeamMemberOut, AddMemberRequest, InviteToProjectRequest, InviteToProjectOut,
     AvailableUserOut, AvailablePersonaOut,
+    BrowserSessionIn,
+    DeliverableKeepIn,
+    DeliverableOut,
+    TerminalSessionOut,
 )
 from . import services as svc
 
@@ -52,9 +57,11 @@ def _require_team_manager(user, project):
         raise HttpError(403, "You don't have permission to manage this project's team.")
 
 
-def _project_out(project) -> dict:
+def _project_out(project, with_brief: bool = False) -> dict:
     channels = project.channel_items.filter(is_active=True).order_by("name")
     return {
+        "brief": project.brief if with_brief and project.brief else None,
+        "brief_length": len(project.brief or ""),
         "id": str(project.id),
         "name": project.name,
         "slug": project.slug,
@@ -85,6 +92,9 @@ def create_project(request, payload: ProjectCreateRequest):
     except ValueError as exc:
         raise HttpError(400, str(exc))
     svc.provision_project_folder_and_mcp(project)
+    # The four built-in routines every project starts with (W4).
+    from intelligence.services import seed_builtin_routines
+    seed_builtin_routines(project)
     return _project_out(project)
 
 
@@ -94,7 +104,22 @@ def get_project(request, project_id: str):
     project = svc.get_project(company, user, project_id)
     if not project:
         raise HttpError(404, "Project not found.")
-    return _project_out(project)
+    return _project_out(project, with_brief=True)
+
+
+@router.patch("/{project_id}/", response=ProjectOut)
+def update_project(request, project_id: str, payload: ProjectUpdateRequest):
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.update", obj=project):
+        raise HttpError(403, "You don't have permission to edit this project.")
+    try:
+        svc.update_project(project, user, brief=payload.brief, description=payload.description)
+    except ValueError as exc:
+        raise HttpError(400, str(exc))
+    return _project_out(project, with_brief=True)
 
 
 @router.delete("/{project_id}/")
@@ -112,6 +137,111 @@ def archive_project(request, project_id: str):
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
+
+@router.post("/{project_id}/terminal/session/", response=TerminalSessionOut)
+def open_terminal_session(request, project_id: str):
+    """
+    Terminal (W21): a ticket for a shell session in the project's folder on
+    the server, for whoever holds project.terminal. The app connects to the
+    worker's WebSocket with it (see workspace/services.py).
+    """
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.terminal", obj=project):
+        raise HttpError(403, "You don't have permission to open a terminal in this project.")
+    try:
+        return svc.open_terminal_session(project, user)
+    except svc.TerminalError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.post("/{project_id}/browser/session/", response=TerminalSessionOut)
+def open_browser_session(request, project_id: str, payload: BrowserSessionIn):
+    """
+    The live browser: a ticket for a real Chromium on the server, for whoever
+    holds project.browser. Admin-tier on purpose — a browser running inside the
+    deployment can reach whatever the server can, so it is not a member's tool.
+    """
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.browser", obj=project):
+        raise HttpError(403, "You don't have permission to open the browser in this project.")
+    try:
+        return svc.open_browser_session(project, user, width=payload.width, height=payload.height, url=payload.url)
+    except svc.BrowserError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+def ws_visible_topic(user, project, topic_id) -> bool:
+    """Whether this person can see that topic -- the same row visibility every chat route uses."""
+    from authn.permissions.row_rules import visible_topic
+
+    return visible_topic(user, project, topic_id) is not None
+
+
+# ── Deliverables (W10) ────────────────────────────────────────────────────────
+# What a persona produced and the team kept: a chart, a page, a table, a form.
+# Reading needs the project; keeping and removing need deliverable.manage.
+
+@router.get("/{project_id}/deliverables/", response=List[DeliverableOut])
+def list_deliverables(request, project_id: str, latest: bool = Query(default=False), title: Optional[str] = None):
+    """The kept things, newest version of each first. Content is left out until one is opened."""
+    company, user, project = _resolve_project(request, project_id)
+    rows = deliverables.list_deliverables(project, title=title, latest_only=latest)
+    return [deliverables.summary(r) for r in rows]
+
+
+@router.get("/{project_id}/deliverables/{deliverable_id}/", response=DeliverableOut)
+def get_deliverable(request, project_id: str, deliverable_id: str):
+    company, user, project = _resolve_project(request, project_id)
+    row = deliverables.get_deliverable(project, deliverable_id)
+    if not row:
+        raise HttpError(404, "Deliverable not found.")
+    return deliverables.serialise(row)
+
+
+@router.post("/{project_id}/deliverables/", response=DeliverableOut)
+def keep_deliverable(request, project_id: str, payload: DeliverableKeepIn):
+    """Keep a reply under a name. The same name again is a new version, never an overwrite."""
+    from nucleus.models import ChatMessage
+
+    company, user, project = _resolve_project(request, project_id)
+    if not PermissionChecker.can(user, "deliverable.manage", obj=project):
+        raise HttpError(403, "You don't have permission to keep deliverables in this project.")
+    message = ChatMessage.objects.filter(id=payload.message_id, project=project, is_active=True).first()
+    if not message:
+        raise HttpError(404, "Message not found.")
+    # A topic the person cannot see is a message they cannot keep.
+    if not ws_visible_topic(user, project, message.topic_id):
+        raise HttpError(404, "Message not found.")
+    metadata = message.metadata or {}
+    try:
+        return deliverables.serialise(deliverables.keep(
+            company, project, user,
+            title=payload.title,
+            kind=metadata.get("render_as") or metadata.get("output_type") or "text",
+            content=message.content or "",
+            source_message=message,
+        ))
+    except deliverables.DeliverableError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.delete("/{project_id}/deliverables/{deliverable_id}/", response={204: None})
+def delete_deliverable(request, project_id: str, deliverable_id: str):
+    company, user, project = _resolve_project(request, project_id)
+    if not PermissionChecker.can(user, "deliverable.manage", obj=project):
+        raise HttpError(403, "You don't have permission to remove deliverables in this project.")
+    row = deliverables.get_deliverable(project, deliverable_id)
+    if not row:
+        raise HttpError(404, "Deliverable not found.")
+    deliverables.delete_deliverable(row)
+    return 204, None
+
 
 @router.get("/{project_id}/channels/", response=List[ChannelOut])
 def list_channels(request, project_id: str, include_archived: bool = Query(default=False)):

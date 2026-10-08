@@ -49,12 +49,24 @@ REGISTRY = [
     # Owner/Admin of just one project) as well as inherited from COMPANY.
     ("project.view", ObjectType.PROJECT, ScopeType.PROJECT,
      "View a specific project's details."),
+    ("project.update", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Edit a project's details -- its brief (the instructions every persona "
+     "in the project follows) and description. Admin-tier, like the other "
+     "project-wide definitions."),
     ("model_config.attach", ObjectType.PROJECT, ScopeType.PROJECT,
      "Attach an already-existing model config to a project (does not create "
      "the config or touch its API key -- that's model_config.create, "
      "COMPANY-only). Reachable by a Project-scoped Admin, unlike "
      "model_config.create/delete. This is the right that lets a company "
      "Owner/Admin share one set of credentials across projects."),
+    ("project.terminal", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Open a shell session in the project's folder on the server from the "
+     "Terminal pane. Admin-tier: a person with a shell on the server is an "
+     "admin's act; the container is the boundary, not the personas' allow-list."),
+    ("project.browser", ObjectType.PROJECT, ScopeType.PROJECT,
+     "Open the live browser: a real browser running ON the server, whose picture "
+     "the app draws. Admin-tier for the same reason project.terminal is -- it can "
+     "reach whatever the server can reach, and it is inside the deployment."),
     ("project.archive", ObjectType.PROJECT, ScopeType.PROJECT,
      "Archive (soft-delete) a project, or view it once archived. Reversible in "
      "principle via Project.restore() -- there's just no endpoint for that yet. "
@@ -154,7 +166,29 @@ REGISTRY = [
      "Create a recurring or one-time automated persona query in a topic."),
     ("schedule.manage", ObjectType.SCHEDULE, ScopeType.TOPIC,
      "Pause, resume, or delete any schedule in a topic, including ones you did not create."),
+
+    # ── Team AI operations ────────────────────────────────────────────────────
+    # Seeded ahead of the capabilities that use them (plan-implementation-
+    # master.md, Wave 0): approving a persona's proposed run (Preflight) or a
+    # single tool call; managing the project's Routines, Runbooks, Inbound
+    # hooks, Recall entries and Deliverables. Running a runbook is Member-tier,
+    # like calling a persona; managing definitions is Admin-tier.
+    ("persona.approve_run", ObjectType.PERSONA, ScopeType.TOPIC,
+     "Approve, adjust or decline what a persona proposes to do in a topic, or a tool call it asks about."),
+    ("routine.manage", ObjectType.ROUTINE, ScopeType.PROJECT,
+     "Create, edit and delete a project's routines (named, shared methods invoked with /name)."),
+    ("runbook.manage", ObjectType.RUNBOOK, ScopeType.PROJECT,
+     "Create, edit and delete a project's runbooks (ordered multi-step persona runs)."),
+    ("runbook.run", ObjectType.RUNBOOK, ScopeType.PROJECT,
+     "Start a runbook, or stop one that is running."),
+    ("hook.manage", ObjectType.HOOK, ScopeType.PROJECT,
+     "Create, regenerate and disable inbound hooks that post into a topic and mention a persona."),
+    ("recall.manage", ObjectType.RECALL, ScopeType.PROJECT,
+     "Edit and delete what personas have recorded in the project's Recall."),
+    ("deliverable.manage", ObjectType.DELIVERABLE, ScopeType.PROJECT,
+     "Keep a rich output as a project deliverable, and delete deliverables."),
 ]
+
 
 
 # ── Default rights per seeded role ─────────────────────────────────────────────
@@ -174,7 +208,7 @@ DEFAULT_ROLE_RIGHTS = {
 
     "Admin": [
         "company.invite_member", "company.remove_member",
-        "project.create", "project.list", "project.view", "project.archive",
+        "project.create", "project.list", "project.view", "project.archive", "project.update", "project.terminal", "project.browser",
         "channel.create", "channel.list", "channel.update", "channel.archive",
         "topic.create", "topic.list", "topic.update", "topic.mark_read", "topic.archive",
         "session.create", "session.close",
@@ -184,6 +218,8 @@ DEFAULT_ROLE_RIGHTS = {
         "model_config.list", "model_config.create", "model_config.update",
         "model_config.delete", "model_config.attach",
         "schedule.create", "schedule.manage",
+        "persona.approve_run", "routine.manage", "runbook.manage", "runbook.run",
+        "hook.manage", "recall.manage", "deliverable.manage",
         # project.archive/channel.archive/topic.archive are now included --
         # this reverses the old project.delete-was-Owner-only policy. Archiving
         # is reversible (soft-delete + unused Model.restore()) so it's no
@@ -207,6 +243,10 @@ DEFAULT_ROLE_RIGHTS = {
         "persona.mention",
         "persona.list", "mcp_server.list", "model_config.list",
         "schedule.create",
+        # Team AI operations: a Member approves what a persona proposes, runs a
+        # runbook, and curates Recall and Deliverables -- the same tier as
+        # calling a persona. Defining routines/runbooks/hooks stays Admin.
+        "persona.approve_run", "runbook.run", "recall.manage", "deliverable.manage",
         # Deliberately no schedule.manage -- a Member can still pause/delete
         # a schedule THEY created via the ownership check in
         # scheduling/services.py, just not one someone else created.

@@ -61,6 +61,47 @@ class Settings(BaseSettings):
     # a nexus-nucleus deploy.
     HISTORY_DEPTH: int = 20
 
+    # ── Tool approvals (apps/managers/approvals.py) ───────────────────────────
+    # How long an Ask tool waits for a person before it is skipped, and how
+    # often the worker asks nucleus whether someone decided.
+    APPROVAL_TIMEOUT_SECONDS: float = 600
+    APPROVAL_POLL_SECONDS: float = 1.0
+    # A keepalive goes out after this much silence on the event stream; the
+    # relay reads with a two-minute idle timeout.
+    STREAM_KEEPALIVE_SECONDS: float = 30
+
+    # ── Terminal (apps/managers/terminal.py) ─────────────────────────────────
+    # The shell a Terminal pane session runs, how long one may sit without
+    # input, and how many may be open on this worker at once.
+    # ── The live browser (a real Chromium on the server, streamed to the app) ──
+    # Off unless the image was built with it; nucleus asks before offering the pane.
+    BROWSER_ENABLED: bool = True
+    BROWSER_HOME: str = "https://duckduckgo.com"
+    BROWSER_MAX_TABS: int = 8
+    BROWSER_MAX_SESSIONS: int = 4
+    BROWSER_MAX_WIDTH: int = 1920
+    BROWSER_MAX_HEIGHT: int = 1200
+    BROWSER_FRAME_QUALITY: int = 60
+    BROWSER_NAV_TIMEOUT_MS: int = 30_000
+    BROWSER_IDLE_SECONDS: int = 900
+    BROWSER_USER_AGENT: str = ""
+    # A browser INSIDE the deployment must not be a way to reach the database or
+    # a cloud metadata endpoint. Turn on only for a server with nothing private.
+    BROWSER_ALLOW_PRIVATE_NETWORK: bool = False
+
+    TERMINAL_SHELL: str = "/bin/bash"
+    TERMINAL_IDLE_SECONDS: int = 1800
+    TERMINAL_MAX_SESSIONS: int = 20
+    # How long a model check (apps/managers/model_check.py) waits for the model.
+    MODEL_CHECK_TIMEOUT_SECONDS: float = 20
+    # Recall (W5): entries retrieved per turn, and how long the remember pass may take.
+    RECALL_TOP_K: int = 8
+    RECALL_REMEMBER_TIMEOUT_SECONDS: float = 15
+    # Nudge (W8): the poll after each tool call must not slow the run.
+    NUDGE_POLL_TIMEOUT_SECONDS: float = 1.5
+    # Runbooks (W6): how much of the previous step's reply a step is given (its head).
+    RUNBOOK_STEP_CONTEXT_MAX: int = 12_000
+
     class Config:
         env_file = ".env"
         extra = "ignore"

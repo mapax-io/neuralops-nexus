@@ -24,7 +24,14 @@ _validate_persona_wiring() is the single place all three are applied.
 """
 import copy
 
+import logging
+import re
+
 from django.conf import settings
+
+import httpx
+
+logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -100,6 +107,69 @@ def update_model_config(company, config_id: str, data: dict):
     return config
 
 
+class WorkerUnavailable(Exception):
+    """The AI worker is not configured or could not be reached; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+MODEL_CHECK_TIMEOUT = 30
+
+
+def check_model_config(company, data: dict) -> dict:
+    """
+    Verify a model with its key before it is saved: the worker makes one tiny
+    call the way a persona run would. Returns {ok, reason, latency_ms}; the
+    reason is the categorised sentence (chat/reasons.py), never the provider's
+    raw text -- that can carry the key. The key itself is never logged.
+    """
+    from chat.reasons import GENERIC_REASON, explain_ai_error
+
+    provider, model_id = data.get("provider"), (data.get("model_id") or "").strip()
+    _reject_unknown_provider(provider)
+    _reject_prefixed_model_id(model_id)
+    if not model_id:
+        raise ValueError("A model id is required.")
+    api_key = data.get("api_key") or None
+    if not api_key and data.get("config_id"):
+        existing = get_model_config(company, data["config_id"])
+        api_key = existing.get_api_key() if existing else None
+
+    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
+    internal_key = getattr(settings, "INTERNAL_API_KEY", "")
+    if not nexus_ai_url or not internal_key:
+        raise WorkerUnavailable(503, "The AI worker is not configured on this server, so the model cannot be checked.")
+    try:
+        response = httpx.post(
+            f"{nexus_ai_url}/api/v1/models/check/",
+            json={"provider": provider, "model_id": model_id, "api_key": api_key, "api_base": data.get("api_base") or None},
+            headers={"X-Internal-Key": internal_key},
+            timeout=MODEL_CHECK_TIMEOUT,
+        )
+        response.raise_for_status()
+        answer = response.json()
+    except httpx.HTTPError as exc:
+        logger.warning("[model_check] worker call failed: %s", type(exc).__name__)
+        raise WorkerUnavailable(502, "The AI worker could not be reached to check the model. Try again in a moment.")
+
+    if answer.get("ok"):
+        return {"ok": True, "reason": None, "latency_ms": answer.get("latency_ms")}
+    code = answer.get("error_code")
+    if code == "unsupported_provider":
+        reason = "This server's AI worker cannot run %s models yet." % provider
+    else:
+        # The chat sentences end by pointing at the AI models page; the reader is on it.
+        reason = re.sub(r"\s*Check the (key|model) on the AI models page\.$", "", explain_ai_error(answer.get("error")))
+        if reason == GENERIC_REASON:
+            # Nothing the categories know: say what is known, which is that the provider said no.
+            status = answer.get("status_code")
+            reason = "The model provider did not accept this model with this key%s." % (" (HTTP %s)" % status if status else "")
+    logger.info("[model_check] %s:%s refused: %s (status %s)", provider, model_id, code, answer.get("status_code"))
+    return {"ok": False, "reason": reason, "latency_ms": None}
+
+
 def attach_model_config_to_project(company, config_id: str, project_id: str) -> bool:
     from nucleus.models import ModelConfig, Project
     config = ModelConfig.objects.filter(company=company, id=config_id, is_active=True).first()
@@ -112,9 +182,9 @@ def attach_model_config_to_project(company, config_id: str, project_id: str) -> 
 
 def detach_model_config_from_project(company, config_id: str, project_id: str) -> bool:
     """
-    Refuses while a persona in that project still uses the config, as either
-    its primary or its advisor -- detaching would leave a persona pointing at
-    a model it can no longer see.
+    Refuses while a persona in that project still uses the config, as its
+    primary, its advisor or a fallback -- detaching would leave a persona
+    pointing at a model it can no longer see.
     """
     from nucleus.models import ModelConfig, Persona
     from django.db.models import Q
@@ -124,10 +194,10 @@ def detach_model_config_from_project(company, config_id: str, project_id: str) -
         return False
 
     in_use = Persona.objects.filter(
-        Q(model_id=config.id) | Q(advisor_model_id=config.id),
+        Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config),
         project_id=project_id,
         is_active=True,
-    ).values_list("name", flat=True)
+    ).distinct().values_list("name", flat=True)
     if in_use:
         raise ValueError(
             "Cannot detach '%s' from this project -- still used by: %s."
@@ -156,8 +226,8 @@ def delete_model_config(company, config_id: str) -> bool:
 
     in_use = list(
         Persona.objects.filter(
-            Q(model_id=config.id) | Q(advisor_model_id=config.id), is_active=True
-        ).values_list("name", flat=True)
+            Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config), is_active=True
+        ).distinct().values_list("name", flat=True)
     )
     if in_use:
         raise ValueError(
@@ -166,6 +236,9 @@ def delete_model_config(company, config_id: str) -> bool:
         )
 
     config.soft_delete()
+    # A retired config cannot stay the server's utility model.
+    from nucleus.models import CompanyAIConfig
+    CompanyAIConfig.objects.filter(company=company, utility_model=config).update(utility_model=None)
     return True
 
 
@@ -376,7 +449,7 @@ def delete_mcp_server_standalone(company, server_id: str) -> bool:
 
 # ── Persona ───────────────────────────────────────────────────────────────────
 
-def _validate_persona_wiring(company, project, model_config, advisor, servers):
+def _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks=()):
     """
     Every cross-object rule the database cannot express, in one place.
     Raises ValueError, which the API layer turns into a 400.
@@ -384,7 +457,10 @@ def _validate_persona_wiring(company, project, model_config, advisor, servers):
     if model_config is None:
         raise ValueError("A model config is required.")
 
-    for label, config in (("model", model_config), ("advisor model", advisor)):
+    if any(f.id == model_config.id for f in fallbacks):
+        raise ValueError("A fallback must be a different model from the primary -- it is what answers when the primary cannot.")
+
+    for label, config in (("model", model_config), ("advisor model", advisor), *(("fallback model", f) for f in fallbacks)):
         if config is None:
             continue
         if config.company_id != company.id:
@@ -426,6 +502,30 @@ def _resolve_model_config(company, config_id):
     if config is None:
         raise ValueError("Model config not found.")
     return config
+
+
+MAX_FALLBACK_MODELS = 3
+
+
+def _resolve_fallback_models(company, config_ids):
+    """The persona's fallbacks as ModelConfig rows, in the order given; repeats collapse; at most three."""
+    ids = list(dict.fromkeys(config_ids or []))
+    if len(ids) > MAX_FALLBACK_MODELS:
+        raise ValueError("A persona can have up to three fallback models.")
+    return [_resolve_model_config(company, config_id) for config_id in ids]
+
+
+def fallback_models_of(persona) -> list:
+    """The persona's fallback models in order, skipping any that were retired."""
+    return [link.model for link in persona.fallback_links.select_related("model").order_by("position") if link.model.is_active]
+
+
+def _set_fallback_models(persona, configs) -> None:
+    from nucleus.models import PersonaFallbackModel
+    persona.fallback_links.all().delete()
+    PersonaFallbackModel.objects.bulk_create(
+        [PersonaFallbackModel(persona=persona, model=config, position=position) for position, config in enumerate(configs)]
+    )
 
 
 def _resolve_mcp_servers(company, server_ids):
@@ -474,13 +574,35 @@ def get_persona(company, persona_id: str):
     )
 
 
+TOOL_LEVELS = ("auto", "ask", "off")
+
+
+def validate_tool_levels(levels) -> dict:
+    """
+    The shape nucleus stores: non-empty string keys (a capability id or
+    "<capability>/<tool>") to one of the three levels. What a key MEANS is the
+    worker's business (apps/managers/approvals.py).
+    """
+    if not isinstance(levels, dict):
+        raise ValueError("tool_levels must be an object.")
+    for key, level in levels.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("Every tool level needs a name.")
+        if level not in TOOL_LEVELS:
+            raise ValueError("A tool level is auto, ask or off.")
+    return dict(levels)
+
+
 def create_persona(company, user, data: dict):
     from nucleus.models import Persona, Project, Prompt, PromptTemplate
+    if "tool_levels" in data:
+        data["tool_levels"] = validate_tool_levels(data["tool_levels"])
 
     prompt_data = data.pop("prompt")
     project_id = data.pop("project_id")
     model_config_id = data.pop("model_config_id", None)
     advisor_id = data.pop("advisor_model_config_id", None)
+    fallback_ids = data.pop("fallback_model_config_ids", None)
     server_ids = data.pop("mcp_server_ids", None)
 
     project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
@@ -489,8 +611,9 @@ def create_persona(company, user, data: dict):
 
     model_config = _resolve_model_config(company, model_config_id)
     advisor = _resolve_model_config(company, advisor_id)
+    fallbacks = _resolve_fallback_models(company, fallback_ids)
     servers = _resolve_mcp_servers(company, server_ids)
-    _validate_persona_wiring(company, project, model_config, advisor, servers)
+    _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks)
 
     if Persona.objects.filter(project=project, name=data.get("name"), is_active=True).exists():
         raise ValueError(
@@ -520,6 +643,8 @@ def create_persona(company, user, data: dict):
     )
     if servers:
         persona.mcp_servers.set(servers)
+    if fallbacks:
+        _set_fallback_models(persona, fallbacks)
 
     template_id = prompt_data.pop("template_id", None)
     template = PromptTemplate.objects.filter(
@@ -557,6 +682,7 @@ def patch_persona(company, persona_id: str, data: dict):
     model_config_id = data.pop("model_config_id", None)
     advisor_id = data.pop("advisor_model_config_id", None)
     clear_advisor = data.pop("clear_advisor", False)
+    fallback_ids = data.pop("fallback_model_config_ids", None)   # None: not sent; []: clear
     server_ids = data.pop("mcp_server_ids", None)
 
     model_config = (
@@ -575,10 +701,15 @@ def patch_persona(company, persona_id: str, data: dict):
         else list(persona.mcp_servers.filter(is_active=True))
     )
 
-    _validate_persona_wiring(company, persona.project, model_config, advisor, servers)
+    fallbacks = (
+        _resolve_fallback_models(company, fallback_ids) if fallback_ids is not None else fallback_models_of(persona)
+    )
+    _validate_persona_wiring(company, persona.project, model_config, advisor, servers, fallbacks)
 
     persona.model = model_config
     persona.advisor_model = advisor
+    if data.get("tool_levels") is not None:
+        data["tool_levels"] = validate_tool_levels(data["tool_levels"])
     for field, value in data.items():
         if value is not None:
             setattr(persona, field, value)
@@ -586,6 +717,8 @@ def patch_persona(company, persona_id: str, data: dict):
 
     if server_ids is not None:
         persona.mcp_servers.set(servers)
+    if fallback_ids is not None:
+        _set_fallback_models(persona, fallbacks)
 
     if prompt_data and hasattr(persona, "prompt"):
         template_id = prompt_data.pop("template_id", None)
@@ -625,6 +758,122 @@ def delete_persona(company, persona_id: str) -> bool:
 
 # ── PromptTemplate ────────────────────────────────────────────────────────────
 
+# ── Routines (W4) ─────────────────────────────────────────────────────────────
+import re as _re
+
+
+ROUTINE_NAME_RE = _re.compile(r"^[a-z0-9-]{1,40}$")
+ROUTINE_CAPABILITY_RE = _re.compile(r"^(shell|filesystem|web_search|web_fetch|thinking|mcp:[0-9a-fA-F-]+)$")
+ROUTINE_INSTRUCTIONS_MAX = 8000
+
+
+def validate_routine_data(data: dict, *, partial: bool = False) -> dict:
+    """The shape a routine is stored in; raises ValueError with the reason a person can act on."""
+    out = dict(data)
+    if "name" in out or not partial:
+        name = (out.get("name") or "").strip()
+        if not ROUTINE_NAME_RE.match(name):
+            raise ValueError("A routine name is 1–40 lowercase letters, digits or hyphens — it is what people type after /.")
+        out["name"] = name
+    if "title" in out or not partial:
+        title = (out.get("title") or "").strip()
+        if not title or len(title) > 120:
+            raise ValueError("A routine needs a title of at most 120 characters.")
+        out["title"] = title
+    if "purpose" in out:
+        purpose = (out.get("purpose") or "").strip()
+        if len(purpose) > 200:
+            raise ValueError("The purpose is at most 200 characters.")
+        out["purpose"] = purpose
+    if "instructions" in out or not partial:
+        instructions = (out.get("instructions") or "").strip()
+        if not instructions or len(instructions) > ROUTINE_INSTRUCTIONS_MAX:
+            raise ValueError(f"Instructions are required and at most {ROUTINE_INSTRUCTIONS_MAX:,} characters.")
+        out["instructions"] = instructions
+    if out.get("allowed_capabilities") is not None:
+        caps = out["allowed_capabilities"]
+        if not isinstance(caps, list) or not all(isinstance(c, str) and ROUTINE_CAPABILITY_RE.match(c) for c in caps):
+            raise ValueError("allowed_capabilities is a list of capability ids: shell, filesystem, web_search, web_fetch, thinking or mcp:<server id>.")
+        out["allowed_capabilities"] = list(dict.fromkeys(caps))
+    return out
+
+
+def list_routines(project):
+    from nucleus.models import Routine
+    return list(Routine.objects.filter(project=project, is_active=True).select_related("model_config").order_by("name"))
+
+
+def get_routine(project, routine_id: str):
+    from nucleus.models import Routine
+    return Routine.objects.filter(project=project, id=routine_id, is_active=True).select_related("model_config").first()
+
+
+def get_routine_by_name(project, name: str):
+    """The routine a /token names in THIS project, or None -- routines are project-owned like personas."""
+    from nucleus.models import Routine
+    return Routine.objects.filter(project=project, name=name, is_active=True).select_related("model_config").first()
+
+
+def _routine_name_taken(project, name: str, exclude_id=None) -> bool:
+    from nucleus.models import Routine
+    qs = Routine.objects.filter(project=project, name=name, is_active=True)
+    if exclude_id:
+        qs = qs.exclude(id=exclude_id)
+    return qs.exists()
+
+
+def create_routine(company, project, user, data: dict):
+    from nucleus.models import Routine
+    data = validate_routine_data(data)
+    model_config = data.pop("model_config", None)
+    model_config_id = data.pop("model_config_id", None)
+    if model_config_id:
+        model_config = _resolve_model_config(company, model_config_id)
+    if _routine_name_taken(project, data["name"]):
+        raise ValueError("A routine named /%s already exists in this project." % data["name"])
+    return Routine.objects.create(company=company, project=project, created_by=user, model_config=model_config, **data)
+
+
+def patch_routine(company, project, routine_id: str, data: dict):
+    routine = get_routine(project, routine_id)
+    if not routine:
+        return None
+    data = validate_routine_data({k: v for k, v in data.items() if v is not None}, partial=True)
+    if data.pop("clear_model", False):
+        routine.model_config = None
+    model_config_id = data.pop("model_config_id", None)
+    if model_config_id:
+        routine.model_config = _resolve_model_config(company, model_config_id)
+    if data.pop("clear_capabilities", False):
+        routine.allowed_capabilities = None
+    if "name" in data and _routine_name_taken(project, data["name"], exclude_id=routine.id):
+        raise ValueError("A routine named /%s already exists in this project." % data["name"])
+    for field, value in data.items():
+        setattr(routine, field, value)
+    routine.save()
+    return routine
+
+
+def delete_routine(project, routine_id: str) -> bool:
+    """Soft-delete a routine someone made; a built-in stays (the route answers 409)."""
+    routine = get_routine(project, routine_id)
+    if not routine or routine.is_builtin:
+        return False
+    routine.soft_delete()
+    return True
+
+
+def seed_builtin_routines(project) -> list:
+    """The four built-ins, added by name where missing -- a project keeps its edits."""
+    from nucleus.models import Routine
+    from .builtin_routines import BUILTIN_ROUTINES
+    existing = {r.name: r for r in Routine.objects.filter(project=project, is_active=True)}
+    for spec in BUILTIN_ROUTINES:
+        if spec["name"] not in existing:
+            existing[spec["name"]] = Routine.objects.create(company=project.company, project=project, is_builtin=True, **spec)
+    return list_routines(project)
+
+
 def list_prompt_templates(company):
     from nucleus.models import PromptTemplate
     return PromptTemplate.objects.filter(
@@ -638,6 +887,33 @@ def get_ai_config(company):
     from nucleus.models import CompanyAIConfig
     config, _ = CompanyAIConfig.objects.get_or_create(company=company)
     return config
+
+
+def set_utility_model(company, user, config_id: str | None):
+    """
+    Choose (or clear, with None) the server's utility model. Returns the
+    chosen ModelConfig, or None when cleared; raises LookupError for a config
+    that is not this company's or is retired.
+    """
+    from nucleus.models import CompanyAIConfig, ModelConfig
+    config = None
+    if config_id is not None:
+        config = ModelConfig.objects.filter(company=company, id=config_id, is_active=True).first()
+        if not config:
+            raise LookupError("Model config not found.")
+    ai_config, _ = CompanyAIConfig.objects.get_or_create(company=company)
+    ai_config.utility_model = config
+    ai_config.updated_by = user
+    ai_config.save(update_fields=["utility_model", "updated_by", "updated_at"])
+    return config
+
+
+def utility_model_of(company):
+    """The company's utility model config, or None when unset or retired."""
+    from nucleus.models import CompanyAIConfig
+    ai_config = CompanyAIConfig.objects.filter(company=company).select_related("utility_model").first()
+    model = ai_config.utility_model if ai_config else None
+    return model if model and model.is_active else None
 
 
 def update_ai_config(company, user, data: dict):

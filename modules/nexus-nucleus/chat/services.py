@@ -16,13 +16,17 @@ import asyncio
 
 import httpx
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from asgiref.sync import sync_to_async
 import json
 import uuid
 from datetime import datetime, timezone as dt_timezone
-from .events import tool_activity_event
+from authn.permissions.checker import PermissionChecker
+from .events import preflight_decided_event, tool_activity_end_event, tool_activity_event, tool_approval_decided_event, tool_approval_event
+from .stop_signals import StopRequested, stop_signals, stoppable, stoppable_lines
+from .reasons import ORPHANED_RUN_REASON, WORKER_ENDED_EARLY_REASON, explain_ai_error
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +202,27 @@ def extract_output_type(message: str) -> tuple[str, str]:
 
 # ── Every @directive, parsed once, up front ─────────────────────────────────
 
+# A routine token: the FIRST standalone /name (lowercase letters, digits,
+# hyphens) -- "/etc/hosts" and "50/50" are not, and /swarm was stripped first.
+# This finds a CANDIDATE only. Whether it IS a routine is a question for the
+# project: "read the file at /tmp" and "compare /q3" are ordinary sentences, and
+# treating every such token as a routine stripped it out of the message and
+# refused the persona outright (audit, 2026-09-21).
+_ROUTINE_RE = re.compile(r"(?:(?<=\s)|^)/([a-z0-9-]+)(?=\s|$)")
+
+
+def extract_routine(message: str) -> tuple[str | None, str]:
+    """(routine name, message without that token) -- one token, the first; the rest of the text is untouched."""
+    m = _ROUTINE_RE.search(message)
+    if not m:
+        return None, message
+    before, after = message[: m.start()], message[m.end():]
+    # Only the token and one of the spaces around it go; the rest of the text stays as typed.
+    if before.endswith(" ") and after.startswith(" "):
+        after = after[1:]
+    return m.group(1), (before + after).strip()
+
+
 class MessageDirectives:
     """
     Every @directive a chat message can contain, parsed once, in one
@@ -214,6 +239,9 @@ class MessageDirectives:
         @session close/end  -- close the active session, no AI trigger
         @output_type        -- e.g. @chart, @html -- how the AI should
                                 format its reply
+        /routine-name       -- the first standalone /token (W4 Routines);
+                                resolved against the topic's project by
+                                send_message
         @PersonaName         -- one or more persona mentions (anything
                                 left over that isn't a reserved keyword)
 
@@ -232,6 +260,10 @@ class MessageDirectives:
         raw = re.sub(r'\s*/swarm\s*', ' ', raw).strip() if self.swarm else raw
         self.has_session_open, self.is_session_close, after_session = extract_session_directive(raw)
         self.output_type, self.clean_message = extract_output_type(after_session)
+        # /routine-name -- resolved by send_message in the topic's project. The
+        # token stays in clean_message until it resolves; message_without_routine
+        # is the text to use once it has.
+        self.routine_name, self.message_without_routine = extract_routine(self.clean_message)
 
         names = _MENTION_RE.findall(self.clean_message)
         self.mention_names = [n for n in names if n.lower() not in _RESERVED_MENTIONS]
@@ -240,11 +272,12 @@ class MessageDirectives:
     def has_mentions(self) -> bool:
         return bool(self.mention_names)
 
-    def message_without_mentions(self) -> str:
-        """clean_message with every @mention stripped too -- used to check
-        whether there's any actual content left to send to the AI once
-        the @PersonaName addressing is removed."""
-        return _MENTION_RE.sub("", self.clean_message).strip()
+    def message_without_mentions(self, text: str | None = None) -> str:
+        """`text` (default clean_message) with every @mention stripped too -- used
+        to check whether there's any actual content left to send to the AI once
+        the @PersonaName addressing is removed. send_message passes the text it
+        settled on, which has the routine token out of it only if it was one."""
+        return _MENTION_RE.sub("", self.clean_message if text is None else text).strip()
 
 
 # ── Centrifugo publish ─────────────────────────────────────────────────────────
@@ -372,8 +405,12 @@ async def embed_message_async(
 
 # ── AI trigger — fire-and-forget (M3 + M7) ────────────────────────────────────
 
-def create_ai_message(company, project, topic, persona, render_as: str = "text") -> dict:
-    """Pre-create a PENDING ChatMessage for the AI response."""
+def create_ai_message(company, project, topic, persona, render_as: str = "text", triggered_by=None, runbook_run: dict | None = None) -> dict:
+    """
+    Pre-create a PENDING ChatMessage for the AI response. `triggered_by` is the
+    person who called the persona (the sender, a schedule's creator, the one who
+    asked before a plan was approved): the reply is theirs to stop (W22).
+    """
     from nucleus.models import ChatMessage
 
     max_seq = (
@@ -395,6 +432,9 @@ def create_ai_message(company, project, topic, persona, render_as: str = "text")
             "persona_id": str(persona.id),
             "persona_name": persona.name,   # display name for serializer
             "render_as": render_as,
+            **({"triggered_by_id": str(triggered_by.id), "triggered_by_name": triggered_by.get_display_name()} if triggered_by is not None else {}),
+            # W6: which runbook step this reply is ({id, title, step, of}).
+            **({"runbook_run": runbook_run} if runbook_run else {}),
         },
     )
     return _serialise(msg)
@@ -405,8 +445,15 @@ def update_ai_message(
     content: str,
     render_as: str = "text",
     output_type: str = "text",
+    stopped: bool = False,
+    usage: dict | None = None,
+    activity_trail: list | None = None,
+    preflight: dict | None = None,
+    answered_by_model: str | None = None,
+    recalled: int | None = None,
+    nudges: list[str] | None = None,
 ) -> None:
-    """Update the AI message content and mark COMPLETED."""
+    """Update the AI message content and mark COMPLETED. `stopped`: the reader ended it; content is partial."""
     from nucleus.models import ChatMessage
 
     msg = ChatMessage.objects.filter(id=message_id).first()
@@ -417,6 +464,21 @@ def update_ai_message(
     metadata = dict(msg.metadata or {})
     metadata["render_as"] = render_as
     metadata["output_type"] = output_type
+    expire_open_approvals(metadata)
+    if stopped:
+        metadata["stopped"] = True
+    if usage:
+        metadata["usage"] = usage
+    if activity_trail:
+        metadata["activity_trail"] = activity_trail
+    if answered_by_model:
+        metadata["answered_by_model"] = answered_by_model
+    if recalled:
+        metadata["recalled"] = recalled
+    if nudges:
+        metadata["nudges"] = list(nudges)
+    if preflight:
+        metadata["preflight"] = preflight
 
     ChatMessage.objects.filter(id=message_id).update(
         content=content,
@@ -425,7 +487,7 @@ def update_ai_message(
     )
 
 
-def fail_ai_message(message_id: str, error: str, display_content: str | None = None) -> None:
+def fail_ai_message(message_id: str, error: str, display_content: str | None = None, activity_trail: list | None = None) -> None:
     """
     Mark the AI placeholder message FAILED instead of COMPLETED -- called
     when nexus-ai reports an AgentEvent(type="message_error") (see
@@ -444,11 +506,342 @@ def fail_ai_message(message_id: str, error: str, display_content: str | None = N
         return
     metadata = dict(msg.metadata or {})
     metadata["error_detail"] = error
+    expire_open_approvals(metadata)
+    if activity_trail:
+        metadata["activity_trail"] = activity_trail
     ChatMessage.objects.filter(id=message_id).update(
         content=display_content or "Something went wrong generating this response.",
         status=ChatMessage.Status.FAILED,
         metadata=metadata,
     )
+
+
+USAGE_FIELDS = ("prompt_tokens", "output_tokens", "context_window")
+# How many closed tool calls a reply keeps on its row: enough to audit a
+# long agentic run, small enough to ride in the message metadata.
+ACTIVITY_TRAIL_MAX = 50
+
+
+PLAN_MAX_STEPS = 12
+
+
+def parse_plan(content: str) -> dict | None:
+    """The plan a preflight reply carries, or None when the content is not one."""
+    try:
+        raw = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list):
+        return None
+    steps = []
+    for step in raw["steps"][:PLAN_MAX_STEPS]:
+        if not isinstance(step, dict) or not str(step.get("title", "")).strip():
+            continue
+        tools = step.get("tools") if isinstance(step.get("tools"), list) else []
+        steps.append({"title": str(step["title"]).strip(), "tools": [str(t) for t in tools], "writes": bool(step.get("writes"))})
+    risks = [str(r) for r in raw["risks"]] if isinstance(raw.get("risks"), list) else []
+    return {"summary": str(raw.get("summary") or "").strip(), "steps": steps, "risks": risks}
+
+
+def plan_text(plan: dict) -> str:
+    """The approved plan as the worker puts it ahead of the persona prompt."""
+    lines = [plan["summary"]] if plan.get("summary") else []
+    for i, step in enumerate(plan.get("steps", []), 1):
+        detail = ", ".join(step.get("tools") or [])
+        lines.append(f"{i}. {step['title']}" + (f" (tools: {detail})" if detail else "") + (" (writes)" if step.get("writes") else ""))
+    return "\n".join(lines)
+
+
+class PreflightError(Exception):
+    """A decision that cannot be applied; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _message_in_topic(topic, message_id):
+    """The row for a message id in this topic, or None -- also for an id that is not a UUID (a scheduled fire's)."""
+    from nucleus.models import ChatMessage
+    try:
+        uuid.UUID(str(message_id))
+    except (ValueError, TypeError):
+        return None
+    return ChatMessage.objects.select_related("sender").filter(id=message_id, topic=topic).first()
+
+
+def _claim_preflight(message_id, fields: dict) -> dict | None:
+    """
+    Move a proposal from proposed to decided, exactly once. None when someone
+    got there first.
+
+    The guard has to be part of the write: reading the status, then awaiting a
+    permission check and two more queries before writing, let a double-click
+    through twice -- and an approved plan runs with the tools back on, so twice
+    means two runs from one approval (audit, 2026-09-21).
+    """
+    from nucleus.models import ChatMessage
+
+    with transaction.atomic():
+        row = ChatMessage.objects.select_for_update().filter(id=message_id).first()
+        if not row:
+            return None
+        metadata = dict(row.metadata or {})
+        preflight = dict(metadata.get("preflight") or {})
+        if preflight.get("status") != "proposed":
+            return None
+        preflight.update(fields)
+        metadata["preflight"] = preflight
+        ChatMessage.objects.filter(id=row.id).update(metadata=metadata)
+        return preflight
+
+
+def _claim_approval(message_id, call_id: str, fields: dict) -> dict | None:
+    """
+    Move a held tool call from pending to decided, exactly once, against the row
+    as it is at that moment -- the relay may have appended another call since
+    this request read it, and a write built on the stale list would drop it.
+    """
+    from nucleus.models import ChatMessage
+
+    with transaction.atomic():
+        row = ChatMessage.objects.select_for_update().filter(id=message_id).first()
+        if not row:
+            return None
+        metadata = dict(row.metadata or {})
+        approvals = [dict(a) for a in (metadata.get("approvals") or [])]
+        record = next((a for a in approvals if a.get("call_id") == call_id), None)
+        if not record or record.get("status") != "pending":
+            return None
+        record.update(fields)
+        metadata["approvals"] = approvals
+        ChatMessage.objects.filter(id=row.id).update(metadata=metadata)
+        return record
+
+
+async def decide_preflight(*, topic, message_id: str, user, decision: str, note: str | None = None) -> dict:
+    """
+    Approve, adjust or decline a persona's proposal. Approve runs the plan with
+    the tools back on; adjust asks for another plan with the note; decline ends
+    it with a line in the topic. Once decided, a proposal stays decided.
+    """
+    from nucleus.models import ChatMessage, Persona
+
+    if decision not in ("approve", "adjust", "decline"):
+        raise PreflightError(400, "Decision must be approve, adjust or decline.")
+    msg = await sync_to_async(lambda: ChatMessage.objects.select_related("project", "company").filter(id=message_id, topic=topic).first())()
+    if not msg:
+        raise PreflightError(404, "Message not found.")
+    preflight = dict((msg.metadata or {}).get("preflight") or {})
+    if preflight.get("status") != "proposed":
+        raise PreflightError(409, "This plan has already been decided." if preflight else "This message carries no plan to decide.")
+    if not await sync_to_async(PermissionChecker.can)(user, "persona.approve_run", obj=topic):
+        raise PreflightError(403, "You don't have permission to decide a persona's plan here.")
+    persona = await sync_to_async(lambda: Persona.objects.filter(id=(msg.metadata or {}).get("persona_id"), is_active=True).first())()
+    if not persona:
+        raise PreflightError(409, "The persona behind this plan is gone.")
+    if decision == "adjust" and not (note or "").strip():
+        raise PreflightError(400, "Say what to change.")
+
+    status = {"approve": "approved", "adjust": "adjusted", "decline": "declined"}[decision]
+    claimed = await sync_to_async(_claim_preflight)(msg.id, {
+        "status": status,
+        "decided_by_id": str(user.id),
+        "decided_by_name": user.get_display_name(),
+        "decided_at": timezone.now().isoformat(),
+        "note": (note or "").strip() or None,
+    })
+    if claimed is None:
+        raise PreflightError(409, "This plan has already been decided.")
+    preflight = claimed
+    channel = topic_channel(str(topic.id))
+    await publish_async(channel, preflight_decided_event(str(msg.id), preflight))
+
+    # The run is the asker's (W22): the sender of the message that asked, or the
+    # decider when that message cannot be found.
+    asked = await sync_to_async(_message_in_topic)(topic, preflight.get("user_message_id"))
+    common = dict(company=msg.company, project=msg.project, topic=topic, persona=persona, topic_id=str(topic.id),
+                  user_message_id=preflight.get("user_message_id") or "", output_type="auto",
+                  triggered_by=(asked.sender if asked and asked.sender else user))
+    if decision == "approve":
+        asyncio.create_task(trigger_ai_response_async(user_message=preflight.get("user_message") or "", approved_plan=plan_text(preflight["plan"]), **common))
+    elif decision == "adjust":
+        asyncio.create_task(trigger_ai_response_async(user_message=note.strip(), **common))
+    else:
+        line = await sync_to_async(save_system_message)(msg.company, msg.project, topic, f"@{persona.name}'s plan was declined by {user.get_display_name()}.")
+        await publish_async(channel, line)
+    return {"status": status, "preflight": preflight}
+
+
+# ── Tool approvals (W16) ──────────────────────────────────────────────────────
+# A tool call the worker holds for a person lives on the reply row under
+# metadata.approvals -- stored the moment the worker asks (it polls nucleus
+# for the answer while the run stays open), decided under persona.approve_run
+# at the topic, and expired with the reply if nobody answered in time.
+APPROVALS_MAX = 20
+APPROVAL_PREVIEW_CHARS = 300
+
+
+class ApprovalError(Exception):
+    """A decision that cannot be applied; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def approval_record(approval: dict) -> dict | None:
+    """The row's record for a worker approval_requested payload; None when it names no call."""
+    call_id = (approval.get("call_id") or "").strip()
+    tool = (approval.get("tool") or "").strip()
+    if not call_id or not tool:
+        return None
+    return {
+        "call_id": call_id,
+        "tool": tool,
+        "capability_id": (approval.get("capability_id") or "").strip(),
+        "args_preview": (approval.get("args_preview") or "")[:APPROVAL_PREVIEW_CHARS],
+        "status": "pending",
+        "requested_at": timezone.now().isoformat(),
+    }
+
+
+def record_approval_request(message_id: str, approval: dict) -> dict | None:
+    """Store a pending approval on the reply row NOW, mid-run, so the worker's poll can find it."""
+    from nucleus.models import ChatMessage
+    record = approval_record(approval)
+    if not record:
+        return None
+    # Under the row lock: a decision arriving at the same moment reads and
+    # writes the same JSON, and whichever wrote last used to erase the other.
+    with transaction.atomic():
+        msg = ChatMessage.objects.select_for_update().filter(id=message_id).first()
+        if not msg:
+            return None
+        metadata = dict(msg.metadata or {})
+        approvals = [a for a in (metadata.get("approvals") or []) if a.get("call_id") != record["call_id"]]
+        approvals.append(record)
+        metadata["approvals"] = approvals[-APPROVALS_MAX:]
+        ChatMessage.objects.filter(id=message_id).update(metadata=metadata)
+    return record
+
+
+def expire_open_approvals(metadata: dict) -> None:
+    """A reply that ended leaves no call waiting: pending becomes expired, decisions stay."""
+    approvals = metadata.get("approvals")
+    if approvals:
+        metadata["approvals"] = [{**a, "status": "expired"} if a.get("status") == "pending" else a for a in approvals]
+
+
+async def approval_state(message_id: str, call_id: str) -> dict:
+    """
+    What the worker's poll is told: allowed / denied once someone decided,
+    stopped once the reader ended the reply, pending otherwise -- including
+    for a call the relay has not stored yet, which is a race, not an answer.
+    """
+    from nucleus.models import ChatMessage
+    if await stop_signals().is_stop_requested(message_id):
+        return {"status": "stopped", "always": False}
+    msg = await sync_to_async(lambda: ChatMessage.objects.filter(id=message_id).only("metadata").first())()
+    for record in ((msg.metadata or {}).get("approvals") or []) if msg else []:
+        if record.get("call_id") == call_id and record.get("status") in ("allowed", "denied"):
+            return {"status": record["status"], "always": bool(record.get("always"))}
+    return {"status": "pending", "always": False}
+
+
+async def decide_tool_approval(*, topic, message_id: str, call_id: str, user, decision: str, always: bool = False) -> dict:
+    """
+    Allow or deny a held tool call, under persona.approve_run at the topic.
+    `always` also writes "<capability>/<tool>": "auto" onto the persona, which
+    is persona configuration and so needs persona.update on the project too.
+    Once decided, a call stays decided.
+    """
+    from nucleus.models import ChatMessage, Persona
+
+    if decision not in ("allow", "deny"):
+        raise ApprovalError(400, "Decision must be allow or deny.")
+    msg = await sync_to_async(lambda: ChatMessage.objects.select_related("project").filter(id=message_id, topic=topic).first())()
+    if not msg:
+        raise ApprovalError(404, "Message not found.")
+    metadata = dict(msg.metadata or {})
+    approvals = list(metadata.get("approvals") or [])
+    record = next((a for a in approvals if a.get("call_id") == call_id), None)
+    if not record:
+        raise ApprovalError(404, "This message holds no such tool call.")
+    if record.get("status") != "pending":
+        raise ApprovalError(409, "This call has already been decided.")
+    if not await sync_to_async(PermissionChecker.can)(user, "persona.approve_run", obj=topic):
+        raise ApprovalError(403, "You don't have permission to decide a persona's tool calls here.")
+    if always and not await sync_to_async(PermissionChecker.can)(user, "persona.update", obj=msg.project):
+        raise ApprovalError(403, "Allowing a tool always changes the persona, which needs the right to edit personas.")
+
+    if always and decision == "allow":
+        persona = await sync_to_async(lambda: Persona.objects.filter(id=metadata.get("persona_id"), is_active=True).first())()
+        if persona:
+            levels = dict(persona.tool_levels or {})
+            levels[f"{record.get('capability_id') or ''}/{record['tool']}"] = "auto"
+            persona.tool_levels = levels
+            await sync_to_async(persona.save)(update_fields=["tool_levels"])
+
+    claimed = await sync_to_async(_claim_approval)(msg.id, call_id, {
+        "status": "allowed" if decision == "allow" else "denied",
+        "always": bool(always and decision == "allow"),
+        "decided_by_id": str(user.id),
+        "decided_by_name": user.get_display_name(),
+        "decided_at": timezone.now().isoformat(),
+    })
+    if claimed is None:
+        raise ApprovalError(409, "This call has already been decided.")
+    record = claimed
+    await publish_async(topic_channel(str(topic.id)), tool_approval_decided_event(str(msg.id), record))
+    return {"status": record["status"], "approval": record}
+
+
+def remember_tool_call(trail: list, event: dict) -> None:
+    """Append a worker tool_call_end to a reply's trail, keeping the newest ACTIVITY_TRAIL_MAX."""
+    result = event.get("tool_result") or {}
+    name = (result.get("name") or "").strip()
+    if not name:
+        return
+    trail.append({
+        "tool": name,
+        "ok": bool(result.get("ok")),
+        "duration_ms": int(result.get("duration_ms") or 0),
+        "preview": result.get("preview"),
+        "error": result.get("error"),
+        # The page a web tool went to -- the app opens it beside the chat (W9).
+        "url": result.get("url"),
+    })
+    del trail[:-ACTIVITY_TRAIL_MAX]
+
+
+def usage_from(event: dict) -> dict | None:
+    """The worker's usage on a message_done event, or None when it sent nothing."""
+    values = {k: event.get(k) for k in USAGE_FIELDS}
+    return values if any(v is not None for v in values.values()) else None
+
+
+def with_usage(payload: dict, usage: dict | None) -> dict:
+    """The three usage fields on a published message_done -- always present, null when unknown."""
+    payload.update({k: (usage or {}).get(k) for k in USAGE_FIELDS})
+    return payload
+
+
+async def end_stopped_reply(channel: str, msg_id: str, content: str, activity_trail: list | None = None, nudges: list[str] | None = None) -> None:
+    """The reader stopped the run: keep what streamed, tell the topic, drop the signal."""
+    try:
+        await sync_to_async(update_ai_message)(msg_id, content, stopped=True, activity_trail=activity_trail, nudges=nudges)
+    except Exception as exc:
+        logger.warning("[trigger] failed to save stopped message %s: %s", msg_id, exc)
+    await publish_async(channel, with_usage({
+        "type": "message_done",
+        "id": msg_id,
+        "content": content,
+        "output_type": "text",
+        "render_as": "text",
+        "stopped": True,  # the reader ended it; content is what streamed
+    }, None))
+    await stop_signals().clear(msg_id)
 
 
 async def trigger_ai_response_async(
@@ -461,9 +854,17 @@ async def trigger_ai_response_async(
     user_message_id: str,
     topic_id: str,
     output_type: str = "auto",
-) -> None:
+    approved_plan: str | None = None,
+    interactive: bool = True,
+    routine=None,
+    triggered_by=None,
+    step_context: str | None = None,
+    runbook_run: dict | None = None,
+) -> str | None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
+    Returns the reply's message id (None when no reply row could be made) --
+    a runbook (W6) awaits it and reads the row for the step's outcome.
 
     nexus-nucleus's job here is orchestration only -- create the placeholder
     message, tell nexus-ai which persona + topic + message to respond to,
@@ -506,10 +907,10 @@ async def trigger_ai_response_async(
     _fail_ai_message = sync_to_async(fail_ai_message)
 
     try:
-        ai_msg = await _create_ai_message(company, project, topic, persona)
+        ai_msg = await _create_ai_message(company, project, topic, persona, triggered_by=triggered_by, runbook_run=runbook_run)
     except Exception as exc:
         logger.warning("[trigger] failed to create AI message: %s", exc)
-        return
+        return None
 
     msg_id = ai_msg["id"]
     channel = topic_channel(topic_id)
@@ -524,6 +925,9 @@ async def trigger_ai_response_async(
         "sender_avatar": ai_msg["sender_avatar"],  # #148 -- already in _serialise()'s dict
         "sequence": ai_msg["sequence"],
         "created_at": now,
+        "triggered_by_id": ai_msg.get("triggered_by_id"),  # whose reply this is (W22)
+        "triggered_by_name": ai_msg.get("triggered_by_name"),
+        "runbook_run": ai_msg.get("runbook_run"),  # which runbook step this is (W6)
     })
 
     # 3. Build the minimal TriggerJob payload -- nexus-ai resolves persona/
@@ -536,8 +940,17 @@ async def trigger_ai_response_async(
     #    they're equivalent risks silently breaking RAG/attached-file search.
     #    Left as a separate, explicitly flagged follow-up -- see #131.
 
-    # _build_context_sources does sync ORM queries — must be wrapped for async context
-    context_sources = await sync_to_async(_build_context_sources)(topic, company)
+    # _build_context_sources does sync ORM queries — must be wrapped for async context.
+    # Guarded: this sits between message_start and the streaming try, and this
+    # whole function runs as a fire-and-forget task nobody awaits — a raise here
+    # left a PENDING row and a spinner with no terminal event at all (audit,
+    # 2026-09-21). Context is an addition to the prompt, so losing it is worth
+    # far less than losing the reply.
+    try:
+        context_sources = await sync_to_async(_build_context_sources)(topic, company, persona)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[trigger] context sources unavailable for msg %s: %s", msg_id, exc)
+        context_sources = []
 
     job_payload = {
         "job_id": str(uuid.uuid4()),
@@ -548,6 +961,18 @@ async def trigger_ai_response_async(
         "message": user_message,
         "context_sources": context_sources,
         "output_type": output_type,  # M7: "auto" | "chart" | "code" | "terminal" | ...
+        # Preflight: a gated persona plans first when nobody has approved a plan
+        # yet -- only for interactive turns (a schedule has nobody to ask).
+        "preflight": bool(interactive and persona.acts_after_approval and not approved_plan),
+        "approved_plan": approved_plan,
+        # Tool approvals: an Ask tool may wait for a person only when one is
+        # watching (a chat turn); a schedule refuses it at once.
+        "interactive": bool(interactive),
+        # Routines (W4): the team method this reply runs with; the worker
+        # fetches it and applies its instructions, tool narrowing and model.
+        "routine_id": str(routine.id) if routine is not None else None,
+        # Runbooks (W6): the previous step's reply, for this step to build on.
+        "step_context": step_context,
     }
 
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
@@ -558,10 +983,19 @@ async def trigger_ai_response_async(
     embed_description: str | None = None
     ai_error: str | None = None
     ai_error_code: str | None = None
+    usage: dict | None = None
+    answered_by_model: str | None = None
+    recalled: int | None = None
+    nudges_taken: list[str] = []
+    activity_trail: list = []
+    stopped = False
+
+    async def should_stop() -> bool:
+        return await stop_signals().is_stop_requested(msg_id)
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
+            request = client.build_request(
                 "POST",
                 f"{nexus_ai_url}/api/v1/trigger/",
                 json=job_payload,
@@ -569,14 +1003,21 @@ async def trigger_ai_response_async(
                     "X-Internal-Key": internal_key,
                     "Content-Type": "application/json",
                 },
-            ) as response:
+            )
+            # The worker does its own setup before the first byte comes back;
+            # a Stop must land during that wait too, not only once lines flow.
+            response = await stoppable(client.send(request, stream=True), should_stop)
+            try:
                 if response.status_code != 200:
                     body = await response.aread()
                     raise RuntimeError(
                         f"nexus-ai /trigger/ returned {response.status_code}: {body.decode()[:300]}"
                     )
 
-                async for line in response.aiter_lines():
+                # The reader may click Stop at any moment, including while the
+                # worker is silent; leaving the stream closes the connection,
+                # which cancels the worker's generator and its model call.
+                async for line in stoppable_lines(response.aiter_lines(), should_stop):
                     if not line.startswith("data: "):
                         continue
                     raw = line[6:].strip()
@@ -593,6 +1034,29 @@ async def trigger_ai_response_async(
                             activity = tool_activity_event(msg_id, event)
                             if activity:
                                 await publish_async(channel, activity)
+
+                        elif event_type == "tool_call_end":
+                            # How the call went -- closes the row above and is
+                            # kept on the message so history shows the trail.
+                            ended = tool_activity_end_event(msg_id, event)
+                            if ended:
+                                await publish_async(channel, ended)
+                            remember_tool_call(activity_trail, event)
+
+                        elif event_type == "nudge_taken":
+                            # The caller added to the running reply and the
+                            # persona took it at its next step (W8).
+                            text = (event.get("nudge") or "").strip()
+                            if text:
+                                nudges_taken.append(text)
+                                await publish_async(channel, {"type": "nudge_taken", "id": msg_id, "text": text})
+
+                        elif event_type == "approval_requested":
+                            # The worker holds a tool call for a person and
+                            # polls for the answer: store it now, tell the topic.
+                            record = await sync_to_async(record_approval_request)(msg_id, event.get("approval") or {})
+                            if record:
+                                await publish_async(channel, tool_approval_event(msg_id, record))
 
                         elif event_type == "message_delta":
                             delta = event.get("delta") or ""
@@ -612,6 +1076,11 @@ async def trigger_ai_response_async(
                             final_clean_content = event.get("content")
                             # M8: plain-text description for html/form/terminal embedding
                             embed_description = event.get("embed_description")
+                            usage = usage_from(event)
+                            # "<model> (fallback)" when the persona's own model could not answer.
+                            answered_by_model = event.get("answered_by_model") or None
+                            # How many entries the reply recorded in the project's Recall (W5).
+                            recalled = int(event.get("recalled") or 0) or None
                             break
 
                         elif event_type == "message_error":
@@ -627,9 +1096,26 @@ async def trigger_ai_response_async(
 
                     except (json.JSONDecodeError, KeyError):
                         continue
+            finally:
+                await response.aclose()
 
+    except StopRequested:
+        stopped = True
     except Exception as exc:
-        logger.warning("[trigger] streaming error for msg %s: %s", msg_id, exc)
+        # Transport errors often carry no text (httpx.ReadError('')): the class
+        # name is what says "connection", both in the log and to the categoriser.
+        logger.warning("[trigger] streaming error for msg %s: %s: %s", msg_id, type(exc).__name__, exc)
+        ai_error = ai_error or f"streaming error: {type(exc).__name__}: {exc}"
+
+    if stopped:
+        await end_stopped_reply(channel, msg_id, "".join(streamed_content), activity_trail, nudges=nudges_taken)
+        await repost_untaken_nudges(company, project, topic, msg_id, channel)
+        return msg_id  # nothing complete to embed
+
+    # The stream ended with neither message_done nor message_error: the worker
+    # went away mid-reply. Saying so beats a bubble that goes quiet forever.
+    if not ai_error and final_clean_content is None:
+        ai_error = "worker ended the stream before it finished"
 
     # Use nexus-ai's clean content if available, else fall back to streamed
     save_content = (
@@ -638,33 +1124,56 @@ async def trigger_ai_response_async(
         else "".join(streamed_content)
     )
 
+    # A preflight reply is a proposal for a person to decide; one that is not
+    # a plan at all is kept as ordinary text rather than a card with no plan.
+    preflight = None
+    if final_output_type == "preflight" and not ai_error:
+        plan = parse_plan(save_content)
+        if plan:
+            preflight = {"status": "proposed", "plan": plan, "user_message": user_message, "user_message_id": user_message_id}
+        else:
+            final_output_type, final_render_as = "text", "text"
+
     # 5. Save full content to DB + publish message_done (or FAILED + message_error)
+    # What the reader sees: the reauth prompt verbatim (it is written for
+    # them), otherwise the categorised sentence — never the raw error.
+    display_error = (ai_error if ai_error_code == "mcp_reauth_required" else explain_ai_error(ai_error)) if ai_error else None
     try:
         if ai_error:
-            display = ai_error if ai_error_code == "mcp_reauth_required" else None
-            await _fail_ai_message(msg_id, ai_error, display)
+            await _fail_ai_message(msg_id, ai_error, display_error, activity_trail)
         else:
             await _update_ai_message(
                 msg_id,
                 save_content,
                 render_as=final_render_as,
                 output_type=final_output_type,
+                usage=usage,
+                activity_trail=activity_trail,
+                preflight=preflight,
+                answered_by_model=answered_by_model,
+                recalled=recalled,
+                nudges=nudges_taken,
             )
     except Exception as exc:
         logger.warning("[trigger] failed to update AI message %s: %s", msg_id, exc)
 
-    await publish_async(channel, {
+    await publish_async(channel, with_usage({
         "type": "message_error" if ai_error else "message_done",
         "id": msg_id,
         # Same friendly copy as fail_ai_message()'s DB write -- the raw
         # exception text (ai_error) stays server-side only (logged above +
         # stored in ChatMessage.metadata.error_detail), never shipped to
         # the browser over Centrifugo.
-            "content": (ai_error if ai_error_code == "mcp_reauth_required"
-                else "Something went wrong generating this response.") if ai_error else save_content,
+            "content": display_error if ai_error else save_content,
         "output_type": final_output_type,   # M7: e.g. "chart"
         "render_as": final_render_as,        # M7: e.g. "html"
-    })
+        "stopped": False,                    # a stopped run ends in end_stopped_reply()
+        "preflight": preflight,              # the proposal, so the card can be decided without a reload
+        "answered_by_model": answered_by_model,
+        "recalled": recalled or 0,
+    }, usage))
+    # A nudge the persona never reached is a message now, not a lost word.
+    await repost_untaken_nudges(company, project, topic, msg_id, channel)
 
     # M8: Embed AI response — smart content selection
     # text/code → embed full response; html/form/terminal → embed description only
@@ -692,6 +1201,7 @@ async def trigger_ai_response_async(
             content=embed_content,
             created_at=now,
         ))
+    return msg_id
 
 async def trigger_ai_swarm_response_async(
     *,
@@ -703,6 +1213,7 @@ async def trigger_ai_swarm_response_async(
     user_message_id: str,
     topic_id: str,
     output_type: str = "auto",
+    triggered_by=None,
 ) -> None:
     """
     Fire-and-forget: trigger nexus-ai to generate a persona response.
@@ -749,7 +1260,7 @@ async def trigger_ai_swarm_response_async(
 
     try:
         persona = personas[0]
-        ai_msg = await _create_ai_message(company, project, topic, persona)
+        ai_msg = await _create_ai_message(company, project, topic, persona, triggered_by=triggered_by)
     except Exception as exc:
         logger.warning("[trigger] failed to create AI message: %s", exc)
         return
@@ -767,6 +1278,9 @@ async def trigger_ai_swarm_response_async(
         "sender_avatar": ai_msg["sender_avatar"],  # #148 -- already in _serialise()'s dict
         "sequence": ai_msg["sequence"],
         "created_at": now,
+        "triggered_by_id": ai_msg.get("triggered_by_id"),  # whose reply this is (W22)
+        "triggered_by_name": ai_msg.get("triggered_by_name"),
+        "runbook_run": ai_msg.get("runbook_run"),  # which runbook step this is (W6)
     })
 
     # 3. Build the minimal TriggerJob payload -- nexus-ai resolves persona/
@@ -779,13 +1293,25 @@ async def trigger_ai_swarm_response_async(
     #    they're equivalent risks silently breaking RAG/attached-file search.
     #    Left as a separate, explicitly flagged follow-up -- see #131.
 
-    # _build_context_sources does sync ORM queries — must be wrapped for async context
-    context_sources = await sync_to_async(_build_context_sources)(topic, company)
+    # _build_context_sources does sync ORM queries — must be wrapped for async context.
+    # The first persona decides whether Recall is in the prompt: every hop shares
+    # one job, and a persona with Recall off must not get it because it was
+    # mentioned alongside someone who has it on (audit, 2026-09-21). Guarded for
+    # the same reason as the single path: this runs unawaited, after the swarm's
+    # message_start, so a raise here would leave a spinner with no end.
+    try:
+        context_sources = await sync_to_async(_build_context_sources)(topic, company, personas[0] if personas else None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[swarm] context sources unavailable for msg %s: %s", msg_id, exc)
+        context_sources = []
 
     job_payload = {
         "job_id": str(uuid.uuid4()),
         "msg_id": msg_id,
-        "personas": [[str(persona.id), persona.name, persona.description] for persona in personas],
+        # description is nullable, and the worker's schema is list[list[str]]: a
+        # persona created without one used to 422 the whole swarm, which ended as
+        # a spinner that never resolved (audit, 2026-09-21).
+        "personas": [[str(persona.id), persona.name, persona.description or ""] for persona in personas],
         "topic_id": topic_id,
         "user_message_id": user_message_id,
         "message": user_message,
@@ -796,11 +1322,19 @@ async def trigger_ai_swarm_response_async(
     # 4. Stream from nexus-ai, relay tokens to Centrifugo
     active_msg_id = msg_id
     streamed_contents: dict[str, list[str]] = {msg_id: []}
+    trails: dict[str, list] = {msg_id: []}  # one activity trail per (sub-)message
     ai_error: str | None = None
+    stopped = False
+
+    async def should_stop() -> bool:
+        signals = stop_signals()
+        if await signals.is_stop_requested(active_msg_id):
+            return True
+        return active_msg_id != msg_id and await signals.is_stop_requested(msg_id)
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
+            request = client.build_request(
                 "POST",
                 f"{nexus_ai_url}/api/v1/trigger/swarm/",
                 json=job_payload,
@@ -808,14 +1342,20 @@ async def trigger_ai_swarm_response_async(
                     "X-Internal-Key": internal_key,
                     "Content-Type": "application/json",
                 },
-            ) as response:
+            )
+            # The worker does its own setup before the first byte comes back;
+            # a Stop must land during that wait too, not only once lines flow.
+            response = await stoppable(client.send(request, stream=True), should_stop)
+            try:
                 if response.status_code != 200:
                     body = await response.aread()
                     raise RuntimeError(
                         f"nexus-ai /trigger/ returned {response.status_code}: {body.decode()[:300]}"
                     )
 
-                async for line in response.aiter_lines():
+                # As in the single relay. A Stop can land on the root bubble
+                # or on the delegate currently streaming; either ends the run.
+                async for line in stoppable_lines(response.aiter_lines(), should_stop):
                     if not line.startswith("data: "):
                         continue
                     raw = line[6:].strip()
@@ -834,7 +1374,7 @@ async def trigger_ai_swarm_response_async(
                                 p_obj = await sync_to_async(lambda: Persona.objects.filter(id=persona_id).first())()
                                 if not p_obj:
                                     p_obj = personas[0]
-                                new_ai_msg = await _create_ai_message(company, project, topic, p_obj)
+                                new_ai_msg = await _create_ai_message(company, project, topic, p_obj, triggered_by=triggered_by)
                                 current_id = new_ai_msg["id"]
                                 event.update({
                                     "id": current_id,
@@ -848,6 +1388,7 @@ async def trigger_ai_swarm_response_async(
                                 
                             active_msg_id = current_id
                             streamed_contents[current_id] = []
+                            trails[current_id] = []
                             await publish_async(channel, event)
 
                         elif event_type == "message_delta":
@@ -867,15 +1408,20 @@ async def trigger_ai_swarm_response_async(
                             final_output_type = event.get("output_type") or "text"
                             final_render_as = event.get("render_as") or "text"
                             embed_description = event.get("embed_description")
-                            
+                            hop_usage = usage_from(event)
+
                             await _update_ai_message(
                                 active_msg_id,
                                 save_content,
                                 render_as=final_render_as,
                                 output_type=final_output_type,
+                                usage=hop_usage,
+                                activity_trail=trails.get(active_msg_id),
+                                answered_by_model=event.get("answered_by_model") or None,
+                                recalled=int(event.get("recalled") or 0) or None,
                             )
                             event["id"] = active_msg_id
-                            await publish_async(channel, event)
+                            await publish_async(channel, with_usage(event, hop_usage))
                             
                             # M8: Embed AI response
                             _TEXT_EMBEDDABLE = {"text", "code", "auto"}
@@ -909,6 +1455,12 @@ async def trigger_ai_swarm_response_async(
                             if activity:
                                 await publish_async(channel, activity)
 
+                        elif event_type == "tool_call_end":
+                            ended = tool_activity_end_event(active_msg_id, event)
+                            if ended:
+                                await publish_async(channel, ended)
+                            remember_tool_call(trails.setdefault(active_msg_id, []), event)
+
                         elif event_type == "swarm_transition":
                             event["id"] = active_msg_id
                             await publish_async(channel, event)
@@ -919,7 +1471,7 @@ async def trigger_ai_swarm_response_async(
                                 "[trigger] nexus-ai reported error for msg %s: %s",
                                 active_msg_id, ai_error,
                             )
-                            await _fail_ai_message(active_msg_id, ai_error)
+                            await _fail_ai_message(active_msg_id, ai_error, None, trails.get(active_msg_id))
                             # The single path publishes this; the swarm path used
                             # to fail silently, leaving the client to guess from
                             # stall detection. Same friendly copy, same shape --
@@ -933,9 +1485,35 @@ async def trigger_ai_swarm_response_async(
 
                     except (json.JSONDecodeError, KeyError):
                         continue
+            finally:
+                await response.aclose()
 
+    except StopRequested:
+        stopped = True
     except Exception as exc:
-        logger.warning("[trigger] streaming error for msg %s: %s", active_msg_id, exc)
+        logger.warning("[trigger] streaming error for msg %s: %s: %s", active_msg_id, type(exc).__name__, exc)
+        ai_error = ai_error or f"streaming error: {type(exc).__name__}: {exc}"
+
+    if stopped:
+        await end_stopped_reply(channel, active_msg_id, "".join(streamed_contents.get(active_msg_id, [])), trails.get(active_msg_id))
+        if active_msg_id != msg_id:
+            await stop_signals().clear(msg_id)
+    elif ai_error:
+        # Without this the run ended with no terminal event at all: the bubble
+        # span for 90 s and then read as stalled (audit, 2026-09-21).
+        display_error = explain_ai_error(ai_error)
+        await sync_to_async(fail_ai_message)(active_msg_id, ai_error, display_error, trails.get(active_msg_id))
+        await publish_async(channel, {
+            "type": "message_error", "id": active_msg_id, "content": display_error,
+            "output_type": "text", "render_as": "text", "stopped": False,
+        })
+    # A nudge the swarm never reached is a message, not a lost word — the single
+    # path has done this since W8; this one forgot.
+    await repost_untaken_nudges(company, project, topic, active_msg_id, channel)
+    if active_msg_id != msg_id:
+        await repost_untaken_nudges(company, project, topic, msg_id, channel)
+
+
 # ── Read messages ──────────────────────────────────────────────────────────────
 
 def list_messages(topic_id: str, limit: int = 100, before_sequence: int = None) -> list[dict]:
@@ -952,12 +1530,37 @@ def list_messages(topic_id: str, limit: int = 100, before_sequence: int = None) 
     """
     from nucleus.models import ChatMessage
 
+    reap_orphaned_replies(topic_id)
+
     qs = ChatMessage.objects.filter(topic_id=topic_id, is_active=True)
     if before_sequence is not None:
         qs = qs.filter(sequence__lt=before_sequence)
 
     qs = qs.select_related("sender").order_by("-sequence")[:limit]
     return [_serialise(m) for m in reversed(list(qs))]
+
+
+ORPHAN_AFTER_SECONDS = 180
+
+
+def reap_orphaned_replies(topic_id: str, older_than_seconds: int = ORPHAN_AFTER_SECONDS) -> list[str]:
+    """
+    A persona reply still PENDING minutes after it started has no relay left
+    to finish it -- nucleus restarted (or was redeployed) mid-run. Fail it
+    with that reason so a reader sees why instead of a bubble that never
+    ends. Done lazily, when history is read or a stop is asked for; returns
+    the ids it failed so the caller can publish message_error for each.
+    """
+    from nucleus.models import ChatMessage
+
+    cutoff = timezone.now() - timedelta(seconds=older_than_seconds)
+    orphans = list(
+        ChatMessage.objects.filter(topic_id=topic_id, status=ChatMessage.Status.PENDING, created_at__lt=cutoff, metadata__has_key="persona_id")
+        .values_list("id", flat=True)
+    )
+    for msg_id in orphans:
+        fail_ai_message(str(msg_id), "orphaned: no relay finished this reply", ORPHANED_RUN_REASON)
+    return [str(i) for i in orphans]
 
 
 # ── Write messages ─────────────────────────────────────────────────────────────
@@ -1010,12 +1613,13 @@ def save_user_message(company, project, topic, user, content: str) -> dict:
 
 # ── Context sources for TriggerJob ────────────────────────────────────────────
 
-def _build_context_sources(topic, company) -> list[dict]:
+def _build_context_sources(topic, company, persona=None) -> list[dict]:
     """
     Build the context_sources list for TriggerJob.
 
     Always includes a ChatContext ref (semantic search over past messages).
-    Plus any file/web sources attached to the topic that are ready.
+    Plus any file/web sources attached to the topic that are ready, and the
+    project's Recall (W5) unless the persona has recall off.
     """
     sources = []
 
@@ -1042,6 +1646,15 @@ def _build_context_sources(topic, company) -> list[dict]:
             "collection_id": src.collection_id,
         })
 
+    # 3. Recall -- what the team's personas recorded about the project (W5).
+    if persona is None or persona.recall_enabled:
+        sources.append({
+            "source_id": str(topic.project_id),
+            "type": "recall",
+            "label": "Recall",
+            "collection_id": f"company_{company.id}_recall",
+        })
+
     return sources
 
 
@@ -1064,6 +1677,16 @@ def _serialise(msg) -> dict:
         "content": msg.content or "",
         "render_as": metadata.get("render_as", "text"),    # M7: renderer hint for frontend
         "output_type": metadata.get("output_type", "text"), # M7: semantic type name
+        "stopped": bool(metadata.get("stopped")),           # ended by the reader; partial
+        "status": msg.status,                                # pending | completed | failed
+        # Team AI operations -- reserved with defaults, filled as each lands.
+        "activity_trail": metadata.get("activity_trail") or [],
+        "preflight": metadata.get("preflight"),
+        "approvals": metadata.get("approvals") or [],
+        "answered_by_model": metadata.get("answered_by_model"),
+        "recalled": int(metadata.get("recalled") or 0),
+        "nudges": metadata.get("nudges") or [],
+        "usage": metadata.get("usage"),
         "sender_name": sender_name,
         "sender_id": str(msg.sender_id) if msg.sender_id else None,
         "sender_avatar": msg.sender.get_avatar_url() if msg.sender else None,  # #148
@@ -1073,6 +1696,78 @@ def _serialise(msg) -> dict:
         # over time (e.g. a deleted-and-recreated "Nova") be told apart, even
         # though sender_name alone can't distinguish them.
         "persona_id": metadata.get("persona_id"),
+        # Whose reply this is -- the person who called the persona (W22); None
+        # for human/system messages and for replies from before it was recorded.
+        "triggered_by_id": metadata.get("triggered_by_id"),
+        "triggered_by_name": metadata.get("triggered_by_name"),
+        # Which runbook step this reply is -- {id, title, step, of} -- or None (W6).
+        "runbook_run": metadata.get("runbook_run"),
         "sequence": msg.sequence,
         "created_at": msg.created_at.isoformat(),
     }
+
+
+def request_nudge_for_message(topic, message_id: str, user) -> str:
+    """
+    Whether `user` may add to a reply that is still running here (W8 Nudge):
+    "nudging", or "not_found" / "finished" / "not_owner" as for a stop -- a
+    reply is its caller's to steer. Sync; the caller wraps it.
+    """
+    from nucleus.models import ChatMessage
+
+    msg = ChatMessage.objects.filter(id=message_id, topic=topic).first()
+    if not msg or not (msg.metadata or {}).get("persona_id"):
+        return "not_found"
+    if msg.status != ChatMessage.Status.PENDING:
+        return "finished"
+    owner_id = (msg.metadata or {}).get("triggered_by_id")
+    if owner_id and owner_id != str(user.id):
+        return "not_owner"
+    return "nudging"
+
+
+async def repost_untaken_nudges(company, project, topic, msg_id: str, channel: str) -> int:
+    """
+    Never lost: a nudge the persona did not reach (no tool step came, the
+    reply ended or was stopped) becomes an ordinary message from the person
+    who sent it. Returns how many were posted.
+    """
+    from nucleus.models import User as _User
+    leftovers = await stop_signals().take_nudges(msg_id)
+    posted = 0
+    for nudge in leftovers:
+        user = await sync_to_async(lambda uid: _User.objects.filter(id=uid).first())(nudge.get("user_id"))
+        text = (nudge.get("text") or "").strip()
+        if not user or not text:
+            continue
+        try:
+            msg = await sync_to_async(save_user_message)(company, project, topic, user, text)
+            await publish_async(channel, msg)
+            posted += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[nudge] could not repost a nudge for %s: %s", msg_id, exc)
+    return posted
+
+
+def request_stop_for_message(topic, message_id: str, user=None) -> str:
+    """
+    Ask the relay to end a persona reply that is still streaming in this topic.
+    Returns "stopping", "not_found" (not in this topic / not a persona reply),
+    "finished" (nothing to stop), "orphaned", or "not_owner" -- a reply is its
+    caller's to stop (W22); one from before the caller was recorded keeps the
+    old rule (anyone who can read the topic). Sync; the caller wraps it.
+    """
+    from nucleus.models import ChatMessage
+
+    msg = ChatMessage.objects.filter(id=message_id, topic=topic).first()
+    if not msg or not (msg.metadata or {}).get("persona_id"):
+        return "not_found"
+    if msg.status != ChatMessage.Status.PENDING:
+        return "finished"
+    owner_id = (msg.metadata or {}).get("triggered_by_id")
+    if user is not None and owner_id and owner_id != str(user.id):
+        return "not_owner"
+    if msg.created_at < timezone.now() - timedelta(seconds=ORPHAN_AFTER_SECONDS):
+        fail_ai_message(str(msg.id), "orphaned: no relay finished this reply", ORPHANED_RUN_REASON)
+        return "orphaned"
+    return "stopping"

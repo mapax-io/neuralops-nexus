@@ -19,6 +19,13 @@ litellm
 fastembed
 numpy                    # Used by M7 cosine similarity classifier (also a fastembed dep)
 
+# ── The live browser (W-browser) ──────────────────────────────────────────────
+# A real Chromium on the server, streamed to the app: an iframe cannot show most
+# of the web (X-Frame-Options / frame-ancestors), so the only way to put the web
+# beside a chat is to run a browser and stream it. The engine itself is
+# installed in the image (see neuralops/Dockerfile, BROWSER=1), not by pip.
+playwright
+
 # ── Vector Store ──────────────────────────────────────────────────────────────
 chromadb                 # Phase 1 — swap via VectorStoreFactory
 

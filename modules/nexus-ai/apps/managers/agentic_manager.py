@@ -33,8 +33,15 @@ from apps.schemas.trigger import (
     AgentEventType,
 )
 from apps.managers import nucleus_client
-from apps.output_types import OutputTypeRegistry
+from apps.output_types import OutputTypeRegistry, resolve_output_spec
+from apps.managers.preflight import plan_turn
+from apps.managers.routines import apply_routine
+from apps.managers.runbooks import apply_step_context
+from apps.managers.fallbacks import FallbackRun
+from apps.managers.recall import remember
 from apps.output_types.markers import parse_output_markers
+from apps.output_types.recovery import finalise_reply
+from apps.managers.model_info import context_window_for
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +60,36 @@ class NewImprovedAgenticManager:
 
     async def run(self, job: TriggerJob) -> AsyncIterator[AgentEvent]:
         persona = await nucleus_client.resolve_persona(job.persona_id)
+        # Preflight: a gated persona plans first, with no tools; an approved plan
+        # runs with the tools back on (apps/managers/preflight.py).
+        persona, output_type = plan_turn(job, persona)
+        if output_type != job.output_type:
+            job = job.model_copy(update={"output_type": output_type})
+        # A routine instructs, narrows and re-models the persona for this turn
+        # only (apps/managers/routines.py) -- after the plan gate, so a
+        # preflight turn plans with the routine in view.
+        if job.routine_id:
+            persona = apply_routine(persona, await nucleus_client.resolve_routine(job.routine_id))
+        # A runbook step reads the previous step's reply (apps/managers/runbooks.py).
+        if job.step_context:
+            persona = apply_step_context(persona, job.step_context)
 
         history = await nucleus_client.fetch_history(
             topic_id=job.topic_id, exclude_message_id=job.user_message_id
         )
 
+        # The type nucleus asked for (@chart) or, failing that, what the message
+        # looks like -- or, for a pick, what the request behind the choice looked
+        # like. The spec carries both the contract the model must follow and the
+        # renderer the frontend needs -- passing the name alone was the bug this
+        # replaced.
+        resolved_type, spec = await resolve_output_spec(job, history)
+
         messages = await self.prompt_builder.build(
-            job=job, persona=persona, history=history
+            job=job,
+            persona=persona,
+            history=history,
+            output_type_instruction=spec.system_instruction if spec else None,
         )
 
         # Signal the start to the frontend
@@ -69,7 +99,13 @@ class NewImprovedAgenticManager:
         )
 
         accrued_text: list[str] = []
-        async for event in self.runner.run_stream(job, messages, persona):
+        usage: dict = {}
+        failed = False
+        # The persona's model and, when it fails before answering, its fallbacks in order.
+        run = FallbackRun(self.runner, job, messages, persona)
+        async for event in run.events():
+            if event.type == AgentEventType.ERROR.value:
+                failed = True
             match event.type:
 
                 # Accrue streamed text
@@ -79,30 +115,38 @@ class NewImprovedAgenticManager:
                 # Persist the model's intneral state when all is said and done
                 case AgentEventType.PERSIST.value:
                     internal_model_state = event.metadata.get('internal_model_state') #type: ignore
+                    usage = (event.metadata or {}).get("usage") or {}
                     continue
 
             yield event
 
         full_response_content = "".join(accrued_text)
         clean_content = full_response_content
+        final_type = resolved_type
         render_as = "text"
         embed_description = None
         if full_response_content:
-            # TODO fix this code!!!
-            clean_content, marker_type, embed_description = parse_output_markers(
-                full_response_content
+            clean_content, final_type, render_as, embed_description = finalise_reply(
+                full_response_content, resolved_type
             )
-            final_spec = OutputTypeRegistry.get(marker_type)
-            render_as = getattr(final_spec, "render_as", None) or "text"
-            embed_description = None if render_as == "text" else embed_description
+
+        # Recall (W5): what this exchange taught the team, kept by nucleus --
+        # only for a reply that actually happened.
+        recalled = await remember(job, persona, clean_content) if clean_content and not failed else 0
 
         # Signal the end to the frontend
         yield AgentEvent(
             type=AgentEventType.END,
             id=job.msg_id,
             content=clean_content,
+            output_type=final_type,
             render_as=render_as,
             embed_description=embed_description,
+            prompt_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            context_window=context_window_for(run.model),
+            answered_by_model=run.answered_by_model,
+            recalled=recalled or None,
         )
 
     async def swarm(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]: ...
@@ -221,37 +265,9 @@ class AgenticManager:
         )
 
     async def _resolve_output_type(self, job: TriggerJob) -> str:
-        """
-        Resolve the output type for this job.
-
-        Priority:
-        1. Explicit type from job (set by nexus-nucleus via @mention)
-        2. Cosine similarity classification (when output_type == "auto")
-        3. "text" default
-        """
-        from apps.output_types import OutputTypeRegistry
-
-        explicit = job.output_type
-
-        if explicit and explicit != "auto":
-            if OutputTypeRegistry.get(explicit):
-                logger.debug("[agentic] output type explicit: %s", explicit)
-                return explicit
-            logger.warning(
-                "[agentic] unknown explicit output type %r — falling back to auto",
-                explicit,
-            )
-
-        # Auto-classify
-        try:
-            from apps.output_types.classifier import classify_output_type
-
-            detected = await classify_output_type(job.message)
-            logger.debug("[agentic] output type classified: %s", detected)
-            return detected
-        except Exception as exc:
-            logger.warning("[agentic] classifier failed: %s", exc)
-            return "text"
+        """Delegates to apps.output_types.resolver — one implementation for every path."""
+        name, _ = await resolve_output_spec(job)
+        return name
 
 
 class AgenticSwarmManager:
@@ -267,32 +283,9 @@ class AgenticSwarmManager:
         self.prompt_builder = PromptBuilder()
 
     async def _resolve_output_type(self, job: TriggerSwarmJob) -> str:
-        """
-        Resolve the output type for this job.
-        """
-        from apps.output_types import OutputTypeRegistry
-
-        explicit = job.output_type
-
-        if explicit and explicit != "auto":
-            if OutputTypeRegistry.get(explicit):
-                logger.debug("[agentic] swarm output type explicit: %s", explicit)
-                return explicit
-            logger.warning(
-                "[agentic] unknown explicit output type %r — falling back to auto",
-                explicit,
-            )
-
-        # Auto-classify
-        try:
-            from apps.output_types.classifier import classify_output_type
-
-            detected = await classify_output_type(job.message)
-            logger.debug("[agentic] swarm output type classified: %s", detected)
-            return detected
-        except Exception as exc:
-            logger.warning("[agentic] classifier failed: %s", exc)
-            return "text"
+        """Delegates to apps.output_types.resolver — one implementation for every path."""
+        name, _ = await resolve_output_spec(job)
+        return name
 
     async def run(self, job: TriggerSwarmJob) -> AsyncIterator[AgentEvent]:
         history = await nucleus_client.fetch_history(
@@ -397,17 +390,16 @@ class AgenticSwarmManager:
             )
 
             agent_response_content = []
+            hop_usage: dict = {}
 
-            async for event in self.runner.run_stream(
-                job=job,
-                messages=messages,
-                persona=persona,
-                tools=injected_tools,
-            ):
+            hop_run = FallbackRun(self.runner, job, messages, persona, tools=injected_tools)
+            async for event in hop_run.events():
                 event.id = current_sub_msg_id
 
                 if event.type == "message_delta" and event.delta:
                     agent_response_content.append(event.delta)
+                if event.type == AgentEventType.PERSIST.value:
+                    hop_usage = (event.metadata or {}).get("usage") or {}
 
                 yield event
 
@@ -503,25 +495,21 @@ class AgenticSwarmManager:
                     break
 
             raw_hop = "".join(agent_response_content)
-            clean_hop, marker_type, embed_description = parse_output_markers(raw_hop)
-
-            if marker_type and OutputTypeRegistry.get(marker_type):
-                final_type = marker_type
-                final_spec = OutputTypeRegistry.get(marker_type)
-                final_render_as = final_spec.render_as if final_spec else render_as
-            else:
-                final_type = resolved_type
-                final_render_as = "text"
-                clean_hop = raw_hop
-                embed_description = None
+            # Same ending as the single path, so an unmarked chart from a
+            # swarm hop is recovered the same way.
+            clean_hop, final_type, final_render_as, embed_description = finalise_reply(raw_hop, resolved_type)
 
             yield AgentEvent(
                 type=AgentEventType.END,
                 id=current_sub_msg_id,
+                answered_by_model=hop_run.answered_by_model,
                 content=clean_hop,
                 output_type=final_type,
                 render_as=final_render_as,
                 embed_description=embed_description,
+                prompt_tokens=hop_usage.get("prompt_tokens"),
+                output_tokens=hop_usage.get("output_tokens"),
+                context_window=context_window_for(persona.model),
             )
 
             if agent_response_content:

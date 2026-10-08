@@ -47,3 +47,21 @@ class MessageEmbedResponse(BaseModel):
     collection: str                  # ChromaDB collection name used
     embedding_model: str             # Model name stored in metadata (for change detection)
     ok: bool
+
+
+class RecallEmbedRequest(BaseModel):
+    """One Recall entry (W5) to embed; the entry id is the doc id, so an edit upserts."""
+    entry_id: str
+    company_id: str
+    project_id: str
+    kind: str                        # decision | fact | preference
+    text: str
+    author_name: str | None = None
+    topic_id: str | None = None
+    created_at: str | None = None
+
+
+class RecallEmbedResponse(BaseModel):
+    entry_id: str
+    collection: str
+    ok: bool

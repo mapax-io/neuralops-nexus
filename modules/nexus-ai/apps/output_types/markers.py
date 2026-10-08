@@ -28,9 +28,14 @@ import re
 
 # ── AI-generated markers ───────────────────────────────────────────────────────
 
+# Delimiters as models actually emit them: two or three brackets either side,
+# and a closer that may be mangled or missing entirely (then the block runs to
+# the end of the text). A live reply lost its chart over one missing ">".
+# The opener must start a line: mid-sentence it is a mention of the marker,
+# not a block, and must not swallow the sentence.
 _OUTPUT_RE = re.compile(
-    r"<<<OUTPUT:(\w+)>>>\s*(.*?)\s*<<<END_OUTPUT>>>",
-    re.DOTALL,
+    r"^[ \t]*<{2,3}OUTPUT:(\w+)>{2,3}\s*(.*?)\s*(?:<{2,3}END_OUTPUT>{0,3}|\Z)",
+    re.DOTALL | re.MULTILINE,
 )
 
 _EMBED_RE = re.compile(

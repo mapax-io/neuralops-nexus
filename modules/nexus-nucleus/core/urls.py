@@ -6,11 +6,12 @@ from ninja import NinjaAPI
 
 from authn.api import me_router, roles_router, router as authn_router
 from workspace.api import router as workspace_router, members_router
-from chat.api import router as chat_router
+from chat.api import router as chat_router, search_router
 from intelligence.api import router as intelligence_router
 from internal.api import router as internal_router
 from context.api import router as context_router
 from scheduling.api import router as scheduling_router
+from scheduling.hooks_api import router as hooks_router
 
 api = NinjaAPI(
     title="NeuralOps Nucleus API",
@@ -23,10 +24,14 @@ api.add_router("/roles/", roles_router)
 api.add_router("/members/", members_router)
 api.add_router("/projects/", workspace_router)
 api.add_router("/projects/", chat_router)
+api.add_router("/search/", search_router)
 api.add_router("/", intelligence_router)
 api.add_router("/internal/", internal_router)
 api.add_router("/projects/", context_router)
 api.add_router("/projects/", scheduling_router)
+# Public on purpose (W12): the token in the path is the credential. nginx does
+# not block it -- an inbound hook is only useful from outside.
+api.add_router("/hooks/", hooks_router)
 
 urlpatterns = [
     path("admin/", admin.site.urls),

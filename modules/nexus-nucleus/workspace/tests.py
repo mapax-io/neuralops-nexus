@@ -18,7 +18,9 @@ from authn.services import auth_verify, my_permissions
 from nucleus.models import (
     ChatTopic, Channel, Company, CompanyAccess, Invitation, Project, ProjectMember, TopicParticipant,
 )
-from workspace.services import apply_grants, invite_to_project, invite_to_system, member_access, set_member_access
+from workspace.services import (
+    apply_grants, invite_to_project, invite_to_system, list_members, member_access, set_member_access,
+)
 
 User = get_user_model()
 
@@ -718,3 +720,292 @@ class TeamRouteGateTests(PeerFixture):
         apply_grants(self.company, pm, [self.whole(self.p1)], "admin", self.owner)
         self.assertEqual(self.call(pm, "post", f"/api/v1/projects/{self.p1.id}/team/", {"user_id": str(self.sara.id)}).status_code, 200)
         self.assertEqual(self.call(pm, "post", f"/api/v1/projects/{self.p2.id}/team/", {"user_id": str(self.sara.id)}).status_code, 404)
+
+
+class ListMembersTests(InviteGrantsFixture):
+    """The server-wide members list carries the name the rest of the app shows."""
+
+    def by_email(self, email):
+        return next(m for m in list_members(self.company) if m["email"] == email)
+
+    def test_a_member_is_listed_under_their_display_name(self):
+        self.sara.display_name = "Sara_K"
+        self.sara.save(update_fields=["display_name"])
+        self.assertEqual(self.by_email("sara@acme.test")["name"], "Sara_K")
+
+    def test_without_a_display_name_the_email_local_part_stands_in(self):
+        self.assertEqual(self.by_email("owner@acme.test")["name"], "owner")
+
+    def test_who_invited_them_is_named_the_same_way(self):
+        self.owner.display_name = "The_Boss"
+        self.owner.save(update_fields=["display_name"])
+        sara = self.by_email("sara@acme.test")
+        self.assertEqual(sara["invited_by"], "owner@acme.test")
+        self.assertEqual(sara["invited_by_name"], "The_Boss")
+        self.assertIsNone(self.by_email("owner@acme.test")["invited_by_name"])
+
+
+class ProjectBriefTests(InviteGrantsFixture):
+    """Project Brief: always-on instructions every persona turn in the project honours."""
+
+    def patch(self, user, project, body: dict):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            return Client().patch(
+                f"/api/v1/projects/{project.id}/", data=body, content_type="application/json", HTTP_AUTHORIZATION="Bearer t",
+            )
+
+    def get(self, user, path: str):
+        from django.test import Client
+        with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}):
+            return Client().get(path, HTTP_AUTHORIZATION="Bearer t")
+
+    def test_the_service_saves_the_brief_and_who_set_it(self):
+        from workspace.services import update_project
+        update_project(self.p1, self.owner, brief="Always answer in bullet points.\n")
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.brief, "Always answer in bullet points.")
+        self.assertEqual(self.p1.brief_updated_by, self.owner)
+        self.assertIsNotNone(self.p1.brief_updated_at)
+
+    def test_a_brief_over_the_cap_is_refused_and_nothing_changes(self):
+        from workspace.services import PROJECT_BRIEF_MAX, update_project
+        with self.assertRaises(ValueError):
+            update_project(self.p1, self.owner, brief="x" * (PROJECT_BRIEF_MAX + 1))
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.brief, "")
+        update_project(self.p1, self.owner, brief="x" * PROJECT_BRIEF_MAX)  # the cap itself is fine
+
+    def test_owner_patches_the_brief_and_reads_it_back_on_the_detail_route(self):
+        r = self.patch(self.owner, self.p1, {"brief": "Ship the Q4 launch."})
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["brief"], "Ship the Q4 launch.")
+        r = self.get(self.owner, f"/api/v1/projects/{self.p1.id}/")
+        self.assertEqual(r.json()["brief"], "Ship the Q4 launch.")
+        self.assertEqual(r.json()["brief_length"], len("Ship the Q4 launch."))
+
+    def test_the_list_ships_the_length_but_not_the_text(self):
+        self.p1.brief = "Ship the Q4 launch."
+        self.p1.save(update_fields=["brief"])
+        r = self.get(self.owner, "/api/v1/projects/")
+        row = next(p for p in r.json() if p["id"] == str(self.p1.id))
+        self.assertEqual(row["brief_length"], 19)
+        self.assertIsNone(row["brief"])
+
+    def test_a_member_cannot_edit_the_brief(self):
+        r = self.patch(self.sara, self.p1, {"brief": "nope"})
+        self.assertEqual(r.status_code, 403, r.content)
+        self.p1.refresh_from_db()
+        self.assertEqual(self.p1.brief, "")
+
+    def test_a_too_long_brief_is_a_400_with_the_reason(self):
+        from workspace.services import PROJECT_BRIEF_MAX
+        r = self.patch(self.owner, self.p1, {"brief": "x" * (PROJECT_BRIEF_MAX + 1)})
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("8,000", r.json()["detail"])
+
+
+# ── W21 Terminal ──────────────────────────────────────────────────────────────
+from chat.tests import MentionRightFixture as _MentionRightFixture  # noqa: E402
+
+
+class TerminalTests(_MentionRightFixture):
+    """A shell session in the project folder, for whoever holds project.terminal: the server hands out a signed ticket."""
+
+    def setUp(self):
+        super().setUp()
+        from workspace.services import provision_project_folder_and_mcp
+        # The real capability row -- its shell cwd is the folder this creates on disk.
+        self.row = provision_project_folder_and_mcp(self.p1)
+
+    def open_session(self, user, project):
+        return self.call("post", f"/api/v1/projects/{project.id}/terminal/session/", user)
+
+    @staticmethod
+    def claims_of(ticket):
+        import base64, json
+        payload = ticket.rsplit(".", 1)[0]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+    def test_the_right_is_checked_and_the_ticket_names_the_project_folder(self):
+        import hashlib, hmac
+        from django.conf import settings
+        r = self.open_session(self.sara, self.p1)
+        self.assertEqual(r.status_code, 403, r.content)  # a member reads the project; a shell on the server is an admin's act
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 200, r.content)
+        body = r.json()
+        self.assertEqual((body["path"], body["expires_in"]), ("/terminal/ws", 60))
+        payload, signature = body["ticket"].rsplit(".", 1)
+        self.assertEqual(signature, hmac.new(b"shared-secret", payload.encode(), hashlib.sha256).hexdigest())
+        claims = self.claims_of(body["ticket"])
+        self.assertEqual(claims["cwd"], self.row.capability_config["shell"]["cwd"])
+        self.assertEqual((claims["project_id"], claims["user_id"], claims["project_name"]), (str(self.p1.id), str(self.owner.id), self.p1.name))
+        self.assertGreater(claims["exp"], 0)
+
+    def test_a_project_without_a_folder_on_the_server_says_so(self):
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.open_session(self.owner, self.p2)
+        self.assertEqual(r.status_code, 409, r.content)
+
+    def test_a_server_without_the_worker_key_says_so(self):
+        with self.settings(INTERNAL_API_KEY=""):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 503, r.content)
+
+
+class LiveBrowserTests(_MentionRightFixture):
+    """The live browser: a signed ticket for whoever holds project.browser, and nothing without it."""
+
+    def open_session(self, user, project, body=None):
+        return self.call("post", f"/api/v1/projects/{project.id}/browser/session/", user, body or {"width": 1440, "height": 900, "url": "https://example.com"})
+
+    def test_the_right_is_checked_and_the_ticket_carries_the_size_and_first_page(self):
+        import base64, hashlib, hmac, json
+        r = self.open_session(self.sara, self.p1)
+        # A member reads the project; a browser running on the server is an admin's act.
+        self.assertEqual(r.status_code, 403, r.content)
+        self.assertIn("permission", r.json()["detail"])
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 200, r.content)
+        body = r.json()
+        self.assertEqual((body["path"], body["expires_in"]), ("/browser/ws", 60))
+        payload, signature = body["ticket"].rsplit(".", 1)
+        self.assertEqual(signature, hmac.new(b"shared-secret", payload.encode(), hashlib.sha256).hexdigest())
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["project_id"], str(self.p1.id))
+        self.assertEqual(claims["user_id"], str(self.owner.id))
+        self.assertEqual((claims["width"], claims["height"], claims["url"]), (1440, 900, "https://example.com"))
+        self.assertGreater(claims["exp"], 0)
+
+    def test_a_server_with_no_worker_key_says_so_rather_than_handing_out_a_ticket(self):
+        with self.settings(INTERNAL_API_KEY=""):
+            r = self.open_session(self.owner, self.p1)
+        self.assertEqual(r.status_code, 503, r.content)
+        self.assertIn("worker", r.json()["detail"])
+
+    def test_a_project_of_another_company_is_not_found(self):
+        import uuid
+        with self.settings(INTERNAL_API_KEY="shared-secret"):
+            r = self.call("post", f"/api/v1/projects/{uuid.uuid4()}/browser/session/", self.owner, {})
+        self.assertEqual(r.status_code, 404, r.content)
+
+
+class DeliverableTests(_MentionRightFixture):
+    """W10: what a persona produced and the team kept — by title, versioned, never overwritten."""
+
+    def setUp(self):
+        super().setUp()
+        from nucleus.models import ChatMessage
+        self.chart = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1, content='{"type":"line","labels":[]}',
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=1,
+            metadata={"persona_id": "x", "render_as": "chart", "output_type": "chart"},
+        )
+        self.path = f"/api/v1/projects/{self.p1.id}/deliverables/"
+
+    def keep(self, user, title, message=None):
+        return self.call("post", self.path, user, {"message_id": str((message or self.chart).id), "title": title})
+
+    def test_keeping_needs_the_right_and_takes_the_reply_s_own_kind_and_content(self):
+        # deliverable.manage is Member-tier in the registry — a Member curates
+        # what the team keeps; a Viewer does not.
+        self.assertEqual(self.keep(self.vera, "Q3 revenue").status_code, 403)
+        r = self.keep(self.sara, "Q3 revenue")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["created_by_id"], str(self.sara.id))
+        r = self.keep(self.owner, "Q3 revenue")
+        self.assertEqual(r.status_code, 200, r.content)
+        out = r.json()
+        self.assertEqual((out["title"], out["kind"], out["version"]), ("Q3 revenue", "chart", 2))
+        self.assertEqual(out["content"], self.chart.content)
+        self.assertEqual(out["source_message_id"], str(self.chart.id))
+        self.assertEqual(out["created_by_id"], str(self.owner.id))
+
+    def test_the_same_name_again_is_a_new_version_and_both_stay(self):
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 1)
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 2)
+        self.assertEqual(self.keep(self.owner, "Churn").json()["version"], 1)
+        rows = self.call("get", self.path, self.sara).json()
+        self.assertEqual([(d["title"], d["version"]) for d in rows], [("Churn", 1), ("Q3 revenue", 2), ("Q3 revenue", 1)])
+        # The list leaves the content out; opening one carries it.
+        self.assertIsNone(rows[0].get("content"))
+        one = self.call("get", f"{self.path}{rows[1]['id']}/", self.sara).json()
+        self.assertEqual(one["content"], self.chart.content)
+        # "latest" is one row per name.
+        latest = self.call("get", f"{self.path}?latest=1", self.sara).json()
+        self.assertEqual([(d["title"], d["version"]) for d in latest], [("Churn", 1), ("Q3 revenue", 2)])
+
+    def test_removing_a_version_leaves_the_others_and_frees_its_number(self):
+        self.keep(self.owner, "Q3 revenue")
+        second = self.keep(self.owner, "Q3 revenue").json()
+        self.assertEqual(self.call("delete", f"{self.path}{second['id']}/", self.vera).status_code, 403)
+        self.assertEqual(self.call("delete", f"{self.path}{second['id']}/", self.sara).status_code, 204)
+        rows = self.call("get", self.path, self.owner).json()
+        self.assertEqual([(d["title"], d["version"]) for d in rows], [("Q3 revenue", 1)])
+        # The unique constraint only counts live rows, so the next keep can reuse the number.
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 2)
+
+    def test_two_keeps_of_one_name_at_the_same_moment_do_not_500(self):
+        # next_version() reads, create() writes, and the unique constraint sits
+        # between them. A stale version number is retried; a number that stays
+        # taken answers 409, never a bare IntegrityError.
+        from unittest.mock import patch
+        from workspace import deliverables
+        self.assertEqual(self.keep(self.owner, "Q3 revenue").json()["version"], 1)
+        real = deliverables.next_version
+        answers = iter([1, 2])   # the first read is stale, the retry is right
+        with patch.object(deliverables, "next_version", side_effect=lambda *a, **k: next(answers, real(*a, **k))):
+            r = self.keep(self.owner, "Q3 revenue")
+        self.assertEqual((r.status_code, r.json()["version"]), (200, 2), r.content)
+        with patch.object(deliverables, "next_version", return_value=1):
+            r = self.keep(self.owner, "Q3 revenue")
+        self.assertEqual(r.status_code, 409, r.content)
+        self.assertIn("same moment", r.json()["detail"])
+        # Nothing half-written either way.
+        from nucleus.models import Deliverable
+        self.assertEqual(sorted(Deliverable.objects.filter(project=self.p1, is_active=True).values_list("version", flat=True)), [1, 2])
+
+    def test_the_list_never_loads_content_and_is_capped(self):
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+        from workspace import deliverables
+        for i in range(4):
+            self.keep(self.owner, f"Chart {i}")
+        with CaptureQueriesContext(connection) as queries:
+            rows = deliverables.list_deliverables(self.p1)
+            out = [deliverables.summary(r) for r in rows]
+        self.assertEqual(len(out), 4)
+        self.assertTrue(all("content" not in d for d in out))
+        # One query for the rows: summary() must not fetch the deferred column per row.
+        sql = " ".join(q["sql"] for q in queries.captured_queries)
+        self.assertNotIn('"content"', sql)
+        self.assertEqual(len(queries.captured_queries), 1, [q["sql"][:80] for q in queries.captured_queries])
+        self.assertEqual(len(deliverables.list_deliverables(self.p1, limit=2)), 2)
+
+    def test_what_cannot_be_kept(self):
+        from nucleus.models import ChatMessage
+        self.assertEqual(self.keep(self.owner, "   ").status_code, 400)
+        self.assertEqual(self.keep(self.owner, "x" * 121).status_code, 400)
+        blank = ChatMessage.objects.create(
+            company=self.company, project=self.p1, topic=self.t1, content="",
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=2,
+            metadata={"render_as": "text"},
+        )
+        self.assertEqual(self.keep(self.owner, "Nothing", blank).status_code, 400)
+        import uuid
+        r = self.call("post", self.path, self.owner, {"message_id": str(uuid.uuid4()), "title": "Ghost"})
+        self.assertEqual(r.status_code, 404)
+        # Another project's reply cannot be kept into this one, whatever the
+        # person's rights there: the lookup is scoped to the project in the path.
+        from nucleus.models import Channel, ChatTopic
+        other_channel = Channel.objects.create(company=self.company, project=self.p2, name="general", slug="g2")
+        other_topic = ChatTopic.objects.create(company=self.company, project=self.p2, channel=other_channel, title="t", slug="t-p2")
+        elsewhere = ChatMessage.objects.create(
+            company=self.company, project=self.p2, topic=other_topic, content="another project's chart",
+            message_type=ChatMessage.MessageType.TEXT, status=ChatMessage.Status.COMPLETED, sequence=1,
+            metadata={"render_as": "chart"},
+        )
+        self.assertEqual(self.keep(self.owner, "Elsewhere", elsewhere).status_code, 404)

@@ -8,6 +8,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-zj(1$&@l(309znsv2&p3h%8hy571$2+!yh+niu)h3x!btilq36'
 DEBUG = True
+# The public hook endpoint (scheduling/hooks_api.py) accepts a body from anyone
+# who has a token, and Django parses it before our code runs. 64 KB is well over
+# the 4 KB of text + 32 KB of data a fire may carry, and far under the 2.5 MB
+# default an unauthenticated caller could otherwise make this process parse.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [

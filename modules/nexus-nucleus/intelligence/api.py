@@ -17,7 +17,7 @@ attached, invisible to everyone under row-level visibility.
 rotating an API key used to require delete-and-recreate, and delete is
 refused while any persona references the row.
 """
-from typing import List
+from typing import List, Optional
 from ninja import Router
 from ninja.errors import HttpError
 from pathlib import Path
@@ -28,6 +28,7 @@ from nucleus.models import Project, Persona, AIRequestLog
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from .schema import (
+    ModelCheckIn, ModelCheckOut,
     ModelConfigIn, ModelConfigPatchIn, ModelConfigOut, ModelConfigRef,
     MCPServerIn, MCPServerPatchIn, MCPServerOut, MCPServerRef,
     MCPOAuthAuthorizeOut,
@@ -39,6 +40,12 @@ from .schema import (
     TemplatePromptContent,
 )
 from . import services as svc
+from .schema import RoutineIn, RoutinePatchIn, RoutineOut
+from .schema import RecallEntryOut, RecallPatchIn, RecallSourceOut
+from .schema import MCPCatalogEntryOut, PersonaCatalogEntryOut
+from intelligence import mcp_catalog as mcp_catalog_content
+from intelligence import persona_catalog as persona_catalog_content
+from . import recall as recall_svc
 
 router = Router(tags=["Intelligence"], auth=SupabaseBearer())
 
@@ -67,8 +74,9 @@ def _oauth_connected(server) -> bool:
     return bool(server.get_secrets().get("refresh_token"))
 
 
-def _model_config_out(config) -> ModelConfigOut:
+def _model_config_out(config, utility_id: str | None = None) -> ModelConfigOut:
     return ModelConfigOut(
+        is_utility=str(config.id) == utility_id,
         id=str(config.id),
         name=config.name,
         provider=config.provider,
@@ -161,10 +169,14 @@ def _persona_out(persona) -> PersonaOut:
         project_id=str(persona.project_id),
         model=_model_config_ref(persona.model),
         advisor_model=_model_config_ref(persona.advisor_model) if persona.advisor_model_id else None,
+        fallback_models=[_model_config_ref(m) for m in svc.fallback_models_of(persona)],
         mcp_servers=[_mcp_ref(s) for s in persona.mcp_servers.all() if s.is_active],
         temperature=persona.temperature,
         max_tokens=persona.max_tokens,
         max_steps=persona.max_steps,
+        acts_after_approval=persona.acts_after_approval,
+        tool_levels=persona.tool_levels or {},
+        recall_enabled=persona.recall_enabled,
         prompt=prompt,
         is_active=persona.is_active,
         avatar=(
@@ -184,7 +196,9 @@ def _persona_out(persona) -> PersonaOut:
 @router.get("/model-configs/", response=List[ModelConfigOut])
 def list_model_configs(request):
     company = _company(request)
-    return [_model_config_out(m) for m in svc.list_model_configs(company, request.auth)]
+    utility = svc.utility_model_of(company)
+    utility_id = str(utility.id) if utility else None
+    return [_model_config_out(m, utility_id) for m in svc.list_model_configs(company, request.auth)]
 
 
 @router.post("/model-configs/", response=ModelConfigOut)
@@ -201,6 +215,24 @@ def create_model_config(request, payload: ModelConfigIn):
     return _model_config_out(config)
 
 
+@router.post("/model-configs/check/", response=ModelCheckOut)
+def check_model_config(request, payload: ModelCheckIn):
+    """
+    Verify a model with the provider before the dialog saves it: one tiny
+    call through the worker. Whoever may register or edit models may check.
+    """
+    company = _company(request)
+    if not (PermissionChecker.can(request.auth, "model_config.create", company=company)
+            or PermissionChecker.can(request.auth, "model_config.update", company=company)):
+        raise HttpError(403, "You don't have permission to check model configs.")
+    try:
+        return svc.check_model_config(company, payload.dict())
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    except svc.WorkerUnavailable as e:
+        raise HttpError(e.status, str(e))
+
+
 @router.patch("/model-configs/{config_id}/", response=ModelConfigOut)
 def patch_model_config(request, config_id: str, payload: ModelConfigPatchIn):
     company = _company(request)
@@ -212,7 +244,36 @@ def patch_model_config(request, config_id: str, payload: ModelConfigPatchIn):
         raise HttpError(400, str(e))
     if not config:
         raise HttpError(404, "Model config not found.")
-    return _model_config_out(config)
+    utility = svc.utility_model_of(company)
+    return _model_config_out(config, str(utility.id) if utility else None)
+
+
+@router.post("/model-configs/{config_id}/utility/", response=ModelConfigOut)
+def set_utility_model(request, config_id: str):
+    """Make this config the server's utility model (one per server)."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to choose the utility model.")
+    try:
+        config = svc.set_utility_model(company, request.auth, config_id)
+    except LookupError:
+        raise HttpError(404, "Model config not found.")
+    return _model_config_out(config, str(config.id))
+
+
+@router.delete("/model-configs/{config_id}/utility/", response=ModelConfigOut)
+def clear_utility_model(request, config_id: str):
+    """Stop using this config as the utility model (personas' own models take over)."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to choose the utility model.")
+    config = svc.get_model_config(company, config_id)
+    if not config:
+        raise HttpError(404, "Model config not found.")
+    utility = svc.utility_model_of(company)
+    if utility and str(utility.id) == config_id:
+        svc.set_utility_model(company, request.auth, None)
+    return _model_config_out(config, None)
 
 
 @router.delete("/model-configs/{config_id}/", response={204: None})
@@ -447,6 +508,68 @@ def delete_persona(request, persona_id: str):
 
 # ── PromptTemplate endpoints ──────────────────────────────────────────────────
 
+# ── Routine endpoints (W4) ───────────────────────────────────────────────────
+def _routine_out(routine) -> RoutineOut:
+    return RoutineOut(
+        id=str(routine.id), project_id=str(routine.project_id), name=routine.name, title=routine.title,
+        purpose=routine.purpose or "", instructions=routine.instructions, allowed_capabilities=routine.allowed_capabilities,
+        model=_model_config_ref(routine.model_config) if routine.model_config_id and routine.model_config and routine.model_config.is_active else None,
+        is_builtin=routine.is_builtin, created_by_id=str(routine.created_by_id) if routine.created_by_id else None,
+    )
+
+
+def _routine_project(request, project_id: str, right: str):
+    """The project a routine route acts on, under `right` -- 404 when it is not this company's."""
+    company = _company(request)
+    project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(request.auth, right, obj=project):
+        raise HttpError(403, "You don't have permission to manage routines here." if right == "routine.manage" else "You don't have access to this project.")
+    return company, project
+
+
+@router.get("/projects/{project_id}/routines/", response=List[RoutineOut])
+def list_routines(request, project_id: str):
+    """Whoever reads the project sees what `/` offers; defining routines is routine.manage."""
+    _company_, project = _routine_project(request, project_id, "topic.list")
+    return [_routine_out(r) for r in svc.list_routines(project)]
+
+
+@router.post("/projects/{project_id}/routines/", response=RoutineOut)
+def create_routine(request, project_id: str, payload: RoutineIn):
+    company, project = _routine_project(request, project_id, "routine.manage")
+    try:
+        return _routine_out(svc.create_routine(company, project, request.auth, payload.dict()))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+
+
+@router.patch("/projects/{project_id}/routines/{routine_id}/", response=RoutineOut)
+def patch_routine(request, project_id: str, routine_id: str, payload: RoutinePatchIn):
+    company, project = _routine_project(request, project_id, "routine.manage")
+    try:
+        routine = svc.patch_routine(company, project, routine_id, payload.dict(exclude_none=True))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    if not routine:
+        raise HttpError(404, "Routine not found.")
+    return _routine_out(routine)
+
+
+@router.delete("/projects/{project_id}/routines/{routine_id}/", response={204: None})
+def delete_routine(request, project_id: str, routine_id: str):
+    """A built-in is editable but stays -- every project has the four."""
+    _company_, project = _routine_project(request, project_id, "routine.manage")
+    routine = svc.get_routine(project, routine_id)
+    if not routine:
+        raise HttpError(404, "Routine not found.")
+    if routine.is_builtin:
+        raise HttpError(409, "Built-in routines can be edited but not deleted.")
+    svc.delete_routine(project, routine_id)
+    return 204, None
+
+
 @router.get("/prompt-templates", response=ListTemplatePrompts)
 def get_prompts(request):
     files = {
@@ -478,28 +601,31 @@ def get_prompt(request, id: str):
 
 # ── CompanyAIConfig endpoints ─────────────────────────────────────────────────
 
-@router.get("/ai-config/", response=CompanyAIConfigOut)
-def get_ai_config(request):
-    company = _company(request)
-    config = svc.get_ai_config(company)
+def _ai_config_out(config) -> CompanyAIConfigOut:
+    utility = config.utility_model if config.utility_model_id else None
     return CompanyAIConfigOut(
         embedding_provider=config.embedding_provider,
         embedding_model=config.embedding_model,
         embedding_base_url=config.embedding_base_url,
         default_llm_model=config.default_llm_model,
+        utility_model_id=str(utility.id) if utility and utility.is_active else None,
     )
+
+
+@router.get("/ai-config/", response=CompanyAIConfigOut)
+def get_ai_config(request):
+    company = _company(request)
+    return _ai_config_out(svc.get_ai_config(company))
 
 
 @router.put("/ai-config/", response=CompanyAIConfigOut)
 def update_ai_config(request, payload: CompanyAIConfigIn):
     company = _company(request)
-    config = svc.update_ai_config(company, request.auth, payload.dict())
-    return CompanyAIConfigOut(
-        embedding_provider=config.embedding_provider,
-        embedding_model=config.embedding_model,
-        embedding_base_url=config.embedding_base_url,
-        default_llm_model=config.default_llm_model,
-    )
+    # Server-wide model settings are model-config editing; this route had no
+    # gate at all before the utility model joined it.
+    if not PermissionChecker.can(request.auth, "model_config.update", company=company):
+        raise HttpError(403, "You don't have permission to edit the server's AI settings.")
+    return _ai_config_out(svc.update_ai_config(company, request.auth, payload.dict()))
 
 
 @router.get("/ai-request-logs/", response=List[AIRequestLogOut])
@@ -533,6 +659,28 @@ def list_ai_request_logs(request):
 
 # ── Output Types (M7) ─────────────────────────────────────────────────────────
 
+# ── Catalogues (W11 tool catalog, W18 persona catalogue) ─────────────────────
+# Static content, served so the app can pre-fill the dialogs a person already
+# uses. Nothing is created here and nothing is fetched at runtime.
+
+@router.get("/mcp-catalog/", response=List[MCPCatalogEntryOut])
+def mcp_catalog(request):
+    """Tool servers worth adding. Reading it needs the right that lists servers."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "mcp_server.list", obj=company):
+        raise HttpError(403, "You don't have permission to see tool servers.")
+    return mcp_catalog_content.catalog()
+
+
+@router.get("/persona-catalog/", response=List[PersonaCatalogEntryOut])
+def persona_catalog(request):
+    """Roles a team usually wants. Reading it needs the right that lists personas."""
+    company = _company(request)
+    if not PermissionChecker.can(request.auth, "persona.list", obj=company):
+        raise HttpError(403, "You don't have permission to see personas.")
+    return persona_catalog_content.catalog()
+
+
 @router.get("/output-types/")
 def list_output_types(request):
     """
@@ -551,3 +699,57 @@ def list_output_types(request):
         {"name": "html",     "label": "HTML Page", "icon": "globe",         "render_as": "html"},
         {"name": "terminal", "label": "Terminal",  "icon": "terminal",      "render_as": "terminal"},
     ]
+
+
+# ── Recall endpoints (W5) ────────────────────────────────────────────────────
+def _recall_out(entry) -> RecallEntryOut:
+    topic = entry.source_topic if entry.source_topic_id else None
+    author = entry.author_persona if entry.author_persona_id else None
+    return RecallEntryOut(
+        id=str(entry.id), project_id=str(entry.project_id), kind=entry.kind, text=entry.text,
+        author_persona_id=str(author.id) if author else None,
+        author_name=author.name if author else (entry.created_by.display_name or entry.created_by.username) if entry.created_by_id and entry.created_by else None,
+        source=RecallSourceOut(
+            topic_id=str(topic.id), channel_id=str(topic.channel_id) if topic.channel_id else None, topic_title=topic.title,
+            message_id=str(entry.source_message_id) if entry.source_message_id else None,
+        ) if topic else None,
+        created_at=entry.created_at.isoformat(), updated_at=entry.updated_at.isoformat(),
+    )
+
+
+def _recall_project(request, project_id: str, right: str):
+    """The project a recall route acts on, under `right` -- 404 when it is not this company's."""
+    company = _company(request)
+    project = Project.objects.filter(company=company, id=project_id, is_active=True).first()
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(request.auth, right, obj=project):
+        raise HttpError(403, "You don't have permission to edit what's recorded here." if right == "recall.manage" else "You don't have access to this project.")
+    return company, project
+
+
+@router.get("/projects/{project_id}/recall/", response=List[RecallEntryOut])
+def list_recall(request, project_id: str, kind: Optional[str] = None, q: Optional[str] = None):
+    """Whoever reads the project sees what its personas recorded; editing is recall.manage."""
+    _, project = _recall_project(request, project_id, "topic.list")
+    return [_recall_out(e) for e in recall_svc.list_recall(project, kind=kind, q=q)]
+
+
+@router.patch("/projects/{project_id}/recall/{entry_id}/", response=RecallEntryOut)
+def patch_recall(request, project_id: str, entry_id: str, payload: RecallPatchIn):
+    _, project = _recall_project(request, project_id, "recall.manage")
+    try:
+        entry = recall_svc.patch_recall(project, entry_id, payload.dict(exclude_none=True))
+    except ValueError as e:
+        raise HttpError(400, str(e))
+    if not entry:
+        raise HttpError(404, "Entry not found.")
+    return _recall_out(entry)
+
+
+@router.delete("/projects/{project_id}/recall/{entry_id}/", response={204: None})
+def delete_recall(request, project_id: str, entry_id: str):
+    _, project = _recall_project(request, project_id, "recall.manage")
+    if not recall_svc.delete_recall(project, entry_id):
+        raise HttpError(404, "Entry not found.")
+    return 204, None

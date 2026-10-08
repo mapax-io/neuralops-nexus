@@ -364,6 +364,11 @@ web app cannot show because nothing is published:
   which the web app renders as an in-bubble "Thinking…" cue.
 - **Swarm failure.** The swarm relay marks the message FAILED but publishes no
   `message_error` (the single path does), so clients fall back to stall detection.
+  A transport exception in the swarm relay (`except Exception` at the end of
+  `trigger_ai_swarm_response_async`) only logs — the active message stays PENDING until
+  `reap_orphaned_replies` fails it 3 minutes later with the "server restarted" reason,
+  which is then the wrong reason. The single relay turns the same exception into a
+  FAILED message with a categorised reason at once; the swarm path should do the same.
 - **Workspace-level channel.** Nothing is published outside topic channels (no unread
   counts, invitations, new topics/channels), so those refresh by polling only.
 - **Dead path.** `chat/tasks.py generate_ai_response` (Celery) publishes `token` /
@@ -563,7 +568,7 @@ ImportError: cannot import name 'AIModel' from 'nucleus.models'
 `AIModel` was renamed to `ModelConfig` in migration 0014 (noted in
 `nucleus/models/__init__.py:72`); this command was never updated, so it dies at
 import before running a single check. It is the one flow test that covers the
-chat hot path, and `readme.md` / `CLAUDE.md` both still list it as a gate.
+chat hot path.
 
 Pre-existing — last touched in `0d6ab07`, long before the scoped-permissions
 work. Noticed while running the backend gates for the `tool_activity` relay; not
@@ -595,3 +600,147 @@ deliberately not folded in:
    the group now, which is correct, but the two gates can disagree for anyone whose group and rights drift.
 3. **`valid_roles` accepts `"owner"` on an invite.** The web app never offers it, but the API does not
    refuse it; granting Owner at a project scope hands out the whole registry there.
+
+---
+
+## `AgenticManager` in nexus-ai is dead code
+
+**Where:** `modules/nexus-ai/apps/managers/agentic_manager.py` (`class AgenticManager`), imported but never
+instantiated by `apps/routers/trigger.py`, which runs `NewImprovedAgenticManager` for `/trigger/` and
+`AgenticSwarmManager` for `/trigger/swarm/`.
+
+Its `run()` still carries the pre-recovery marker handling (no unmarked-chart recovery, `raw_full` kept on a
+no-marker reply), so it drifts from the two live managers with every change to them. Delete it and the
+import, or say in a comment why it is kept.
+
+---
+
+## Output types are three hand-maintained lists
+
+**Where:** `modules/nexus-ai/apps/output_types/types.py` (the registry),
+`modules/nexus-nucleus/chat/services.py` (`_OUTPUT_TYPE_KEYWORDS`),
+`modules/neuralops-web-app/src/lib/composer/directives.ts` (`OUTPUT_DIRECTIVES`).
+
+The set of output types is written out by hand in three places, and the comment above
+`_OUTPUT_TYPE_KEYWORDS` — "Must match the types registered in nexus-ai/apps/output_types/types.py" — is an
+invariant nothing enforces.
+
+It had already drifted: `code` was offered by the composer, accepted by nucleus, and rendered by the app
+(`message-item.tsx` maps `renderAs === "code"` to `CodeBlock`), but no `code` spec was registered in the
+worker. `@code` therefore resolved to an unknown type, logged `unknown explicit type 'code'`, and silently
+fell back to classification — the user picked a directive from a menu and got whatever the classifier felt
+like. Nothing errored, which is why it went unnoticed. That specific gap is now closed (the `code` spec is
+registered, and `test_registry_covers_every_directive_the_other_side_offers` pins the set), but the
+structure that produced it is unchanged: the next type added on one side can drift again.
+
+The durable fix is one source of truth. The worker already exposes its registry — `list_output_types` in
+`intelligence/api.py` — so nucleus and the app could read it instead of each keeping a copy. Worth doing
+before a fourth surface needs the same list.
+
+---
+
+## Compose still bind-mounts the deleted `modules/neuralops-web-app`
+
+**Where:** `docker-compose.neuralops.yaml` — the `neuralops-web-app-dev` service (dev profile), and the
+commented-out copy further down.
+
+`dev` removed `modules/neuralops-web-app` in `58e1083`, but the compose file still defines a dev service that
+bind-mounts `./modules/neuralops-web-app:/app` and runs `npm ci && npm run dev` in it. On any `docker compose
+up` of the dev profile, Docker creates the mount source, so an empty `modules/neuralops-web-app/` (a bare
+`node_modules/` and a lockfile) reappears in every checkout — untracked, but exactly the path the app must
+never occupy again. The frontend now lives in its own repository (`mapax-io/neuralops-nexus-web-app`) and runs
+from there; this service has nothing to serve. Remove the service (and the commented copy) from the compose
+file.
+
+---
+
+## Chart descriptions with a `fill` key fail the app's guard
+
+**Where:** `modules/nexus-ai/apps/output_types/types.py` (the `chart` spec) and the app's chart guard
+(`neuralops-nexus-web-app`, `ChartBlock`).
+
+Seen live on 2026-09-21: a line chart answered with `"fill": true` on a dataset, and the app refused it
+(`datasets.0: Unrecognized key: "fill"`), showing the raw data instead. The guard is strict on purpose
+(unknown keys are rejected rather than passed to Chart.js), but the contract the model is given lists no
+`fill` and models reach for it on line charts anyway. Either add `fill` to the description (and the guard,
+as a boolean per dataset) or state in the contract that area fills are not supported. Until then a
+fraction of line charts degrade to the data fallback.
+
+---
+
+## The LiteLLM agent backend reads a persona shape the worker no longer sends
+
+**Where:** `modules/nexus-ai/apps/implementations/agents/litellm_runner.py` (`_run_with_mcp`).
+
+`AGENT_BACKEND=litellm` is not the default. Its MCP loop reads `persona.mcp_servers` as the old
+`MCPServerConfig` rows (`transport`, `secrets`, `auth_type`, `token_env_var`), but `PersonaConfig.mcp_servers`
+has been a list of `MCPArgs` (`url`, `command`, `args`, `env`, `authorization_token`, now `id`/`name`) since the
+persona payload was reshaped, so that path raises on the first attribute it reads. Tool approvals (W16) are
+therefore wired only into the pydantic-ai runner; when the LiteLLM backend is brought back, its loop should run
+each MCP call through `ToolApprovalGate` (or be dropped in favour of the pydantic-ai runner for MCP personas).
+
+## Mermaid block keeps its own theme subscription (app)
+
+`src/theme/resolved-theme.ts` (W21) is the one place that resolves the page's theme for canvases that cannot read
+CSS variables; `chart-block.tsx` and `terminal-pane.tsx` use it. `mermaid-block.tsx` still carries an older
+copy of the same MutationObserver + matchMedia logic in a `useEffect`; fold it onto `useResolvedTheme()` in a
+small follow-up so there is one implementation.
+
+
+## Nucleus test modules import each other in a cycle
+
+`workspace/tests.py` imports `MentionRightFixture` from `chat/tests.py` (W21's `TerminalTests`), and `chat/tests.py`
+imports from `workspace/tests.py`. The full-suite order (`workspace.tests` before `chat.tests`) loads fine, but
+`manage.py test chat.tests …` alone fails with "partially initialized module". Move the shared fixtures
+(`MentionRightFixture`, `InviteGrantsFixture`) into a `nucleus/test_fixtures.py` both import from.
+
+## Worker: providers nucleus accepts that the runner cannot build, and a duplicated key check
+
+`ModelConfig.Provider` allows `google` and `ollama`, but `PydanticAIRunner._MODEL_REGISTRY` has no entry for
+either, so a persona on such a model fails at call time (the model check now says so up front). Add the
+pydantic-ai Google model and an OpenAI-compatible route for Ollama. Also: `apps/routers/embed.py` and
+`apps/routers/trigger.py` each carry their own `_verify_key`; `apps/routers/internal_key.py` (model check) is the
+shared one — point the other two at it.
+
+## Recall follow-ups (W5 amendments not in the first cut)
+
+The master plan's amendments to W5 are still open: a persona-callable `remember` tool (memory-directed phrasing
+in the chat: "remember that…"), a nightly consolidation task (dedupe/merge/stale) capped by the per-project
+ceiling, per-project exclusions (topics or patterns never recorded), and a Routine proposal when a method
+repeats. The first cut ships the entry model, the embedding/retrieval path, the end-of-reply remember pass, the
+pane and the persona switch.
+
+## Worker cold start can outlast the relay's read timeout
+
+Seen 2026-09-21 on the dev stack: the first `auto` output-type run after a worker reload rebuilt the output-type
+classifier's centroids (`[classifier] built centroids for 7 output types`, ~70 s on the local embedding model)
+before the model was even called, and nucleus's relay (`httpx.AsyncClient(timeout=120)` around the SSE stream in
+`chat/services.py`) gave up: the reply failed with "The AI worker took too long to answer and the request timed
+out." while the worker was still warming up. The next run was fine. Options: build the centroids at worker
+startup (or lazily off the request path), send keepalive events while the prompt is being prepared, or make the
+relay's read timeout apply only after the first byte. Until then the first reply after a worker restart may fail.
+
+## A reply produced off the request path may not be embedded
+
+`chat/services.py:trigger_ai_response_async` ends with `asyncio.create_task(embed_message_async(...))` —
+fire-and-forget, which is right on the HTTP path (the response returns and the loop keeps running). Called
+through `async_to_sync` from Celery (a schedule's fire, every step of a runbook, W6), the loop closes as soon as
+the coroutine returns, so that task can be cancelled before it runs: the reply is saved and published, but never
+embedded, and so never found by chat retrieval. Pre-existing for schedules; runbooks inherit it. Fix by awaiting
+the embed when the caller is synchronous (a flag on the trigger, or `interactive=False` implying it), or by
+handing the embed to its own Celery task.
+
+## `scheduling/hooks.py` calls into the chat API module
+
+`fire()` imports `chat.api` and calls its private `_trigger_personas` with eleven positional arguments — a
+services module reaching into a router module. The who-to-trigger decision belongs in `chat/services.py`
+(e.g. `trigger_personas(...)`), with `chat/api.py` and `hooks.py` both calling it. Left as is on 2026-09-21
+because the move touches every trigger call site at once; `fire()` does now honour the refusals the call
+returns and records a failed fire instead of a silent success.
+
+## `PersonaSchedule` has no database constraint for "exactly one of persona / runbook"
+
+`persona` became nullable when a schedule learned to start a runbook (W6). The invariant that exactly one of
+`persona` / `runbook` is set is enforced only in `scheduling/services.py:create_schedule`. A `CheckConstraint`
+(`(persona IS NULL) <> (runbook IS NULL)`) would make the table say it too; needs a migration and a check of
+existing rows first.

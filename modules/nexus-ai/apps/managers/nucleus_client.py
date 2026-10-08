@@ -20,6 +20,7 @@ from threading import local
 import httpx
 from pydantic_ai.capabilities import MCP
 
+from apps.managers.prompt_builder import compose_system_prompt
 from apps.core.config import settings
 import shlex
 from apps.schemas.trigger import HistoryMessage, MCPArgs, ModelConfig, PersonaConfig, PersonaCapabilities
@@ -45,16 +46,36 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
             url, headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY},
         )
         response.raise_for_status()
-    data = response.json()
+    return persona_from(response.json())
 
-    model_data = data.get("model")
-    model = ModelConfig(
+
+def model_from(model_data: dict | None) -> ModelConfig:
+    """One model endpoint as nucleus sends it; the worker's defaults when it sends none."""
+    return ModelConfig(
         provider=model_data["provider"] if model_data else "litellm",
         model_id=model_data["model_id"] if model_data else settings.LLM_MODEL,
+        name=model_data.get("name") if model_data else None,
+        api_base=model_data.get("api_base") if model_data else None,
         api_key=model_data.get("api_key") if model_data else None,
         max_tokens=model_data.get("max_tokens", 4096) if model_data else 4096,
         temperature=model_data.get("temperature", 0.7) if model_data else 0.7,
     )
+
+
+def utility_model_for(persona: PersonaConfig) -> ModelConfig:
+    """The model a small internal pass should run on: the server's utility model, else the persona's own."""
+    return persona.utility_model or persona.model
+
+
+def persona_from(data: dict) -> PersonaConfig:
+    """
+    Shape nucleus's persona payload into the worker's PersonaConfig. The
+    project brief (absent on an older nucleus) is composed into the system
+    prompt here, so every runner and prompt path sees one string, brief first.
+    """
+    model = model_from(data.get("model"))
+    utility_data = data.get("utility_model")
+    utility_model = model_from(utility_data) if utility_data else None
     
     if data['capabilities']:
         capabilities = PersonaCapabilities.model_validate(data['capabilities'][0]['capability_config'])
@@ -100,6 +121,8 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
                 else:
                     token = secrets.get('client_secret')
                 mcp_servers.append(MCPArgs(
+                    id=_mcp_server.get('id'),
+                    name=_mcp_server.get('name'),
                     url=network_url,
                     authorization_token=token,
                 ))
@@ -107,6 +130,8 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
                 # Route B: Local Server
                 parts = shlex.split(local_cmd)
                 mcp_servers.append(MCPArgs(
+                    id=_mcp_server.get('id'),
+                    name=_mcp_server.get('name'),
                     url=None,
                     command=parts[0],
                     args=parts[1:],
@@ -116,11 +141,39 @@ async def resolve_persona(persona_id: str) -> PersonaConfig:
     return PersonaConfig(
         id=data["id"],
         name=data["name"],
-        system_prompt=(data.get("prompt") or {}).get("system_prompt", ""),
+        system_prompt=compose_system_prompt(data.get("project_brief"), (data.get("prompt") or {}).get("system_prompt", "")),
         model=model,
         mcp_servers=mcp_servers,
         capabilities=capabilities,
+        utility_model=utility_model,
+        tool_levels=data.get("tool_levels") or {},
+        # Absent on an older nucleus: no fallbacks.
+        fallback_models=[model_from(m) for m in data.get("fallback_models") or []],
+        recall_enabled=bool(data.get("recall_enabled", True)),
     )
+
+
+async def resolve_routine(routine_id: str):
+    """The routine a job names (W4) -- one internal GET, shaped like the persona is."""
+    # Imported here: routines.py reads model_from from this module.
+    from apps.managers.routines import routine_from
+    url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/routines/{routine_id}/"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url, headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY})
+        response.raise_for_status()
+    return routine_from(response.json())
+
+
+async def record_recall(project_id: str, persona_id: str, message_id: str, entries: list[dict]) -> int:
+    """Hand what a reply learnt to nucleus's Recall (W5); returns how many entries it kept."""
+    url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/recall/"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            url, json={"project_id": project_id, "persona_id": persona_id, "message_id": message_id, "entries": entries},
+            headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY},
+        )
+        response.raise_for_status()
+    return int(response.json().get("created") or 0)
 
 
 async def fetch_history(topic_id: str, exclude_message_id: str | None = None) -> list[HistoryMessage]:
@@ -135,6 +188,8 @@ async def fetch_history(topic_id: str, exclude_message_id: str | None = None) ->
       - a reply whose output_type was visual (chart/table/diagram/html/
         form) but ended up rendered as plain text is dropped too --
         usually means the visual generation failed and fell back
+      - a reply the reader stopped is dropped: a cut-off partial (often
+        half a chart description) is not the persona's finished words
     """
     url = f"{settings.NEXUS_NUCLEUS_URL}/api/v1/internal/topics/{topic_id}/history/"
     params: dict = {"limit": settings.HISTORY_DEPTH}
@@ -147,12 +202,15 @@ async def fetch_history(topic_id: str, exclude_message_id: str | None = None) ->
             headers={"X-Internal-API-Key": settings.INTERNAL_API_KEY},
         )
         response.raise_for_status()
-    raw = response.json()
+    return shape_history(response.json())
 
+
+def shape_history(raw: list[dict]) -> list[HistoryMessage]:
+    """The filtering above, on rows already fetched -- pure, so it can be tested."""
     history: list[HistoryMessage] = []
     for m in raw:
         content = (m.get("content") or "").strip()
-        if not content:
+        if not content or m.get("stopped"):
             continue
 
         sender_type = m.get("sender_type")
@@ -177,6 +235,7 @@ async def fetch_history(topic_id: str, exclude_message_id: str | None = None) ->
             role=role,
             content=m.get("content") or "",
             sender_name=m.get("sender_name"),
+            output_type=(m.get("output_type") or "text") if role == "assistant" else "text",
         ))
 
     return history

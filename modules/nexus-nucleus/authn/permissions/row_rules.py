@@ -250,3 +250,67 @@ def visible_personas(user, project):
         return Persona.objects.filter(project=project, is_active=True).order_by("name")
 
     return Persona.objects.none()
+
+
+def visible_topic(user, project, topic_id):
+    """
+    That one topic, if this user can see it in `project` -- else None.
+
+    The same answer as walking visible_channels() and asking visible_topics()
+    for it, in a constant number of queries instead of one permission check per
+    channel. Two callers had that walk copied into them (audit, 2026-09-21).
+    """
+    from nucleus.models import ChatTopic
+
+    topic = (
+        ChatTopic.objects.filter(project=project, id=topic_id, is_active=True, channel__is_active=True)
+        .select_related("channel").first()
+    )
+    if not topic:
+        return None
+    if PermissionChecker.can(user, "topic.list", obj=topic.channel):
+        return topic
+    # Narrow: invited to this one topic. Its channel surfaces as a waypoint,
+    # which is exactly what visible_channels does for the same case.
+    scoped = RoleAssignment.objects.filter(
+        user=user, scope_object_type="topic", scope_object_id=topic.id,
+    ).exists()
+    return topic if scoped else None
+
+
+def visible_topic_ids(user, company) -> set:
+    """
+    Every topic id this user can see across the company, as strings.
+
+    The nested walk it replaces cost one can() -- three queries, uncached -- per
+    project AND per channel: 20 projects of 10 channels was 884 queries for one
+    search (audit, 2026-09-21). rights_for_many answers a whole level at once,
+    which is what it was built for.
+    """
+    from nucleus.models import Channel, ChatTopic
+
+    projects = list(visible_projects(user, company))
+    if not projects:
+        return set()
+    channels = list(Channel.objects.filter(project__in=projects, is_active=True))
+    if not channels:
+        return set()
+    rights = PermissionChecker.rights_for_many(user, channels)
+    broad = [c.id for c in channels if "topic.list" in rights.get(str(c.id), set())]
+
+    ids = {
+        str(i) for i in
+        ChatTopic.objects.filter(channel_id__in=broad, is_active=True).values_list("id", flat=True)
+    } if broad else set()
+
+    # Plus any topic the person is scoped to directly, inside those projects.
+    scoped = set(
+        RoleAssignment.objects.filter(user=user, scope_object_type="topic")
+        .values_list("scope_object_id", flat=True)
+    )
+    if scoped:
+        ids.update(
+            str(i) for i in
+            ChatTopic.objects.filter(channel__in=channels, id__in=scoped, is_active=True).values_list("id", flat=True)
+        )
+    return ids

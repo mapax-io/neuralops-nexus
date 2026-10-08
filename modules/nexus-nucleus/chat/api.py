@@ -46,13 +46,15 @@ from ninja.errors import HttpError
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
 from chat.events import mention_refused_event
-from chat.schema import MessageOut, SendMessageIn, SendMessageOut
+from chat.schema import MessageSearchOut, MessageOut, SendMessageIn, SendMessageOut, StopMessageOut, PreflightDecisionIn, PreflightDecisionOut, ToolApprovalDecisionIn, ToolApprovalDecisionOut, NudgeIn
 from chat import services as chat_svc
 from chat.services import MessageDirectives
 from workspace import services as ws_svc
 from intelligence import services as intel_svc
 
 router = Router(tags=["Chat"], auth=SupabaseBearer())
+# Search is not under a project: it looks across every chat a person can see.
+search_router = Router(tags=["Search"], auth=SupabaseBearer())
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -93,6 +95,7 @@ _resolve_topic = sync_to_async(_resolve_topic_sync)
 _list_messages = sync_to_async(chat_svc.list_messages)
 _save_user_message = sync_to_async(chat_svc.save_user_message)
 _get_persona_by_mention = sync_to_async(intel_svc.get_persona_by_mention)
+_get_routine_by_name = sync_to_async(intel_svc.get_routine_by_name)
 _get_active_session = sync_to_async(chat_svc.get_active_session)
 _create_session = sync_to_async(chat_svc.create_session)
 _close_session = sync_to_async(chat_svc.close_session)
@@ -258,6 +261,14 @@ async def send_message(
         logger.warning("[chat/api] mention refused user=%s topic=%s personas=%s", user.id, topic_id, [p.name for p in mentioned_personas])
         mentioned_personas = []
 
+    # 5c. A /routine token names a team method in this project -- if one answers
+    #     to that name. If none does, the token was just a word: it stays in the
+    #     message as typed and nobody is refused over it.
+    routine = None
+    if directives.routine_name:
+        routine = await _get_routine_by_name(project, directives.routine_name)
+    clean_message = directives.message_without_routine if routine else directives.clean_message
+
     # 6. Apply session routing priority
 
     if directives.is_session_close:
@@ -306,16 +317,16 @@ async def send_message(
             centrifugo_channel, {**sys_msg, "type": "message"}
         ))
         # Only trigger personas if there is actual content beyond the @mention
-        if directives.message_without_mentions():
-            await _trigger_personas(mentioned_personas, company, project, topic,
-                                     topic_id, msg, directives.clean_message, 
-                                     directives.output_type, directives.swarm)
+        if directives.message_without_mentions(clean_message):
+            refusals = await _trigger_personas(mentioned_personas, company, project, topic,
+                                                topic_id, msg, clean_message,
+                                                directives.output_type, directives.swarm, routine, user) or refusals
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
-        await _trigger_personas(mentioned_personas, company, project, topic,
-                                 topic_id, msg, directives.clean_message,
-                                 directives.output_type, directives.swarm)
+        refusals = await _trigger_personas(mentioned_personas, company, project, topic,
+                                            topic_id, msg, clean_message,
+                                            directives.output_type, directives.swarm, routine, user) or refusals
 
     else:
         # Rules 4 + 5: no explicit mention — check session
@@ -332,9 +343,9 @@ async def send_message(
                     "[chat/api] session auto-trigger personas=%s",
                     [p.name for p in session_personas],
                 )
-                await _trigger_personas(session_personas, company, project, topic,
-                                         topic_id, msg, directives.clean_message,
-                                         directives.output_type, directives.swarm)
+                refusals = await _trigger_personas(session_personas, company, project, topic,
+                                                    topic_id, msg, clean_message,
+                                                    directives.output_type, directives.swarm, routine, user) or refusals
         # Rule 5: no mention, no session — human-only message, nothing to do
 
     if refusals:
@@ -359,10 +370,13 @@ async def _trigger_personas(
     msg: dict,
     clean_message: str,
     output_type: str,
-    swarm: bool
-) -> None:
+    swarm: bool,
+    routine=None,
+    triggered_by=None,
+) -> list[dict]:
     """
-    Fire AI trigger tasks for each persona in parallel.
+    Fire AI trigger tasks for each persona in parallel. Returns any refusals --
+    personas that will not answer this message, and why.
     Spawns one asyncio task per persona. Only triggers personas that have
     a model configured -- a cheap existence check, not a judgment about the
     model's actual configuration, so it stays here. (The old source_type
@@ -373,11 +387,24 @@ async def _trigger_personas(
     #131). This function's only job is deciding WHO to trigger.
     """
     if not personas:
-        return
+        return []
     # Turn off swarm mode if only one persona is mentioned
     swarm = swarm and len(personas) > 1
 
     if swarm:
+        # A gated persona proposes before it acts, and the swarm path has no plan
+        # to approve — it used to run them with the gate simply ignored, so the
+        # same persona was safe alone and not safe in company (audit, 2026-09-21).
+        # One at a time is the honest answer until a swarm can carry a plan.
+        gated = [p for p in personas if getattr(p, "acts_after_approval", False)]
+        if gated:
+            names = ", ".join(f"@{p.name}" for p in gated)
+            logger.warning("[chat/api] swarm refused: gated personas %s", [p.name for p in gated])
+            return _refuse(
+                personas, "gated_in_swarm",
+                f"{names} proposes a plan before acting, which a /swarm run cannot ask you to approve. "
+                "Mention them on their own.",
+            )
         asyncio.create_task(
             chat_svc.trigger_ai_swarm_response_async(
                 company=company,
@@ -388,6 +415,7 @@ async def _trigger_personas(
                 user_message_id=msg["id"],
                 topic_id=topic_id,
                 output_type=output_type,
+                triggered_by=triggered_by,
             )
         )
 
@@ -412,9 +440,142 @@ async def _trigger_personas(
                     user_message_id=msg["id"],
                     topic_id=topic_id,
                     output_type=output_type,
+                    routine=routine,  # a swarm run ignores routines (documented)
+                    triggered_by=triggered_by,
                 )
             )
+    return []
 
 
-        
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/preflight/",
+    response=PreflightDecisionOut,
+)
+async def decide_preflight(request, project_id: str, channel_id: str, topic_id: str, message_id: str, payload: PreflightDecisionIn):
+    """
+    Decide a persona's proposal (see chat/services.py decide_preflight). The
+    right is persona.approve_run at the topic: whoever can talk to the persona
+    here can approve what it proposes.
+    """
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    try:
+        return await chat_svc.decide_preflight(topic=topic, message_id=message_id, user=user, decision=payload.decision, note=payload.note)
+    except chat_svc.PreflightError as exc:
+        raise HttpError(exc.status, str(exc))
 
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/approvals/{call_id}/",
+    response=ToolApprovalDecisionOut,
+)
+async def decide_tool_approval(request, project_id: str, channel_id: str, topic_id: str, message_id: str, call_id: str, payload: ToolApprovalDecisionIn):
+    """
+    Allow or deny a tool call a persona holds for approval (chat/services.py
+    decide_tool_approval): persona.approve_run at the topic, plus
+    persona.update on the project when `always` changes the persona.
+    """
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    try:
+        return await chat_svc.decide_tool_approval(topic=topic, message_id=message_id, call_id=call_id, user=user, decision=payload.decision, always=payload.always)
+    except chat_svc.ApprovalError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/stop/",
+    response=StopMessageOut,
+)
+async def stop_message(request, project_id: str, channel_id: str, topic_id: str, message_id: str):
+    """
+    End a persona reply that is still streaming. The reply is its caller's to
+    stop (W22, the owner's rule); a reply from before the caller was recorded
+    keeps the earlier rule -- anyone who can read the topic. The relay keeps
+    what has streamed so far and marks the message stopped; the reader sees
+    the effect on the bubble itself, not in a toast.
+    """
+    from .stop_signals import stop_signals
+
+    _company, user, _project, _channel, topic = await _resolve_topic(
+        request, project_id, channel_id, topic_id
+    )
+    outcome = await sync_to_async(chat_svc.request_stop_for_message)(topic, message_id, user)
+    if outcome == "not_found":
+        raise HttpError(404, "Message not found.")
+    if outcome == "not_owner":
+        raise HttpError(403, "Only the person who called the persona can stop this reply.")
+    if outcome == "finished":
+        raise HttpError(409, "This reply has already finished.")
+    if outcome == "orphaned":
+        # No relay is running this reply (nucleus restarted mid-run). It has
+        # just been failed with that reason; tell everyone in the topic.
+        from .reasons import ORPHANED_RUN_REASON
+        await chat_svc.publish_async(chat_svc.topic_channel(topic_id), {
+            "type": "message_error", "id": message_id, "content": ORPHANED_RUN_REASON,
+        })
+        return {"stopping": True}
+    await stop_signals().request_stop(message_id)
+    return {"stopping": True}
+
+
+@search_router.get("/messages/", response=List[MessageSearchOut])
+async def search_messages(request, q: str, limit: int = 20):
+    """
+    Find a message across every chat this person can see (W19).
+
+    The worker ranks by meaning; this filters by what the person may see and
+    builds each result from our own rows. When the worker cannot answer, the
+    same visible messages are searched literally instead of failing.
+    """
+    from chat import search as search_svc
+
+    user = request.auth
+    query = (q or "").strip()[:search_svc.QUERY_MAX]
+    if not query:
+        return []
+    limit = max(1, min(int(limit or 20), search_svc.RESULTS_MAX))
+    company = await sync_to_async(ws_svc.get_company)()
+    if not company:
+        raise HttpError(503, "Server not initialised.")
+
+    topic_ids = await sync_to_async(search_svc.visible_topic_ids)(user, company)
+    if not topic_ids:
+        return []
+    project_ids = await sync_to_async(lambda: [str(p.id) for p in ws_svc.list_projects(company, user)])()
+
+    try:
+        ranked = await search_svc.semantic_ids(company, query, project_ids, limit)
+    except Exception:  # noqa: BLE001 -- a search box must never answer with a 500
+        logger.warning("[search] the ranking step failed; searching the rows instead", exc_info=True)
+        ranked = []
+    if ranked:
+        rows = await sync_to_async(lambda: list(search_svc._rows(ranked, topic_ids)))()
+        ordered = search_svc.order_by(ranked, rows)
+        if ordered:
+            return [search_svc._result(m, query) for m in ordered[:limit]]
+    # Nothing from the worker, or nothing of it visible: search the rows directly.
+    rows = await sync_to_async(search_svc.literal)(query, topic_ids, limit)
+    return [search_svc._result(m, query) for m in rows]
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/nudge/",
+    response={200: dict},
+)
+async def nudge_message(request, project_id: str, channel_id: str, topic_id: str, message_id: str, payload: NudgeIn):
+    """
+    Add to a persona reply that is still running (W8 Nudge): the worker takes
+    it at the persona's next step; one it never reaches is posted as a
+    message when the reply ends. The reply is its caller's to steer.
+    """
+    from .stop_signals import stop_signals
+
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    outcome = await sync_to_async(chat_svc.request_nudge_for_message)(topic, message_id, user)
+    if outcome == "not_found":
+        raise HttpError(404, "Message not found.")
+    if outcome == "not_owner":
+        raise HttpError(403, "Only the person who called the persona can nudge this reply.")
+    if outcome == "finished":
+        raise HttpError(409, "This reply has already finished.")
+    await stop_signals().add_nudge(message_id, {"text": payload.text, "user_id": str(user.id), "name": user.display_name or user.username})
+    return {"queued": True}

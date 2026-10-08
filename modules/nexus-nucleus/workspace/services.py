@@ -2,10 +2,14 @@
 Business logic for Workspace (Projects, Channels, Topics), Members, and Team.
 All queries are scoped to company — safe for multi-tenant use.
 """
+import base64
 import copy
 import hashlib
+import hmac
+import json
 import logging
 import secrets
+import time
 import uuid
 from datetime import timedelta
 
@@ -70,6 +74,97 @@ _PROJECT_SCOPED_KEYS = {
     "filesystem": "root_dir",
     "shell": "cwd",
 }
+
+
+# ── Terminal (W21) ────────────────────────────────────────────────────────────
+TERMINAL_TICKET_TTL = 60
+TERMINAL_WS_PATH = "/terminal/ws"
+
+
+class TerminalError(Exception):
+    """A session that cannot be opened; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def sign_terminal_ticket(claims: dict, secret: str, ttl: int = TERMINAL_TICKET_TTL) -> str:
+    """
+    `<base64url claims>.<hmac-sha256>` under the internal key -- the worker's
+    apps/managers/terminal.py verify_ticket() is the other half of this format.
+    """
+    body = {**claims, "exp": int(time.time()) + ttl}
+    payload = _b64url(json.dumps(body, separators=(",", ":"), sort_keys=True).encode())
+    return f"{payload}.{hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()}"
+
+
+def terminal_cwd(project) -> str:
+    """Where a shell for this project starts: its shell capability's cwd, else its provisioned folder."""
+    from nucleus.models import MCPServer
+    row = MCPServer.objects.filter(project=project, is_internal=True, is_active=True).first()
+    shell = (row.capability_config or {}).get("shell") if row else None
+    return (shell or {}).get("cwd") or os.path.join(settings.PROJECTS_ROOT, get_project_folder_name(project))
+
+
+def open_terminal_session(project, user) -> dict:
+    """
+    A ticket for one shell session in the project's folder on the server. The
+    worker starts the shell when the app connects to the WebSocket with it;
+    nothing runs here. Logged, never posted to the chat.
+    """
+    if not getattr(settings, "INTERNAL_API_KEY", ""):
+        raise TerminalError(503, "The worker is not configured on this server.")
+    cwd = terminal_cwd(project)
+    if not os.path.isdir(cwd):
+        raise TerminalError(409, "This project has no folder on the server, so there is nowhere to open a shell.")
+    logger.info("[terminal] session user=%s project=%s cwd=%s", user.id, project.id, cwd)
+    ticket = sign_terminal_ticket(
+        {"kind": "terminal", "project_id": str(project.id), "project_name": project.name, "user_id": str(user.id), "cwd": cwd},
+        settings.INTERNAL_API_KEY,
+    )
+    return {"ticket": ticket, "path": TERMINAL_WS_PATH, "expires_in": TERMINAL_TICKET_TTL}
+
+
+BROWSER_WS_PATH = "/browser/ws"
+
+
+class BrowserError(Exception):
+    """A session that cannot be opened; `status` is the HTTP answer."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def open_browser_session(project, user, *, width: int = 1280, height: int = 800, url: str = "") -> dict:
+    """
+    A ticket for one live-browser session: a real Chromium on the server whose
+    picture the app draws and whose mouse and keyboard it drives. Nothing starts
+    here -- the worker opens it when the app connects with this ticket.
+
+    Ticketed rather than header-authenticated for the same reason the terminal
+    is: a WebSocket in a browser cannot carry an Authorization header.
+    """
+    if not getattr(settings, "INTERNAL_API_KEY", ""):
+        raise BrowserError(503, "The worker is not configured on this server.")
+    logger.info("[browser] session user=%s project=%s", user.id, project.id)
+    ticket = sign_terminal_ticket(
+        {
+            # A ticket says what it is for: both kinds are signed with the same
+            # key, so without this a terminal ticket would open a browser for
+            # someone who holds only project.terminal (audit, 2026-09-21).
+            "kind": "browser",
+            "project_id": str(project.id), "project_name": project.name, "user_id": str(user.id),
+            "width": int(width), "height": int(height), "url": (url or "")[:2000],
+        },
+        settings.INTERNAL_API_KEY,
+    )
+    return {"ticket": ticket, "path": BROWSER_WS_PATH, "expires_in": TERMINAL_TICKET_TTL}
 
 
 def provision_project_folder_and_mcp(project):
@@ -141,6 +236,34 @@ def create_project(company, user, name: str, description: str = None):
     if admin_role:
         PermissionChecker.assign_role(user, admin_role, project, granted_by=user)
 
+    return project
+
+
+# Long enough for real working instructions, short enough to sit in every
+# persona prompt without crowding the conversation out of the context window.
+PROJECT_BRIEF_MAX = 8_000
+
+
+def update_project(project, user, *, brief: str | None = None, description: str | None = None):
+    """
+    Edit a project's brief and/or description. Whitespace around the brief is
+    trimmed; over the cap is refused before anything is written. Caller checks
+    project.update.
+    """
+    fields = []
+    if brief is not None:
+        brief = brief.strip()
+        if len(brief) > PROJECT_BRIEF_MAX:
+            raise ValueError(f"The brief is {len(brief):,} characters; the limit is {PROJECT_BRIEF_MAX:,}.")
+        project.brief = brief
+        project.brief_updated_by = user
+        project.brief_updated_at = timezone.now()
+        fields += ["brief", "brief_updated_by", "brief_updated_at"]
+    if description is not None:
+        project.description = description.strip()
+        fields.append("description")
+    if fields:
+        project.save(update_fields=fields + ["updated_at"])
     return project
 
 
@@ -598,9 +721,14 @@ def list_members(company) -> list:
     return [
         {
             "user_id": str(m.user.id),
+            # The same name rule as everywhere else (DECISIONS.md §3): the
+            # display name once set, else the email local-part. The app shows
+            # this and never derives a name from the email itself.
+            "name": m.user.get_display_name(),
             "email": m.user.email,
             "role": m.role,
             "invited_by": m.invited_by.email if m.invited_by else None,
+            "invited_by_name": m.invited_by.get_display_name() if m.invited_by else None,
             "joined_at": m.joined_at.isoformat(),
             "avatar": m.user.get_avatar_url(),  # #148
         }

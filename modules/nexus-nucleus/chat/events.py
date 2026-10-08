@@ -43,6 +43,28 @@ def mention_refused_event(msg_id: str, actor_user_id: str, refusals: list[dict])
     return {"type": "mention_refused", "id": msg_id, "actor_user_id": actor_user_id, "refusals": refusals}
 
 
+def tool_activity_end_event(msg_id: str, event: dict) -> dict | None:
+    """
+    The tool_activity_end payload for a worker tool_call_end event: how the
+    call went, so the client can close the row tool_activity opened. None
+    when the event names no tool.
+    """
+    result = event.get("tool_result") or {}
+    name = (result.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "type": "tool_activity_end",
+        "id": msg_id,
+        "tool": name,
+        "ok": bool(result.get("ok")),
+        "duration_ms": int(result.get("duration_ms") or 0),
+        "preview": result.get("preview"),
+        "error": result.get("error"),
+        "url": result.get("url"),
+    }
+
+
 def tool_activity_event(msg_id: str, event: dict) -> dict | None:
     """
     The tool_activity payload for a worker tool_call_start event, or None when
@@ -61,3 +83,18 @@ def tool_activity_event(msg_id: str, event: dict) -> dict | None:
         "tool": name,
         "label": TOOL_ACTIVITY_LABELS.get(name) or f"Using {name.replace('_', ' ')}",
     }
+
+
+def tool_approval_event(msg_id: str, approval: dict) -> dict:
+    """A tool call the worker holds for a person: the record as the row now holds it (pending)."""
+    return {"type": "tool_approval", "id": msg_id, "approval": approval}
+
+
+def tool_approval_decided_event(msg_id: str, approval: dict) -> dict:
+    """A person allowed or denied a held call: the record with who decided what."""
+    return {"type": "tool_approval_decided", "id": msg_id, "approval": approval}
+
+
+def preflight_decided_event(msg_id: str, preflight: dict) -> dict:
+    """A person decided a proposal: the whole preflight record, as the row now holds it."""
+    return {"type": "preflight_decided", "id": msg_id, "preflight": preflight}

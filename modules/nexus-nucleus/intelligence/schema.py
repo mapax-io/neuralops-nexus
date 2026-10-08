@@ -62,6 +62,21 @@ class ModelConfigPatchIn(Schema):
     config: Optional[dict] = None
 
 
+class ModelCheckIn(Schema):
+    """What the Register / Edit model dialogs verify before saving. `config_id`: use that row's stored key when none is given."""
+    provider: str
+    model_id: str
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    config_id: Optional[str] = None
+
+
+class ModelCheckOut(Schema):
+    ok: bool
+    reason: Optional[str] = None    # why it cannot be used, in the reader's words; None when ok
+    latency_ms: Optional[int] = None
+
+
 class ModelConfigOut(Schema):
     id: str
     name: str
@@ -79,6 +94,8 @@ class ModelConfigOut(Schema):
     config: dict
     is_active: bool
     has_api_key: bool
+    # This config is the server's utility model (one per server, see CompanyAIConfig).
+    is_utility: bool = False
     # Projects this config is attached to (visibility gate) -- lets clients
     # render and manage attachments without a second endpoint.
     project_ids: list[str] = []
@@ -230,10 +247,14 @@ class PersonaIn(Schema):
     project_id: str
     model_config_id: str                            # REQUIRED
     advisor_model_config_id: Optional[str] = None   # 0..1
+    fallback_model_config_ids: list[str] = Field(default_factory=list)   # 0..3, in order
     mcp_server_ids: list[str] = Field(default_factory=list)   # 0..N
     temperature: float = 0.7
     max_tokens: int = 4096
     max_steps: int = 10
+    acts_after_approval: bool = False
+    tool_levels: dict[str, str] = Field(default_factory=dict)
+    recall_enabled: bool = True
     prompt: PromptIn
     # REMOVED: source_type, model_id, agent_id
 
@@ -255,10 +276,14 @@ class PersonaPatchIn(Schema):
     model_config_id: Optional[str] = None
     advisor_model_config_id: Optional[str] = None
     clear_advisor: bool = False
+    fallback_model_config_ids: Optional[list[str]] = None   # [] clears all; None: not sent
     mcp_server_ids: Optional[list[str]] = None      # [] clears all
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     max_steps: Optional[int] = None
+    acts_after_approval: Optional[bool] = None
+    tool_levels: Optional[dict[str, str]] = None   # {} clears every level
+    recall_enabled: Optional[bool] = None
     prompt: Optional[PromptIn] = None
 
 
@@ -270,16 +295,56 @@ class PersonaOut(Schema):
     # Named `model` / `advisor_model`, NOT `model_config` -- see module docstring.
     model: ModelConfigRef
     advisor_model: Optional[ModelConfigRef] = None
+    # In order: what answers when `model` cannot (W7).
+    fallback_models: list[ModelConfigRef] = Field(default_factory=list)
     mcp_servers: list[MCPServerRef] = Field(default_factory=list)
     temperature: float
     max_tokens: int
     max_steps: int
+    acts_after_approval: bool = False
+    tool_levels: dict[str, str] = Field(default_factory=dict)
+    recall_enabled: bool = True
     prompt: Optional[PromptOut] = None
     is_active: bool
     # Server-relative media URL of the shadow user's assigned avatar --
     # personas already show it in chat; management UIs need it too.
     avatar: Optional[str] = None
     # REMOVED: source_type, model_id, agent_id
+
+
+# ── Routine (W4) ──────────────────────────────────────────────────────────────
+
+class RoutineIn(Schema):
+    name: str
+    title: str
+    purpose: str = ""
+    instructions: str
+    allowed_capabilities: Optional[list[str]] = None   # None = the persona's own tools
+    model_config_id: Optional[str] = None
+
+
+class RoutinePatchIn(Schema):
+    name: Optional[str] = None
+    title: Optional[str] = None
+    purpose: Optional[str] = None
+    instructions: Optional[str] = None
+    allowed_capabilities: Optional[list[str]] = None
+    clear_capabilities: bool = False   # back to the persona's own tools
+    model_config_id: Optional[str] = None
+    clear_model: bool = False          # back to the persona's own model
+
+
+class RoutineOut(Schema):
+    id: str
+    project_id: str
+    name: str
+    title: str
+    purpose: str
+    instructions: str
+    allowed_capabilities: Optional[list[str]] = None
+    model: Optional[ModelConfigRef] = None
+    is_builtin: bool
+    created_by_id: Optional[str] = None
 
 
 # ── PromptTemplate ────────────────────────────────────────────────────────────
@@ -327,3 +392,59 @@ class CompanyAIConfigOut(Schema):
     embedding_model: str
     embedding_base_url: str
     default_llm_model: str
+    utility_model_id: Optional[str] = None
+
+
+# ── Recall (W5) ───────────────────────────────────────────────────────────────
+
+class RecallSourceOut(Schema):
+    topic_id: str
+    channel_id: Optional[str] = None
+    topic_title: str
+    message_id: Optional[str] = None
+
+
+class RecallEntryOut(Schema):
+    id: str
+    project_id: str
+    kind: str                       # decision | fact | preference
+    text: str
+    author_persona_id: Optional[str] = None
+    author_name: Optional[str] = None        # the persona that recorded it, or the person who typed it
+    source: Optional[RecallSourceOut] = None  # where it came from; None when recorded by hand
+    created_at: str
+    updated_at: str
+
+
+class RecallPatchIn(Schema):
+    kind: Optional[str] = None
+    text: Optional[str] = None
+
+
+# ── Catalogues (W11, W18) ─────────────────────────────────────────────────────
+# Content, not records: both are hand-kept modules served as-is, so the app can
+# offer "here is what people usually add" without anyone reading a README.
+
+class MCPCatalogEntryOut(Schema):
+    id: str
+    title: str
+    description: str
+    category: str
+    server_type: str
+    transport: str
+    command: Optional[str] = None
+    url: Optional[str] = None
+    auth_type: str
+    needs: list[str] = []      # what to have ready BEFORE adding it; never a secret
+    docs: str = ""
+
+
+class PersonaCatalogEntryOut(Schema):
+    id: str
+    name: str
+    role: str
+    purpose: str
+    system_prompt: str
+    capabilities: list[str] = []
+    routines: list[str] = []
+    acts_after_approval: bool = False

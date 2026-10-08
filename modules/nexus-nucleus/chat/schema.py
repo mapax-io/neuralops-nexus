@@ -28,12 +28,25 @@ class MessageOut(Schema):
     type: str
     message_type: Optional[str] = None
     content: str
-    render_as: str = "text"       # M7: "text" | "code" | "html" | "terminal"
+    render_as: str = "text"       # M7: "text" | "code" | "html" | "terminal" | "chart"
     output_type: str = "text"     # M7: "text" | "chart" | "code" | "table" | ...
+    stopped: bool = False         # the reader ended the reply; content is what streamed
+    status: str = "completed"     # pending | completed | failed — a failed reply's content is its reason
+    # Team AI operations (additive; the app feature-detects each):
+    activity_trail: list = []                 # [{tool, ok, duration_ms, preview}] — what the persona did
+    preflight: Optional[dict] = None          # a proposed run awaiting a decision, and the decision
+    approvals: list = []                      # [{call_id, tool, args_preview, status, decided_by_name, …}] — held tool calls
+    answered_by_model: Optional[str] = None   # set when a fallback model answered
+    recalled: int = 0                         # entries this reply recorded in the project's Recall (W5)
+    nudges: list = []                         # what the caller added while it ran, taken by the persona (W8)
+    usage: Optional[dict] = None              # {prompt_tokens, output_tokens, context_window} from the worker
     sender_name: Optional[str] = None
     sender_id: Optional[str] = None
     sender_avatar: Optional[str] = None  # #148 -- absolute URL, or None
     sender_type: str
+    triggered_by_id: Optional[str] = None    # whose reply this is -- the caller, who alone may stop it (W22)
+    triggered_by_name: Optional[str] = None
+    runbook_run: Optional[dict] = None       # {id, title, step, of} when the reply is a runbook step (W6)
     persona_id: Optional[str] = None  # frozen at send-time -- distinguishes two
                                        # personas that have shared the same name
                                        # over time (e.g. deleted + recreated "Nova")
@@ -55,3 +68,57 @@ class SendMessageOut(Schema):
     channel: str
     # Only the AI reply is withheld -- the message above always posted.
     refusals: list[MentionRefusalOut] = []
+
+
+class StopMessageOut(Schema):
+    stopping: bool
+
+
+class PreflightDecisionIn(Schema):
+    decision: str  # approve | adjust | decline
+    note: Optional[str] = None
+
+
+class PreflightDecisionOut(Schema):
+    status: str
+    preflight: dict
+
+
+class ToolApprovalDecisionIn(Schema):
+    decision: str  # allow | deny
+    always: bool = False  # allow, and set that tool to Auto on the persona
+
+
+class ToolApprovalDecisionOut(Schema):
+    status: str
+    approval: dict
+
+
+class NudgeIn(Schema):
+    """What the caller adds to a reply that is still running (W8 Nudge)."""
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("A nudge needs some text.")
+        if len(v) > 2000:
+            raise ValueError("A nudge is at most 2,000 characters.")
+        return v
+
+
+class MessageSearchOut(Schema):
+    """One hit: enough to show it and to jump to it (W19)."""
+    message_id: str
+    topic_id: str
+    topic_title: str
+    channel_id: str
+    channel_name: str
+    project_id: str
+    project_name: str
+    sender_name: Optional[str] = None
+    sender_type: str
+    preview: str
+    created_at: str

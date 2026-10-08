@@ -3,7 +3,7 @@ OutputType registry — maps output type names to their specs.
 
 Each spec declares:
   name                 — unique key used in @mentions and markers ("chart", "code", ...)
-  render_as            — the frontend renderer to use ("html" | "code" | "text" | "terminal")
+  render_as            — the frontend renderer to use ("html" | "code" | "text" | "terminal" | "chart")
   label                — human-readable label for UI
   icon                 — lucide-react icon name
   system_instruction   — injected into the system prompt to guide the AI
@@ -17,11 +17,18 @@ from dataclasses import dataclass, field
 @dataclass
 class OutputTypeSpec:
     name: str
-    render_as: str                         # "text" | "code" | "html" | "terminal"
+    render_as: str                         # "text" | "code" | "html" | "terminal" | "chart"
     label: str
     icon: str
     system_instruction: str
     example_prompts: list[str] = field(default_factory=list)
+
+
+# Types whose turn must not be interrupted by a question: a plan is itself the
+# question, and a choice prompt asks nothing further. The prompt builder leaves
+# the choice exception out of these turns and recovery never files their reply
+# as a choice.
+TYPES_WITHOUT_CHOICE = frozenset({"preflight", "choice"})
 
 
 class _OutputTypeRegistry:

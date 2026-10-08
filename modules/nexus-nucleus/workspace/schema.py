@@ -4,6 +4,19 @@ from ninja import Schema
 
 # ── Projects / Channels / Topics ──────────────────────────────────────────────
 
+class TerminalSessionOut(Schema):
+    ticket: str
+    path: str
+    expires_in: int
+
+
+class BrowserSessionIn(Schema):
+    """How big the app will draw it, and where to start."""
+    width: int = 1280
+    height: int = 800
+    url: str = ""
+
+
 class ProjectCreateRequest(Schema):
     name: str
     description: Optional[str] = None
@@ -22,6 +35,15 @@ class ProjectOut(Schema):
     slug: str
     description: Optional[str] = None
     channels: List[ChannelOut] = []
+    # The brief rides only on the detail route; lists carry its length so the
+    # app can say "Brief: 1,200 chars" without shipping every project's text.
+    brief: Optional[str] = None
+    brief_length: int = 0
+
+
+class ProjectUpdateRequest(Schema):
+    brief: Optional[str] = None
+    description: Optional[str] = None
 
 
 class ChannelCreateRequest(Schema):
@@ -106,9 +128,11 @@ class SetMemberAccessIn(Schema):
 
 class MemberOut(Schema):
     user_id: str
+    name: str  # display name, else the email local-part (User.get_display_name)
     email: str
     role: str
     invited_by: Optional[str] = None
+    invited_by_name: Optional[str] = None
     joined_at: str
     avatar: Optional[str] = None  # #148
 
@@ -171,3 +195,24 @@ class AvailablePersonaOut(Schema):
     # REMOVED: source_type -- the model/agent discriminator went away with
     # AIAgent. A persona's "agent-ness" is now emergent (does it have MCP
     # servers attached), and this picker does not need it.
+
+
+# ── Deliverables (W10) ────────────────────────────────────────────────────────
+
+class DeliverableKeepIn(Schema):
+    """Keep a reply: which message, under what name. The kind and content come from the message."""
+    message_id: str
+    title: str
+
+
+class DeliverableOut(Schema):
+    id: str
+    project_id: str
+    title: str
+    kind: str                       # html | chart | table | form | text
+    version: int
+    content: Optional[str] = None   # absent from the list, present when one is opened
+    source_message_id: Optional[str] = None
+    created_by_id: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: str

@@ -26,14 +26,56 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from apps.factories.context_source import ContextSourceFactory
-from apps.output_types.classifier import classify_output_type
+from apps.output_types.registry import TYPES_WITHOUT_CHOICE
 from apps.schemas.trigger import (
     HistoryMessage,
     PersonaConfig,
     TriggerJob,
     TriggerSwarmJob,
 )
+from apps.core.config import settings
+from apps.implementations.context_sources.recall.recall_context_source import RECALL_LABEL
 
+
+BRIEF_HEADING = "Project brief — applies to every reply in this project:"
+
+
+def compose_system_prompt(project_brief: str | None, persona_prompt: str) -> str:
+    """
+    The system prompt a persona runs with: the project's brief in its own
+    block FIRST, then the persona's own prompt. Order is deliberate -- the
+    brief is the team's standing instruction, the persona prompt its role
+    within it. No brief means the persona prompt alone, byte for byte.
+    """
+    brief = (project_brief or "").strip()
+    if not brief:
+        return persona_prompt
+    return f"{BRIEF_HEADING}\n{brief}\n\n{persona_prompt}"
+
+CHOICE_EXCEPTION = (
+    "One exception to the format above: when you genuinely cannot continue without the person choosing "
+    "between a few concrete options (not a rhetorical question, not something you could decide or look up "
+    "yourself), answer with ONLY a choice prompt, in exactly this form and nothing else:\n"
+    "<<<OUTPUT:choice>>>\n"
+    '{ "question": "one clear question", "options": [ { "id": "short-id", "label": "the option", "hint": "one line of consequence, optional" } ], "multiple": false }\n'
+    "<<<END_OUTPUT>>>\n"
+    "Two to six options; multiple is true only when more than one may be picked together. "
+    "The person's pick comes back as their next message, and you carry on from there."
+)
+
+
+def with_output_instruction(system_content: str, output_type_instruction: str | None) -> str:
+    """
+    The system prompt with the resolved type's format instruction, plus the one
+    standing exception -- a choice prompt when the persona must ask -- for
+    every type but a plan or a choice itself. Both prompt paths use this.
+    """
+    if not output_type_instruction:
+        return system_content
+    block = output_type_instruction
+    if not any(f"<<<OUTPUT:{name}>>>" in output_type_instruction for name in TYPES_WITHOUT_CHOICE):
+        block = f"{output_type_instruction}\n\n{CHOICE_EXCEPTION}"
+    return f"{system_content}\n\n--- OUTPUT FORMAT INSTRUCTION ---\n{block}"
 
 class NewImprovedPromptBuilder:
     async def build(
@@ -41,6 +83,7 @@ class NewImprovedPromptBuilder:
         job: TriggerJob | TriggerSwarmJob,
         persona: PersonaConfig,
         history: list[HistoryMessage],
+        output_type_instruction: str | None = None,
     ) -> Sequence[ModelMessage]:
         """
         Assemble messages array.
@@ -49,16 +92,16 @@ class NewImprovedPromptBuilder:
         persona/history are passed explicitly rather than read off `job`
         (#131) -- job only carries persona_id/topic_id; AgenticManager.run()
         resolves both via nucleus_client before calling this.
+
+        `output_type_instruction` is the resolved spec's system_instruction,
+        resolved by the manager (which needs the same spec for render_as) and
+        passed in -- never the type's name.
         """
         messages: list[ModelMessage] = []
         context_chunks: list[Chunk] = []
         system_content = persona.system_prompt
 
-        try:
-            output_type_instruction = await classify_output_type(job.message)
-        except Exception:
-            output_type_instruction = "text"
-
+        recall_chunks: list[Chunk] = []
         for source in job.context_sources:
             plugin = ContextSourceFactory.get(source.type)
             filter = (
@@ -69,17 +112,13 @@ class NewImprovedPromptBuilder:
             source_chunks = await plugin.retrieve(
                 query=job.message,
                 collection_id=source.collection_id,
-                top_k=5,
+                top_k=settings.RECALL_TOP_K if source.type == "recall" else 5,
                 filter=filter,
             )
-            context_chunks.extend(source_chunks)
+            # What the team recorded (W5) is its own block, not one more source.
+            (recall_chunks if source.type == "recall" else context_chunks).extend(source_chunks)
 
-        if output_type_instruction:
-            system_content = (
-                f"{system_content}\n\n"
-                f"--- OUTPUT FORMAT INSTRUCTION ---\n"
-                f"{output_type_instruction}"
-            )
+        system_content = with_output_instruction(system_content, output_type_instruction)
 
         messages.append(ModelRequest(parts=[SystemPromptPart(content=system_content)]))
 
@@ -105,6 +144,13 @@ class NewImprovedPromptBuilder:
             )
 
             messages.append(ModelResponse(parts=[TextPart(content=context_ack)]))
+
+        # 2b. What the team has recorded about the project (W5) -- after the
+        #     attached sources, before the conversation, so it reads as
+        #     standing knowledge rather than part of this exchange.
+        if recall_chunks:
+            messages.append(ModelRequest(parts=[UserPromptPart(content=f"[{RECALL_LABEL}]\n\n{self._format_recall(recall_chunks)}")]))
+            messages.append(ModelResponse(parts=[TextPart(content="Noted.")]))
 
         # 3. Conversation history (role: user/assistant only — strip sender_name)
         #    For assistant messages that contain rendered HTML (charts, tables, diagrams),
@@ -157,6 +203,14 @@ class NewImprovedPromptBuilder:
             return stripped
         return stripped[:MAX_CHARS] + "\n<!-- ... truncated ... -->"
 
+    def _format_recall(self, chunks: list[Chunk]) -> str:
+        """One line per entry: its kind and who recorded it, then the text."""
+        lines = []
+        for chunk in chunks:
+            who = chunk.metadata.get("author_name") or "the team"
+            lines.append(f"- ({chunk.metadata.get('kind', 'fact')}, {who}) {chunk.text}")
+        return "\n".join(lines)
+
     def _format_chunks(self, chunks: list[Chunk]) -> str:
         """Format chunks with source labels for clear attribution."""
         parts: list[str] = []
@@ -195,12 +249,7 @@ class PromptBuilder:
 
         # 1. System prompt — persona prompt + optional output type instruction
         system_content = persona.system_prompt
-        if output_type_instruction:
-            system_content = (
-                f"{system_content}\n\n"
-                f"--- OUTPUT FORMAT INSTRUCTION ---\n"
-                f"{output_type_instruction}"
-            )
+        system_content = with_output_instruction(system_content, output_type_instruction)
 
         if swarm_mode:
             system_content = (
