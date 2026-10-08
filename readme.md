@@ -314,6 +314,6 @@ Short version: fork [mapax-io/neuralops-nexus-backend](https://github.com/mapax-
 
 ## 5. License
 
-NeuralOps Nexus is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See [`LICENSE.md`](./LICENSE.md) for the full text.
+NeuralOps Nexus is licensed under the **NeuralOps Nexus Source Available License 1.0** — a source-available license, not an OSI-approved open source license. See [`LICENSE`](./LICENSE) for the full text.
 
-In short: you're free to use, modify, and self-host this software, but if you run a modified version as a network service, you must make your modified source available to that service's users. See §13 of the license for the specifics.
+In short: you're free to use, modify, self-host, and distribute this software, but you may not offer it to third parties as a competing hosted or managed service, and you may not circumvent any license-gated functionality or strip the software's notices. See the LICENSE file's "Limitations" section for the specifics.
