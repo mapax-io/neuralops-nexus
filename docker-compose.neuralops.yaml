@@ -412,7 +412,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./modules/nexus-ai:/nexus/ai
+      # modules/nexus-ai was renamed to modules/nexus-ai-legacy when the
+      # rebuild started (docs/NEXUS-AI-REVAMP.md §1.3). This service keeps
+      # running the LEGACY code — it is what nucleus-dev talks to until
+      # switch-over. The rebuilt module runs as nexus-ai-new below.
+      - ./modules/nexus-ai-legacy:/nexus/ai
       - neuralops_fastembed_cache_dev:/home/nexus/.cache/fastembed
       # Bind mount, not a named volume -- see nucleus-dev's comment above.
       - ./projects:/nexus/projects
@@ -430,6 +434,32 @@ services:
       - neuralops-network
     depends_on:
       - chromadb-dev
+      - nucleus-dev
+
+  # The REBUILT nexus-ai (docs/NEXUS-AI-REVAMP.md §1.3): built from
+  # modules/nexus-ai with its own pinned dependencies — NOT the shared
+  # neuralops image. nucleus-dev still talks to nexus-ai-dev (legacy);
+  # to test this one, point nucleus-dev's NEXUS_AI_URL at
+  # http://nexus-ai-new:8000. Switch-over per §1.3 is that one line.
+  # No host port on purpose — §1.3: no request from outside is accepted;
+  # the internal key (from secrets.env) is the second lock.
+  nexus-ai-new:
+    build:
+      context: ./modules/nexus-ai
+      dockerfile: docker/Dockerfile
+    image: nexus-ai:new-dev
+    profiles: ["dev"]
+    container_name: neuralops-nexus-ai-new
+    command: ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./modules/nexus-ai:/nexus/ai
+    env_file:
+      - ./neuralops/secrets.env
+    environment:
+      - NEXUS_NUCLEUS_URL=http://nucleus-dev:8000
+    networks:
+      - neuralops-network
+    depends_on:
       - nucleus-dev
 
   centrifugo-dev:
