@@ -25,6 +25,8 @@ from apps.schemas.trigger import ModelConfig
 log = logging.getLogger(__name__)
 
 CHECK_PROMPT = "Reply with the single word OK."
+# OpenAI's Responses API rejects max_output_tokens below 16 with a 400.
+CHECK_MAX_TOKENS = 16
 
 
 async def check_model(config: ModelConfig, timeout: float | None = None) -> dict:
@@ -36,7 +38,7 @@ async def check_model(config: ModelConfig, timeout: float | None = None) -> dict
     started = time.monotonic()
     try:
         agent = Agent(model=PydanticAIRunner.build_model(config))
-        await asyncio.wait_for(agent.run(CHECK_PROMPT, model_settings={"max_tokens": 5}), timeout)
+        await asyncio.wait_for(agent.run(CHECK_PROMPT, model_settings={"max_tokens": CHECK_MAX_TOKENS}), timeout)
     except asyncio.TimeoutError:
         return {"ok": False, "error_code": "timeout", "error": f"the model did not answer within {timeout:.0f}s (timed out)"}
     except Exception as exc:

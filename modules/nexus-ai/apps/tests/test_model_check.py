@@ -27,7 +27,7 @@ class FakeAgent:
         self.model = model
 
     async def run(self, prompt, model_settings=None):
-        assert model_settings == {"max_tokens": 5}
+        assert model_settings == {"max_tokens": 16}
         if isinstance(FakeAgent.outcome, BaseException):
             raise FakeAgent.outcome
         if FakeAgent.outcome == "hang":
