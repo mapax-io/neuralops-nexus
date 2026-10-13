@@ -22,3 +22,4 @@ class EngineSettings:
     history_depth: int = field(default_factory=lambda: int(_env("HISTORY_DEPTH", "10")))          # O3
     keepalive_seconds: float = field(default_factory=lambda: float(_env("KEEPALIVE_SECONDS", "30")))
     nucleus_timeout_seconds: float = field(default_factory=lambda: float(_env("NUCLEUS_TIMEOUT_SECONDS", "10")))
+    max_loaded_tools: int = field(default_factory=lambda: int(_env("MAX_LOADED_TOOLS", "12")))  # item 1

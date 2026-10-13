@@ -33,8 +33,11 @@ def _by_type(events: list[dict], kind: str) -> list[dict]:
 
 
 # ── T1: plain reply ────────────────────────────────────────────────────────────
-
 async def test_t1_plain_reply(harness):
+    """T1 — Plain reply: the stream opens, streams, and closes correctly.
+    message_start first, ≥1 message_delta, exactly ONE message_done, no error;
+    done.content == concatenated deltas == what the model sent — no text lost or
+    invented between the model, the live stream, and the saved message."""
     harness.provider.script.text = "The answer is forty-two."
     events = await harness.trigger()
 
@@ -50,10 +53,17 @@ async def test_t1_plain_reply(harness):
     assert dones[0]["content"] == concatenated == streamed
 
 
+
 # ── T2: system prompt once, project brief precedes it ──────────────────────────
 
 @pytest.mark.parametrize("shape", ["openai", "anthropic"])
 async def test_t2_system_prompt_once(harness, shape):
+    """T2 — System prompt appears exactly once; project brief precedes it.
+    With history present, the persona prompt lands in the request exactly once
+    (via instructions=, never system_prompt=, which pydantic-ai drops when
+    history is passed), the project brief sits ahead of it, and both history
+    messages reach the request. Checked on the captured request body, OpenAI
+    and Anthropic shapes."""
     model = openai_model(harness) if shape == "openai" else anthropic_model(harness)
     harness.nucleus.persona = make_persona(model, project_brief="BRIEF-MARKER applies here.")
     harness.nucleus.history = [
@@ -77,6 +87,10 @@ async def test_t2_system_prompt_once(harness, shape):
 
 @pytest.mark.parametrize("shape", ["openai", "anthropic"])
 async def test_t3_settings_reach_the_model(harness, shape):
+    """T3 — The persona's generation settings reach the provider request.
+    temperature and the output cap are present in the request body (Anthropic:
+    max_tokens; OpenAI: max_completion_tokens) — the 0.8.0 defect where both
+    were silently dropped (always 0.7 / 4096) must never return."""
     model = openai_model(harness) if shape == "openai" else anthropic_model(harness)
     harness.nucleus.persona = make_persona(model, temperature=0.3, max_tokens=777)
     await harness.trigger()
@@ -90,6 +104,12 @@ async def test_t3_settings_reach_the_model(harness, shape):
 # ── T4: Anthropic usage ────────────────────────────────────────────────────────
 
 async def test_t4_anthropic_usage(harness):
+    """T4 — Anthropic usage arithmetic, exact.
+    Provider reports 200 new + 500 cache-write (1h: 200) + 1000 cache-read +
+    300 out → the recorded UsageRecord: input 1700 (the pydantic-ai total),
+    uncached 200, read 1000, write-5m 300, write-1h 200, output 300, reasoning 0,
+    estimated false; the done event carries 1700/300 and the model's context
+    window. This is the input side of the billing formula."""
     harness.nucleus.persona = make_persona(anthropic_model(harness))
     harness.provider.script.usage = ANTHROPIC_USAGE
     events = await harness.trigger()
@@ -114,6 +134,10 @@ async def test_t4_anthropic_usage(harness):
 # ── T5: OpenAI usage ───────────────────────────────────────────────────────────
 
 async def test_t5_openai_usage(harness):
+    """T5 — OpenAI usage arithmetic, exact.
+    prompt 1200 (cached 1000), completion 300 (reasoning 120) → input 1200,
+    uncached 200, cache read 1000, writes 0, output 300, reasoning 120,
+    estimated false. Reasoning is counted INSIDE output, never added on top."""
     harness.provider.script.usage = OPENAI_USAGE
     await harness.trigger()
 
@@ -130,6 +154,11 @@ async def test_t5_openai_usage(harness):
 # ── T6: cut stream, OpenAI shape ───────────────────────────────────────────────
 
 async def test_t6_cut_stream_openai(harness):
+    """T6 — Cut stream, OpenAI shape: no error, usage estimated.
+    The provider cuts the SSE stream mid-body (pydantic-ai raises nothing; all
+    counts 0, finish_reason reads 'stop'). The reply still completes, and the
+    record is estimated=true with output estimated from the received text and
+    input from the request — tokens are never silently lost."""
     harness.provider.script.text = "Hello from the fake model."
     harness.provider.script.cut_after = 3  # role chunk + two words, then the stream just ends
     events = await harness.trigger()
@@ -147,6 +176,11 @@ async def test_t6_cut_stream_openai(harness):
 # ── T7: cut stream, Anthropic shape ────────────────────────────────────────────
 
 async def test_t7_cut_stream_anthropic(harness):
+    """T7 — Cut stream, Anthropic shape: real input counts kept, output re-estimated.
+    finish_reason arrives empty and output_tokens=1 (the provisional first-event
+    count). The record is estimated=true, input/cache counts kept exactly as
+    reported (1700 / 1000 / 300+200), output estimated from the received text —
+    never billed as the bogus 1."""
     harness.nucleus.persona = make_persona(anthropic_model(harness))
     harness.provider.script.usage = ANTHROPIC_USAGE
     harness.provider.script.cut_after = 4  # message_start, block_start, two deltas
@@ -166,6 +200,11 @@ async def test_t7_cut_stream_anthropic(harness):
 # ── T8: client disconnects after 1 s ───────────────────────────────────────────
 
 async def test_t8_client_disconnect(harness):
+    """T8 — Client disconnects mid-stream: run cancelled, usage still recorded.
+    The reader walks away after the first delta. The run is cancelled, the
+    upstream model stream stops, and record_usage is still called exactly once
+    with estimated=true (under a shield) — a stopped run never loses its usage,
+    the 0.8.0 defect this exists to block."""
     harness.provider.script.text = " ".join(["word"] * 400)
     harness.provider.script.delay_between = 0.1  # ~40 s of stream — far longer than the test
     job = harness.job()
@@ -195,6 +234,10 @@ async def test_t8_client_disconnect(harness):
 # ── T9: model returns HTTP 500 ─────────────────────────────────────────────────
 
 async def test_t9_model_http_500(harness):
+    """T9 — Model returns HTTP 500: exactly one clean error event.
+    One message_error (with text), no message_done, the connection never just
+    dies mid-body — and usage is still recorded (estimated), so a failed call's
+    input is not free."""
     harness.provider.script.status = 500
     events = await harness.trigger(timeout=120)
 
@@ -210,6 +253,10 @@ async def test_t9_model_http_500(harness):
 # ── T10: keepalive on silence, still exactly one final event ───────────────────
 
 async def test_t10_keepalive(harness):
+    """T10 — Keepalive on silence; still exactly one final event.
+    With the keepalive window at 0.2s and a slow model, keepalive events are
+    emitted during the silence (so nucleus's read timeout never fires) and the
+    stream still ends with exactly one final event — a message_done."""
     os.environ["KEEPALIVE_SECONDS"] = "0.2"
     harness.provider.script.text = "one two three"
     harness.provider.script.delay_between = 0.5
@@ -223,6 +270,10 @@ async def test_t10_keepalive(harness):
 # ── T14: unplaced-feature fields are accepted and ignored ──────────────────────
 
 async def test_t14_unplaced_fields(harness):
+    """T14 — Unplaced-feature fields are accepted and ignored.
+    A job carrying preflight, approved_plan, routine_id, step_context,
+    output_type and context_sources still produces a normal plain reply —
+    the 0.8.0 payload validates against the new module unchanged."""
     job = harness.job(
         preflight=True, approved_plan="the plan", routine_id="r1",
         step_context="step one said hello", output_type="chart",
@@ -236,6 +287,10 @@ async def test_t14_unplaced_fields(harness):
 # ── T15: record_usage fails — the reply is still good ──────────────────────────
 
 async def test_t15_record_usage_failure(harness):
+    """T15 — record_usage fails: the reply is still good.
+    The usage endpoint answers 500; the reply still ends with message_done and
+    no error event — a billing hiccup is logged, never turned into a failed
+    reply."""
     harness.nucleus.usage_status = 500
     events = await harness.trigger()
     assert len(_by_type(events, "message_done")) == 1
@@ -245,6 +300,9 @@ async def test_t15_record_usage_failure(harness):
 # ── auth: the internal key is checked ──────────────────────────────────────────
 
 async def test_internal_key_required(harness):
+    """Auth — a wrong X-Internal-Key is rejected with 401.
+    The internal key is the service's only lock (no public port is the other),
+    so the trigger endpoint must refuse anything without the right key."""
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{harness.app_url}/api/v1/trigger/", json=harness.job(),

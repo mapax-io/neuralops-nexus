@@ -31,7 +31,8 @@ def make_model(provider: str, base_url: str, *, config_id: str = "m1",
 
 def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSONA-PROMPT-MARKER.",
                  project_brief: str | None = None, temperature: float = 0.3,
-                 max_tokens: int = 777) -> dict:
+                 max_tokens: int = 777, capabilities: list | None = None,
+                 tool_levels: dict | None = None, mcp_servers: list | None = None) -> dict:
     """A PersonaInternal-shaped dict."""
     return {
         "id": "p1",
@@ -39,14 +40,14 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
         "prompt": {"system_prompt": system_prompt, "output_type": "text", "context_scope": None},
         "model": model,
         "advisor_model": None,
-        "mcp_servers": [],
-        "capabilities": [],
+        "mcp_servers": mcp_servers or [],
+        "capabilities": capabilities or [],
         "temperature": temperature,
         "max_tokens": max_tokens,
         "max_steps": 8,
         "project_brief": project_brief,
         "utility_model": None,
-        "tool_levels": {},
+        "tool_levels": tool_levels or {},
         "fallback_models": [],
         "recall_enabled": True,
     }
@@ -59,6 +60,7 @@ class FakeNucleus:
         self.usage_posts: list[dict] = []     # every POST body to the usage endpoint
         self.usage_status: int = 201          # set 500 for T15
         self.history_params: list[dict] = []
+        self.pause_posts: list[dict] = []     # item 2: every pause POST (msg_id added)
 
     def reset(self) -> None:
         self.persona = {}
@@ -66,6 +68,7 @@ class FakeNucleus:
         self.usage_posts.clear()
         self.usage_status = 201
         self.history_params.clear()
+        self.pause_posts.clear()
 
     async def get_persona(self, request: Request) -> JSONResponse:
         if not self.persona:
@@ -83,10 +86,17 @@ class FakeNucleus:
         self.usage_posts.append(body)
         return JSONResponse({"ok": True}, status_code=201)
 
+    async def post_pause(self, request: Request) -> JSONResponse:
+        body = await request.json()
+        body["msg_id"] = request.path_params["msg_id"]
+        self.pause_posts.append(body)
+        return JSONResponse({"ok": True}, status_code=201)
+
 
 def make_app(nucleus: FakeNucleus) -> Starlette:
     return Starlette(routes=[
         Route("/api/v1/internal/personas/{persona_id}/", nucleus.get_persona, methods=["GET"]),
         Route("/api/v1/internal/topics/{topic_id}/history/", nucleus.get_history, methods=["GET"]),
         Route("/api/v1/internal/usage/", nucleus.post_usage, methods=["POST"]),
+        Route("/api/v1/internal/messages/{msg_id}/pause/", nucleus.post_pause, methods=["POST"]),
     ])

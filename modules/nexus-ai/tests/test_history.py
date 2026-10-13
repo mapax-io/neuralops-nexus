@@ -32,6 +32,11 @@ def _row(i: int, **kw) -> HistoryRow:
 
 
 def test_t13_history_rules():
+    """T13 — Every history rule, one row each, order kept.
+    FAILED/CANCELLED/PENDING/STREAMING dropped; stopped dropped; system rows
+    dropped; empty dropped; claims-HTML-but-isn't dropped; real HTML kept;
+    visual-rendered-as-text dropped; another persona's reply prefixed
+    [Another Agent: …]; the persona's own rows untouched; order never changes."""
     rows = [
         _row(1),                                                            # kept: user
         _row(2, status="FAILED", sender_type="persona", sender_name="NeuralBot"),     # dropped: status
@@ -66,12 +71,17 @@ def test_t13_history_rules():
 
 
 def test_t13_status_none_is_kept():
-    """A row from an older nucleus (no status field) is not dropped for it."""
+    """T13 — A row from today's nucleus (no status field) is kept.
+    The status filter only bites once nucleus change (2) lands; until then
+    rows pass — 0.8.0 behaviour, so the module works against today's nucleus."""
     selected = HistoryPolicy(depth=10).select([_row(1, status=None)], _persona())
     assert len(selected) == 1
 
 
 def test_t13_depth_caps_keeping_newest_in_order():
+    """T13 — HISTORY_DEPTH caps the window: newest rows win, order kept (O3).
+    14 valid rows with depth 10 → exactly the newest 10, oldest first, never
+    reordered."""
     rows = [_row(i) for i in range(1, 15)]  # 14 valid user rows
     selected = HistoryPolicy(depth=10).select(rows, _persona())
     assert len(selected) == 10

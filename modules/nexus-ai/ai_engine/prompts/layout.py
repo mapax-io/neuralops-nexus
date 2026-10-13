@@ -9,7 +9,15 @@ byte for byte (legacy prompt_builder.compose_system_prompt).
 """
 from __future__ import annotations
 
-from ai_engine.core.specs import ContextBundle, PersonaSpec, PromptPlan, PromptSection
+from typing import Sequence
+
+from ai_engine.core.specs import (
+    ContextBundle,
+    PersonaSpec,
+    PromptPlan,
+    PromptSection,
+    ToolCatalogEntry,
+)
 from ai_engine.prompts.templates import PromptTemplates
 
 
@@ -17,7 +25,8 @@ class PromptLayout:
     def __init__(self, templates: PromptTemplates) -> None:
         self._templates = templates
 
-    def build(self, persona: PersonaSpec, bundle: ContextBundle, message: str) -> PromptPlan:
+    def build(self, persona: PersonaSpec, bundle: ContextBundle, message: str,
+              catalog: Sequence[ToolCatalogEntry] = ()) -> PromptPlan:
         sections: list[PromptSection] = []
         brief = (persona.project_brief or "").strip()
         if brief:
@@ -29,4 +38,13 @@ class PromptLayout:
             kind="persona_prompt", priority=90, stable=True,
             text=persona.system_prompt,
         ))
+        if catalog:
+            # Item 1: the catalog — one line per ELIGIBLE tool, stable per
+            # topic so the cache prefix survives. Full schemas travel only for
+            # the loaded set, via the tools parameter, never in this text.
+            lines = "\n".join(f"- {e.model_name}: {e.one_line}" for e in catalog)
+            sections.append(PromptSection(
+                kind="tool_catalog", priority=80, stable=True,
+                text="Tools available in this conversation:\n" + lines,
+            ))
         return PromptPlan(instructions=tuple(sections), history=bundle.history, message=message)

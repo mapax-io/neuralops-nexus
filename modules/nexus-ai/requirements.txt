@@ -1,7 +1,7 @@
 # Pinned before any code was written — docs/NEXUS-AI-REVAMP.md §1.5
 # "Trial results and pinned versions". Python 3.13.
 # The full resolved set is frozen in requirements.lock (what Docker installs).
-pydantic-ai-slim[openai,anthropic,google,mcp]==2.55.0
+pydantic-ai-slim[openai,anthropic,google,mcp,duckduckgo]==2.55.0  # duckduckgo: the web_search native (L1)
 pydantic-ai-harness==0.55.0
 pydantic==2.14.0
 fastapi[standard]==0.143.0

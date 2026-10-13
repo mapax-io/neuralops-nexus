@@ -368,6 +368,75 @@ Billing must be exact. Rules:
 - **People search (43) is nucleus's**, over the text in its DB — not chat vectors (may be revisited later).
 - **Persona chat vectors (44) are nexus-ai's**, in its vector store. Basic rule: **same topic only.** Designed in Layer 3.
 
+#### Layer 1 — decisions before design (settled 2026-10-12)
+
+Settled in discussion ahead of the Layer 1 item designs (items 3, 1, 2, 19, 22, 35; order inside the layer: 3 → 1 → 2 → 19 → 22 → 35, item 4 decided alongside 3).
+
+1. **Approvals pause and resume via pydantic-ai deferred tools** (items 2, 27). A run that hits an `ask` saves its state, ends its stream cleanly (one final event, as ever), and resumes when the decision arrives — no run parks under keepalive for hours. Consequence: item 27's save/resume machinery moves into Layer 1 — the two nucleus endpoints already implied in §1.4 (save/load paused run state; resume a paused run with the decision) arrive now. **Behaviour trial required before item 2's class design:** trial A9 verified only that the names exist in the pinned 2.55 (`DeferredToolRequests`, `DeferredToolResults`, `ApprovalRequired`, `ToolApproved`, `ToolDenied`); a throwaway trial must pause a run on an approval, serialize its state, and resume it in a FRESH process. If that fails, the fallback is 0.8.0's park-in-stream gate (§2, item 2) — chosen knowingly, not by surprise.
+2. **The approver is configurable: `approval_scope: topic | requester_only`, default `topic`** — anyone holding `persona.approve_run` at that topic may decide (reuses item 9's existing right and its enforcement on the approval path; a company-wide Viewer is already excluded). Where the setting lives (persona vs project): decided with item 2's design.
+3. **The tool set is fixed per topic** — §4 item 1's narrow-once-and-hold stands, forced by the provider cache order (tools → system → messages: the definitions sit at the FRONT of the cacheable prefix, so they must be stable; tool calls and results are ordinary messages at the back and never break the prefix). The router picks the initial loaded set; everything else eligible stays in the prompt as a one-line catalog.
+**Deferred-tools behaviour trial (run 2026-10-12, pinned 2.55.0 — decision 1 CONFIRMED):** same instrument as the 2026-10-10 trial (fake OpenAI-shaped server, no product code). Results: (D1) a tool declared `requires_approval=True` pauses the run — it ends cleanly with `DeferredToolRequests` carrying `tool_call_id`, tool name and args, and the stream emits a `DeferredToolRequestsEvent` (the natural hook for the `approval_requested` AgentEvent); the tool does NOT execute. (D2) the whole resume state is `result.all_messages()` serialized with `ModelMessagesTypeAdapter.dump_json` (≈1.5 KB for a one-call run). (D3) a FRESH process rebuilt the agent, passed `message_history=` + `deferred_tool_results=DeferredToolResults(approvals={call_id: ToolApproved()})` — the tool executed there with the original args and the reply finished. (D4) `ToolDenied("…")` — the tool never ran; the denial text reached the model as the tool result and the model answered on. (D5) the paused call's `RequestUsage` is readable at pause time, so billing per call survives the pause. One requirement this places on the design: the resuming process must rebuild the agent with the SAME tools — given tools are built from `PersonaSpec` per run, that holds by construction. Mark: `output_type=[str, DeferredToolRequests]` is required on the agent for the pause to surface.
+
+4. **A ToolSearch addition asks the user — once per tool per topic.** When the model requests an unloaded tool, the user is asked whether to add it to the topic's set; approved → the schema joins the fixed set (one deliberate cache miss) and is never asked about again in that topic. RUNNING the tool is governed separately by item 2's `auto/ask/off` gate, and write tools always ask — loading and executing are two different permissions. The ask-to-load prompt is itself a paused-run case, served by the same deferred-tool mechanism as approvals: one pause machinery, both uses. This also retires §4 item 1's "silent incapability" worry: a wrong router guess now costs one visible question, not a mystery failure.
+
+**Item 2 — decisions before design (settled 2026-10-12):**
+
+5. **`approval_scope` lives on the persona** (ships in `PersonaInternal`, lands in `PersonaSpec`) — each agent carries its own trust rule. Enforcement stays nucleus's: whoever decides must hold `persona.approve_run` at that topic (admins have it through their role); `requester_only` additionally requires being the message's sender. nexus-ai never checks who decided; it only receives the decision.
+6. **"Always allow" is narrowed, not general** (stricter than 0.8.0, which cleared a tool for the rest of the run): read tools run automatically and never ask; **write tools ask every time — no always-allow escape, per-topic or otherwise**; the only "always allow" left is for an MCP tool with no `readOnlyHint` (default ask) — a yes means "treat this tool as a read in this topic", stored next to `topic_tools` (nucleus change 8), never asked again in that topic. Writes stay outside it entirely.
+7. **The approval card carries 0.8.0's 300-char `args_preview` only**; the full args already travel inside the pause state nucleus stores, so an expand view is nucleus-side UI work with nothing new on the wire.
+
+**Capability-tools trial (trial E, run 2026-10-12, pinned 2.55.0 — the gate design CONFIRMED):** same instrument as D1–D5 (fake OpenAI-shaped server, throwaway code, no product code). Question: D1–D5 proved the pause only for a plain `@agent.tool_plain(requires_approval=True)` tool — do CAPABILITY tools (natives, MCP) pause too? Results: (E0) `requires_approval` is sugar for `ToolDefinition.kind='unapproved'`; a separate gate capability's `prepare_tools` hook receives EVERY capability's tool definitions (harness FileSystem's eight tools included) and may rewrite `kind` — so one gate capability can gate all sources, exactly 0.8.0's `ToolApprovalGate` shape ported. (E1) harness `FileSystem.write_file` flipped to `unapproved` paused the run with `DeferredToolRequests` (and `DeferredToolRequestsEvent` on the stream); the file was NOT written. (E2) pause state ≈1.6 KB; the paused call's usage readable at pause (billing holds). (E3) a FRESH process + `ToolApproved()` → the file was written there; `ToolDenied("…")` → no file, the denial text reached the model as the tool result. (E4) the MCP shape — the capability wrapped in `PrefixTools` — pauses the same way, keyed on the prefixed name. **Two bugs found in shipped Layer 1 code:** (a) pinned `PrefixTools` joins names as `{prefix}_{name}`, so `ToolsetBuilder` must pass `"{slug}_"` to get the catalog's `{slug}__{tool}` — **fixed 2026-10-12**, 36/36 tests green; (b) harness `FileSystem`/`Shell` REQUIRE a workspace capability on the run (`LocalWorkspace(...)`; `UserError` without one) — ToolsetBuilder ships none, so a persona with filesystem/shell currently fails at the first model call that uses them. **OPEN — fixed in item 2/22's pass:** where the workspace root (the project folder) comes from is item 22's sandbox-config question.
+
+#### Item 3 — persona tool/MCP list (settled 2026-10-12, with item 4)
+
+1. **Problem.** Before anything can be narrowed (item 1) or gated (item 2), nexus-ai must know every tool a persona could use — by NAME, with a one-line description and a read-only hint — not just the servers. The prompt catalog, ToolSearch and `tool_levels` all key on tool names; 0.8.0 knows an MCP server's tool names only after dialing it.
+2. **Decision.** **Hybrid: stored catalog + live at connection + drift sync.** (a) nucleus stores, per MCP server, `tools: [{name, description, read_only}]` — captured by extending item 40's verify to MCPServer exactly as §4.6 proposes ("connect and list tools") — and ships it inside `MCPServerInternal`. (b) At run time, any server in the topic's LOADED set is dialed for the run anyway; its **live** tool list is the truth for execution. (c) When the live list differs from the stored one, nexus-ai posts the fresh list back to nucleus (drift sync) — the catalog heals on the next reply that used the server, not only on the next admin Test. **Rejected:** runtime-dial-only — every topic's first reply pays N dials, a dead server stalls the whole catalog, and the cache has no home (nexus-ai owns no store); stored-only without drift sync — rots silently. **Namespacing (settled):** catalog/levels id = `mcp:<server_id>/<tool>` for external tools, `<capability>` or `<capability>/<tool>` for natives (the keying 0.8.0's levels already support); the MODEL-facing tool name is prefixed with the server's slug (`github__search`, `monday__search`) so two servers' same-named tools never collide — `ToolRegistry` owns the mapping back to the right server. **Item 4 / eligibility formula (amended 2026-10-12):** eligibility is one intersection with two independent axes — `eligible(persona, topic) = available(servers in this scope) ∩ allowed(this persona)`. The SERVER axis (where a server is available: project today; channel/topic later) is item 4 — stays PROJECT-scoped in Layer 1, deferred as a nucleus data-model change; when it lands, only nucleus's `available()` changes, nexus-ai is untouched. The PERSONA axis is new (nucleus change 7): **`Persona.tool_access: selected | all_project`, default `selected`** — `selected` = exactly the persona's attached servers (today's M2M), `all_project` = every project MCP, current and future (an explicit admin choice, never the default, because it widens the persona silently whenever a project MCP is added). Resolved in nucleus inside the persona endpoint; `ToolRegistry` just reads what arrives. Division of labour stays clean: `tool_access` decides what is ELIGIBLE, the router/cap decides what is LOADED, item 2's gate decides what may RUN.
+3. **Mechanism.** `MCPServerInternal` gains the `tools` list (nucleus change 6); `PersonaSpec` already carries both source lists raw since Layer 0; `ToolRegistry` (ai_engine/pydantic_ai_system/tools/) builds the catalog; native capabilities' names and one-liners come from a small static table keyed on `capability_config`.
+4. **At 0.8.0.** The internal/external split already arrives as two lists (`NU/internal/api.py` get_persona_internal); `tool_levels` keys `"<capability>/<tool>"` are already honoured by the approvals defaults; MCP tool names exist nowhere until dial time (`MCP(defer_loading=True)` in the runner); `_resolve_capabilities` hardcodes five natives (Appendix A — becomes a requirement on ToolRegistry, not a patch).
+5. **Open.** Does the pinned harness 0.55 `MCP` capability already namespace tool names? (check before coding; reuse its scheme if so). Exact drift-sync endpoint shape — folded into the Layer 1 nucleus handoff.
+6. **Acceptance (sketch).** Two servers exposing a same-named tool → two distinct catalog ids AND two distinct model-facing names; the catalog builds with ZERO network calls when nucleus sends tool lists; a live list differing from the stored one → exactly one drift POST with the fresh list; natives catalogued from `capability_config` with read-only hints; a persona with no tools → empty catalog, plain Layer 0 reply.
+7. **Classes and methods.** `ToolCatalogEntry` (frozen): `tool_id`, `model_name`, `source_id`, `source_kind: native|mcp`, `one_line`, `read_only: bool|None`. `ToolRegistry`: `catalog_for(persona) -> list[ToolCatalogEntry]` (pure, no I/O — testable like HistoryPolicy); the loaded-set side (`tools_for`) arrives with item 1.
+8. **API.** Nucleus change (6): `MCPServerInternal` += `tools` (filled at save/verify, §4.6's generalisation); new drift-sync endpoint nexus-ai → nucleus (shape with the Layer 1 nucleus handoff).
+9. **Sequence.** `get_persona` → `ToolRegistry.catalog_for()` → three consumers: prompt catalog section, ToolSearch searchable set, item 1's loaded-set decision. At run: loaded servers dialed → live lists are the execution truth → drift detected → one POST back to nucleus.
+
+#### Item 1 — tool matching and the permitted set (settled 2026-10-12)
+
+1. **Problem.** The catalog says what a persona COULD use; the model must get a small, STABLE set of full schemas (the cache prefix demands stability — §1.3 Layer 1 decision 3) plus a cheap view of the rest. Something must decide that loaded set once per topic and remember it — and nexus-ai deliberately owns no store.
+2. **Decision.** The topic's loaded set is **stored by nucleus on the topic** and shipped in `TriggerJob.topic_tools` (nucleus change 8). First reply in a topic, Layer 1 (no router yet): **all eligible tools, capped by the setting `MAX_LOADED_TOOLS`** (default 12), rest catalog-only; Layer 2 replaces exactly this seam with the router's `tool_hints` — one method body. Additions only via ToolSearch's ask-on-first-load (§1.3 Layer 1 decision 4); an approved addition returns to nucleus WITH the approval decision, so storage and approval travel one path. **Rejected:** a Redis for nexus-ai (new infrastructure for one key); per-turn re-narrowing (a cache miss every turn — §4 item 1).
+3. **Mechanism.** `ToolRegistry.tools_for(persona, job) → LoadedSet` (uses `job.topic_tools` when present, else the capped default); `ToolsetBuilder` turns the loaded entries into harness objects (natives from `capability_config`, `MCP(...)` per loaded server, ToolSearch over the catalog minus loaded); `PromptLayout` gains a STABLE `tool_catalog` section (one line per eligible tool); `TriggerJob` accepts `topic_tools` (absent from today's nucleus → first-reply rule applies — works unchanged, like O2's ids).
+4. **At 0.8.0.** No modelled distinction between permitted and sent; the set is assembled per run from the persona alone and persisted nowhere; `ToolSearch(strategy=None)` — selection explicitly disabled; no catalog.
+5. **Open.** `MAX_LOADED_TOOLS` default (12 proposed); whether the catalog section also lists loaded tools or only the unloaded rest (decided in review of the prompt text).
+6. **Acceptance (sketch).** `topic_tools` present → exactly those schemas in the request, regardless of eligibility count; absent → all eligible capped at the setting; the catalog section is byte-identical across turns of a topic; loaded schemas appear in the provider request body and unloaded ones do NOT; two same-named tools from different servers both loadable and distinct in the request.
+7. **Classes and methods.** `LoadedSet` (frozen): `tool_ids`, `catalog_hash`. `ToolRegistry.tools_for(persona, job) -> LoadedSet`. `ToolsetBuilder.build(loaded, catalog, persona) -> list` (the only class here that touches harness objects, per dependency rule 2).
+8. **API.** Nucleus change (8): topic record stores the loaded tool set; `TriggerJob` += `topic_tools`; an approved ask-to-load updates the topic record on the approval path. (Change 7, `tool_access`, is item 3/4's.)
+9. **Sequence.** trigger (`job.topic_tools`) → `catalog_for` → `tools_for` → `ToolsetBuilder` → `AgentBuilder` (gains a toolsets argument — the L1 addition §1.5's catalog already reserves) → run; ToolSearch request → pause (item 2's machinery) → approved → nucleus updates the topic set → resume.
+
+#### Item 2 — tool permission before use (settled and built 2026-10-13)
+
+1. **Problem.** Tools that change something need a person's yes before they run. 0.8.0 held the reply stream open and POLLED nucleus for the decision (`NA/managers/approvals.py` NucleusApprovals) — a long wait holds a connection for hours and dies with a restart; timeouts had to exist just to cap the damage.
+2. **Decision.** **Pause and resume via deferred tools** (§1.3 decision 1, trials D1–D5 + E confirmed): a run that hits an `ask` tool ends cleanly, its state goes to nucleus, and the decision later resumes it — in a different process if need be. The POLICY is 0.8.0's `level_for`, ported and narrowed by decision 6: reads auto, writes ask EVERY time, an unlabeled MCP tool asks unless the topic cleared it as a read (`topic_tool_clearances` — the only "always allow" left). Explicit persona `tool_levels` still win over all defaults (an admin's deliberate setting is a different lever than the card's button); `off` now removes the tool from the CATALOG, not just the run. `approval_scope: topic | requester_only` lives ON THE PERSONA (decision 5), enforced by nucleus under `persona.approve_run`. The card carries only the 300-char `args_preview` (decision 7). Unattended runs (`interactive=false`) never pause: the ask-tool is refused with 0.8.0's "nobody can approve" text and the model answers on. **Rejected:** 0.8.0's park-in-stream gate — kept only as the named fallback, a pause costs nothing and survives restarts; a general "always allow" — a write asks every time, per decision 6; a separate resume endpoint — the resume is the SAME `/trigger` with a `resume` block, so the whole reply path stays one road.
+3. **Mechanism.** `ApprovalPolicy` (pure: `runtime_level`, `catalog_level`, `args_preview`, the ported texts) + `ApprovalGate(AbstractCapability)`: `prepare_tools` sees EVERY capability's tool defs (trial E0), drops `off`, flips `ask` to `kind='unapproved'` (the pause mechanism, E1), and records name→capability_id for the cards; `before_tool_execute` refuses ask-tools in unattended runs via `SkipToolExecution`. A run ending in `DeferredToolRequests` sets `ReplyGenerator.pause_info()` (state = `all_messages()` JSON + pending calls + catalog hash); `PydanticAISystem` then records usage (the paused call's numbers are real — D5/E2), POSTs the state to nucleus, and closes with the new final event `message_paused` — state FIRST, so a decision can never race an unsaved pause; a failed save is a real error. `EventMapper` turns `DeferredToolRequestsEvent` into `approval_requested` events in 0.8.0's exact `ApprovalRequestData` shape. Resume: `TriggerJob.resume = {state, approvals: {call_id: {decision, reason?}}}` — the same agent is rebuilt (same persona → same tools, by construction), `message_history=` the stored state, `deferred_tool_results=` the decisions (`ToolDenied` carries 0.8.0's denial text when no reason is given), and the reply streams to `message_done`. `EventStream` counts `message_paused` as a final event. `AgentBuilder` sets `output_type=[str, DeferredToolRequests]` (required for the pause to surface — trial D mark).
+4. **At 0.8.0.** The whole gate exists as park-in-stream: `ToolApprovalGate` (prepare_tools filters off, before_tool_execute asks), `NucleusApprovals` announcing `approval_requested` and polling `GET /internal/messages/{msg_id}/approvals/{call_id}/`, decisions stored on the reply row under `persona.approve_run`, "always allow" clearing one tool for the rest of the RUN. Event name, `ApprovalRequestData` fields and the did-not-run texts are kept verbatim so nucleus's relay and card UI carry over; only the WAITING changes.
+5. **Open.** (a) ToolSearch ask-on-first-load (§1.3 decision 4) is NOT wired yet — it rides this same pause, but composing `defer_loading` + the gate needs its own small trial first; next pass. (b) The workspace root for filesystem/shell comes from `capability_config` `root_dir`/`cwd` and the build refuses loudly without one — item 22 wires the project folder as the proper root. (c) Whether a live MCP server's `readOnlyHint` annotations reach `ToolDefinition.metadata` on the pinned version is unverified (no e2e MCP dial test yet); the stored catalog `read_only` is the primary signal either way. (d) A resume emits a second `message_start` on the same msg_id — nucleus's relay must treat it as the stream reopening (handoff note). (e) Pause expiry is nucleus's job (e.g. a 24h cron that resumes-with-deny); nexus-ai holds nothing while paused.
+6. **Acceptance (built, tests/test_approvals.py).** A write tool pauses the run (approval_requested + message_paused, state POSTed BEFORE the final event, file not written, paused call billed); an approved resume executes the tool in the resumed process and finishes (both halves billed); a denied resume never runs the tool and the model sees the denial text; a read tool runs silently; `off` removes catalog + tools + section; an unattended run refuses instead of pausing. Policy units: native read/write defaults; explicit levels win; unlabeled-MCP ask / clearance / known-write-never-cleared / stored-read silent.
+7. **Classes and methods.** `ApprovalPolicy` + `ToolSource` (tools/approval_policy.py); `ApprovalGate` with `tool_capability_ids` (tools/approval_gate.py); `PendingApproval`, `PauseInfo` (core/specs.py); `PersonaSpec.approval_scope`; `ReplyGenerator.generate(request, capabilities, resume, catalog_hash)` + `pause_info()`; `NucleusClient.save_pause`; contracts: `ResumeBlock`, `ApprovalDecisionIn`, `ApprovalRequestData`, `AgentEventType.APPROVAL_REQUESTED/PAUSED`, `TriggerJob.topic_tool_clearances/resume`; `ToolsetBuilder.build(..., interactive=, clearances=)` now also assigns explicit capability ids and the `LocalWorkspace`.
+8. **API.** Nucleus change (9): `POST /api/v1/internal/messages/{msg_id}/pause/` ← `{job_id, topic_id, persona_id, state, catalog_hash, pending: [{call_id, tool, capability_id, args_preview}]}`; the resume is the SAME trigger endpoint with the stored `state` back in `resume`. Change (8) extended: the topic also stores the clearance list, shipped as `topic_tool_clearances`. The persona endpoint ships `approval_scope` (with change 7's `tool_access`). Nucleus owns: the card UI (it already has it), WHO may decide (`persona.approve_run` + `approval_scope`), firing the resume, and expiring stale pauses.
+9. **Sequence.** trigger → gate flips ask-tools → model calls one → run pauses → `approval_requested` event(s) → usage recorded → pause POST → `message_paused` → a person decides (nucleus checks the right and the scope) → nucleus resends the trigger with `resume` → same build, history = state, decisions in → tool executes (or the denial text goes to the model) → normal stream → `message_done` (or the next ask pauses again, same machinery).
+
+#### Requirement → test traceability (Layer 1, added 2026-10-13)
+
+Same convention as the Layer 0 matrix (§1.5): every test's docstring is its report row; `python -m pytest` regenerates `tests/REPORT.md` (now 45 tests).
+
+| Requirement (doc) | Tests (tests/test_tools.py, tests/test_approvals.py) |
+|---|---|
+| Item 3 — catalog: namespacing, zero-network, server-without-list, natives, empty | `test_l1_catalog_namespaces_same_named_tools` · `test_l1_catalog_builds_without_network` · `test_l1_catalog_server_without_stored_tools_is_one_entry` · `test_l1_catalog_natives_from_capability_config` · `test_l1_catalog_empty_persona` |
+| Item 1 — loaded set: topic_tools verbatim, first-reply cap, unknown ids dropped | `test_l1_topic_tools_pin_the_loaded_set` · `test_l1_first_reply_loads_all_eligible_capped` · `test_l1_unknown_topic_tool_ids_are_dropped` |
+| Items 3+1 — through the service: schemas in the request, stable section, toolless untouched | `test_l1_loaded_native_schema_reaches_the_request` · `test_l1_catalog_section_is_stable_across_turns` · `test_l1_toolless_persona_is_plain_layer0` |
+| Item 2 — policy: defaults, explicit levels, decision 6's MCP rules | `test_a_policy_native_defaults` · `test_a_policy_explicit_levels_win` · `test_a_policy_mcp_unknown_asks_clearance_clears` |
+| Item 2 — pause/resume: pause on write, approve executes, deny never runs | `test_a1_write_tool_pauses_the_run` · `test_a2_resume_approved_runs_the_tool` · `test_a3_resume_denied_never_runs_the_tool` |
+| Item 2 — the quiet paths: reads silent, off invisible, unattended refusal | `test_a4_read_tool_runs_without_asking` · `test_a5_off_tool_is_invisible` · `test_a6_unattended_run_refuses_instead_of_pausing` |
+| Known gaps (Layer 1) | no e2e MCP dial test (a scripted MCP server — with ToolSearch's pass); ToolSearch ask-on-first-load unwired (item 2 Open a); `readOnlyHint` passthrough unverified (Open c); stdio MCP refused loudly pending `MCP(local=…)` verification |
+
 ### 1.4 APIs between nucleus and nexus-ai (read from code 2026-10-10)
 
 Both directions as they exist at 0.8.0, with what each becomes under the decisions above. Paths without a prefix: nexus-ai files are under `modules/nexus-ai/apps/`, nucleus files under `modules/nexus-nucleus/`.
@@ -815,6 +884,101 @@ cost = ( uncached_input_tokens * price.input
 - **Write the acceptance tests first;** "done" means they pass.
 - Invariants that must always hold: every field nucleus sends has a place; the system prompt is sent once — **through `instructions=`, never `system_prompt=`** (pydantic-ai drops `system_prompt` whenever message history is passed; verified); `context_window` and the output limit are never the same field; usage is recorded on every ending, including stop and failure; cached tokens are never priced at the input rate and reasoning is never added on top of output; every stream ends with exactly one final event; write tools always ask.
 - Set `PYDANTIC_AI_NO_BANNER=1` in the service environment (pydantic-ai 2.55 prints a startup banner otherwise).
+
+#### Running the acceptance tests — the test report (added 2026-10-12)
+
+**Layer 0 is built** at `modules/nexus-ai/` (2026-10-11) and all acceptance tests pass — T1–T16 as 25 pytest cases (T2/T3 run once per provider shape, plus three extra guards: internal-key auth, Decimal-never-float arithmetic, and a status-less row from today's nucleus being kept). O1 resolved as proposed (nucleus prices; the formula is pinned in `ai_engine/core/billing.py`); O2–O5 as written, with the three ids defaulting to `""` until nucleus sends them.
+
+**Run after every change** — "done" still means all pass:
+
+- venv: `cd modules/nexus-ai && pip install -r requirements-dev.txt && python -m pytest`
+- Docker: `docker build -t nexus-ai:new-dev -f modules/nexus-ai/docker/Dockerfile modules/nexus-ai`, then `docker run --rm -u root nexus-ai:new-dev sh -c "pip install -r requirements-dev.txt && python -m pytest"`
+
+**The suite is self-documenting.** Every test's docstring is its registry entry: the first line is the title (with its T-number), the rest the falsifiable claim it verifies. Every run prints the full report — title, purpose, result, duration per test — and rewrites `modules/nexus-ai/tests/REPORT.md` (hook in `tests/conftest.py`). Commit REPORT.md at milestones: its diff is the regression record. A new test joins the report by carrying the same two-part docstring — there is no separate list to maintain.
+
+**The fakes are the harness.** `tests/fake_provider.py` answers exactly like OpenAI's and Anthropic's streaming APIs and records every request body (the same instrument as the 2026-10-10 trial); `tests/fake_nucleus.py` serves persona/history and records what lands on the usage endpoint; the module itself runs under real uvicorn in the test process, so disconnects (T8) and keepalives (T10) are real behaviour. No real model, no network, fully deterministic — and the dependency rules are themselves tests (`tests/test_dependencies.py`, T16), so a structural violation anywhere fails the suite naming the file.
+
+#### Requirement → test traceability (Layer 0, added 2026-10-12)
+
+Every Layer 0 requirement and the test that proves it. Gaps — true but not
+proven by a test — are listed at the end, so it is visible where trust runs out.
+
+**Item 25 — Event contract**
+
+| Requirement | Covered by |
+|---|---|
+| Stream shape: `message_start` → `message_delta`(s) → exactly one `message_done`; done carries the full text == joined deltas == model text | T1 |
+| `message_done` carries `output_type`/`render_as` "text", `prompt_tokens`, `output_tokens`, `context_window` (the fields the nucleus relay reads) | T4 (asserts 1700 / 300 / 200 000 on the done event) |
+| Errors end as exactly one clean `message_error`, never a dropped connection | T9 |
+| `keepalive` emitted on silence; still exactly one final event | T10 |
+| 0.8.0's `TriggerJob` validates unchanged — unplaced-feature fields accepted and ignored | T14 |
+| Only the right internal key gets in | auth test (`test_internal_key_required`) |
+
+**Item 7 — Self-hosted / custom endpoints**
+
+| Requirement | Covered by |
+|---|---|
+| `base_url` reaches the provider client — a custom endpoint actually serves the call | every acceptance test, implicitly: the fake provider IS a custom `api_base`, for both OpenAI and Anthropic shapes — including Anthropic, which 0.8.0 silently ignored (Appendix A) |
+
+**Item 26 — History selection**
+
+| Requirement | Covered by |
+|---|---|
+| Drop FAILED / CANCELLED / PENDING / STREAMING (when nucleus sends `status`) | T13 (`test_t13_history_rules`) |
+| Drop stopped, system, empty, fake-HTML, visual-rendered-as-text rows | T13 |
+| Another persona's reply prefixed `[Another Agent: …]`; own rows untouched | T13 |
+| Rows without `status` (today's nucleus) pass — works pre-nucleus-change | T13 (`test_t13_status_none_is_kept`) |
+| Newest `HISTORY_DEPTH` kept, oldest first, never reordered (O3) | T13 (`test_t13_depth_caps_keeping_newest_in_order`) |
+| Selected history actually reaches the model request | T2 ("earlier question/answer" in the captured body) |
+
+**Item 15 — Prompt caching (its Layer 0 form: the prompt layout)**
+
+| Requirement | Covered by |
+|---|---|
+| System prompt in the request exactly once, via `instructions=` (never `system_prompt=`, which pydantic-ai drops with history) | T2, both provider shapes |
+| Project brief ahead of the persona prompt; stable sections first | T2 (index comparison) |
+| Persona's `temperature` and output cap reach the request (`model_settings` — the Appendix A drop) | T3, both shapes |
+
+**Item 37 — Cancellation**
+
+| Requirement | Covered by |
+|---|---|
+| Client disconnect cancels the run and stops the upstream model stream | T8 (the fake provider confirms the stream was cut; one request only) |
+| A stopped run still records its (estimated) usage — never silent | T8 |
+
+**Item 21 — Usage recording (exact billing)**
+
+| Requirement | Covered by |
+|---|---|
+| One record per model call; counts per pydantic-ai semantics: input includes cache read+write, output includes reasoning | T4 (Anthropic), T5 (OpenAI) |
+| Split into priced types: uncached = input − read − write; 5m = write − 1h; reasoning never added on top | T4, T5 |
+| Record carries who/where/what: company, project, topic, persona, user, message, model, role, kind | T4 (asserts the ids, kind="chat_reply", role="STANDARD") |
+| Cut stream, OpenAI shape → estimated; output from received text, input from the request | T6 |
+| Cut stream, Anthropic shape → estimated; provider's input/cache counts kept, output re-estimated (never the provisional 1) | T7 |
+| A failed model call (HTTP 500) still records | T9 |
+| A cancelled run still records, once | T8 |
+| `record_usage` failure never breaks a good reply | T15 |
+| Cost formula exact, Decimal, per token type — 0.007725 and 0.00475 to the digit | T11, T12, + the Decimal guard |
+
+**Item 47 — Topic usage feed**
+
+| Requirement | Covered by |
+|---|---|
+| Every call recorded with its `topic_id`, so nucleus can roll it up to the topic bar | T4 (`topic_id == "t1"` on the record) — the roll-up and live push are nucleus's side, tested there when nucleus change (1) lands |
+
+**Architecture rules (§1.5 dependency rules)**
+
+| Requirement | Covered by |
+|---|---|
+| `ai_engine` framework-free; only imports `fastapi_app.contracts`; pydantic-ai quarantined in `pydantic_ai_system/`; no legacy imports; `fastapi_app/__init__.py` import-free | T16 ×4 (`tests/test_dependencies.py`) |
+
+**Gaps — true but NOT proven by a test:**
+
+1. Item 7, partially: only OpenAI and Anthropic shapes are exercised. The `google` and `ollama` branches of `ModelFactory` are written and import-checked but never called by a test — no google-shaped fake exists yet.
+2. Item 15's actual cache HITS cannot be tested against a fake — only the layout is proven. Whether providers cache the prefix is measured later via `cache_read_tokens` in production. *Open:* the HISTORY_DEPTH sliding window vs. byte-identical prefix tension — once a topic passes `HISTORY_DEPTH` messages, the window slides every turn and the cached prefix misses until summaries (item 6, Layer 4) provide an anchor; undecided whether L0 accepts this or anchors the window in chunks.
+3. EventMapper's batch sizes (40 chars / 50 ms) are not asserted — T1 only proves no text is lost, not the batching rhythm.
+4. O3's "start at the topic's last compaction" is nucleus's half of the history contract — untestable here until nucleus change (2).
+5. The Docker image build — verified by hand, not by the suite.
 
 #### Diagrams
 

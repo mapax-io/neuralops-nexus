@@ -32,6 +32,10 @@ def _py_files(package: str) -> list[Path]:
 
 
 def test_t16_ai_engine_is_framework_free():
+    """T16 — ai_engine never imports the web framework.
+    Nothing under ai_engine/ imports fastapi, starlette or django; its only
+    fastapi_app import is fastapi_app.contracts. Keeps the engine portable
+    (Django could host it) and unit-testable without a web stack."""
     for path in _py_files("ai_engine"):
         for name in _imports(path):
             root = name.split(".")[0]
@@ -42,6 +46,10 @@ def test_t16_ai_engine_is_framework_free():
 
 
 def test_t16_only_pydantic_ai_system_imports_the_framework():
+    """T16 — pydantic-ai is quarantined in ai_engine/pydantic_ai_system/.
+    Only that package (tools/ included) may import pydantic_ai or
+    pydantic_ai_harness, so a second AI system (e.g. Claude Agent SDK, item 18)
+    can arrive beside it without touching the rest."""
     for path in _py_files("ai_engine") + _py_files("fastapi_app"):
         inside = "pydantic_ai_system" in path.parts
         for name in _imports(path):
@@ -51,6 +59,9 @@ def test_t16_only_pydantic_ai_system_imports_the_framework():
 
 
 def test_t16_nothing_imports_the_legacy_module():
+    """T16 — No imports from the legacy module, ever.
+    modules/nexus-ai-legacy (package root `apps`) is reference only; code is
+    copied in deliberately or not at all (§1.3)."""
     for path in _py_files("ai_engine") + _py_files("fastapi_app"):
         for name in _imports(path):
             root = name.split(".")[0]
@@ -59,4 +70,7 @@ def test_t16_nothing_imports_the_legacy_module():
 
 
 def test_t16_fastapi_app_init_is_empty_of_imports():
+    """T16 — fastapi_app/__init__.py stays import-free.
+    ai_engine pulls fastapi_app.contracts in, and anything imported in that
+    __init__ would come with it — one import there and rule 1 silently breaks."""
     assert _imports(MODULE_ROOT / "fastapi_app" / "__init__.py") == []

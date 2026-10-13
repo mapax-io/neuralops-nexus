@@ -61,6 +61,15 @@ class PersonaSpec:
     mcp_servers: tuple[dict, ...]     # kept raw, unused in L0
     capabilities: tuple[dict, ...]    # kept raw, unused in L0
     recall_enabled: bool              # kept, unused in L0
+    # Item 3/4 (nucleus change 7): "selected" = exactly the attached servers
+    # (today's behaviour, and the value when nucleus doesn't send the field);
+    # "all_project" is resolved in NUCLEUS — nexus-ai still just reads the list.
+    tool_access: str = "selected"
+    # Item 2 (decision 5, 2026-10-12): who may answer an approval — "topic"
+    # (anyone holding persona.approve_run there) or "requester_only". ENFORCED
+    # BY NUCLEUS on the approval path; carried here so one object holds the
+    # persona's whole trust rule.
+    approval_scope: str = "topic"
 
     def model_for(self, role: ModelRole) -> ModelSpec:
         """The persona's first model with this role; raises if it has none."""
@@ -68,6 +77,53 @@ class PersonaSpec:
             if spec.role is role:
                 return spec
         raise LookupError(f"persona {self.id} has no model with role {role.value}")
+
+
+@dataclass(frozen=True)
+class ToolCatalogEntry:
+    """One tool a persona could use (item 3). tool_id is the levels/catalog key
+    ("mcp:<server_id>/<tool>", "mcp:<server_id>" for a server whose tools are
+    not stored yet, or "<capability>" for natives); model_name is what the
+    MODEL calls it — server-slug-prefixed so two servers' same-named tools
+    never collide (github__search)."""
+
+    tool_id: str
+    model_name: str
+    source_id: str
+    source_kind: str          # "native" | "mcp"
+    one_line: str
+    read_only: bool | None
+
+
+@dataclass(frozen=True)
+class LoadedSet:
+    """The topic's loaded tools (item 1): fixed per topic, stored by nucleus,
+    shipped in TriggerJob.topic_tools. catalog_hash fingerprints the catalog
+    the set was decided against."""
+
+    tool_ids: tuple[str, ...]
+    catalog_hash: str
+
+
+@dataclass(frozen=True)
+class PendingApproval:
+    """One tool call waiting on a person (item 2)."""
+
+    call_id: str
+    tool: str            # the MODEL-facing name (write_file, github__search)
+    capability_id: str
+    args_preview: str    # ≤300 chars (decision 7); full args are in the state
+
+
+@dataclass(frozen=True)
+class PauseInfo:
+    """Everything a resume needs (item 2 / item 27): the run's messages as
+    JSON (ModelMessagesTypeAdapter) plus the pending calls. POSTed to nucleus
+    at pause time; comes back verbatim in TriggerJob.resume.state."""
+
+    state: str
+    pending: tuple[PendingApproval, ...]
+    catalog_hash: str
 
 
 @dataclass(frozen=True)

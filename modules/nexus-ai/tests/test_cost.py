@@ -28,7 +28,10 @@ def _record(**counts) -> UsageRecord:
 
 
 def test_t11_cost_anthropic_numbers():
-    """T4's numbers, fixture prices 3.00 / 0.30 / 3.75 / 6.00 / 15.00 → 0.007725 exactly."""
+    """T11 — Cost formula, Anthropic numbers: exactly 0.007725.
+    T4's token counts priced with fixture prices 3.00 / 0.30 / 3.75 / 6.00 /
+    15.00 per million. Each token type priced separately; cached tokens never
+    at the input rate; result is an exact Decimal."""
     record = _record(
         input_tokens=1700, uncached_input_tokens=200, cache_read_tokens=1000,
         cache_write_5m_tokens=300, cache_write_1h_tokens=200, output_tokens=300,
@@ -42,8 +45,9 @@ def test_t11_cost_anthropic_numbers():
 
 
 def test_t12_cost_openai_numbers():
-    """T5's numbers, fixture prices 2.50 / 1.25 / 10.00 → 0.00475 exactly.
-    Reasoning is inside output_tokens — priced once, never added on top."""
+    """T12 — Cost formula, OpenAI numbers: exactly 0.00475.
+    T5's counts with fixture prices 2.50 / 1.25 / 10.00 per million. Reasoning
+    is inside output_tokens — priced once, never added on top."""
     record = _record(
         input_tokens=1200, uncached_input_tokens=200, cache_read_tokens=1000,
         output_tokens=300, reasoning_tokens=120,
@@ -53,6 +57,9 @@ def test_t12_cost_openai_numbers():
 
 
 def test_cost_is_decimal_never_float():
+    """Money arithmetic is Decimal, never float.
+    The smallest possible record still prices exactly — no floating-point
+    rounding anywhere in the formula."""
     record = _record(input_tokens=1, uncached_input_tokens=1, output_tokens=1)
     cost = compute_cost(record, Prices(input=Decimal("0.1"), output=Decimal("0.2")))
     assert isinstance(cost, Decimal)

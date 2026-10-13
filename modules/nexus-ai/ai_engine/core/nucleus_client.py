@@ -16,11 +16,14 @@ from dataclasses import asdict
 
 import httpx
 
-from ai_engine.core.specs import HistoryRow, ModelRole, ModelSpec, PersonaSpec, UsageRecord
+from ai_engine.core.specs import HistoryRow, ModelRole, ModelSpec, PauseInfo, PersonaSpec, UsageRecord
 
 log = logging.getLogger(__name__)
 
 USAGE_PATH = "/api/v1/internal/usage/"  # new endpoint — nucleus change (1)
+# Item 2 / item 27 — nucleus change (9): store a paused run's state under its
+# message; the resume trigger carries it back verbatim.
+PAUSE_PATH = "/api/v1/internal/messages/{msg_id}/pause/"
 
 
 class NucleusClient:
@@ -56,6 +59,23 @@ class NucleusClient:
             return
         url = f"{self._base_url}{USAGE_PATH}"
         payload = {"records": [_usage_payload(r) for r in records]}
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(url, json=payload, headers=self._headers)
+            response.raise_for_status()
+
+    async def save_pause(self, msg_id: str, job_id: str, topic_id: str,
+                         persona_id: str, pause: PauseInfo) -> None:
+        """POST the paused run's state (item 2). MUST land before the stream's
+        message_paused is sent, so a decision can never race an unsaved state."""
+        url = f"{self._base_url}{PAUSE_PATH.format(msg_id=msg_id)}"
+        payload = {
+            "job_id": job_id,
+            "topic_id": topic_id,
+            "persona_id": persona_id,
+            "state": pause.state,
+            "catalog_hash": pause.catalog_hash,
+            "pending": [asdict(p) for p in pause.pending],
+        }
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(url, json=payload, headers=self._headers)
             response.raise_for_status()
@@ -108,6 +128,8 @@ def persona_from(data: dict, company_id: str, project_id: str) -> PersonaSpec:
         mcp_servers=tuple(data.get("mcp_servers") or []),
         capabilities=tuple(data.get("capabilities") or []),
         recall_enabled=bool(data.get("recall_enabled", True)),
+        tool_access=data.get("tool_access") or "selected",  # nucleus change (7); absent → selected
+        approval_scope=data.get("approval_scope") or "topic",  # item 2 decision 5; absent → topic
     )
 
 

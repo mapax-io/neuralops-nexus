@@ -41,6 +41,12 @@ class Script:
     status: int = 200                  # non-200: fail the call outright
     delay_between: float = 0.0         # silence between chunks
     stop_reason: str = "stop"          # OpenAI finish_reason / Anthropic stop_reason
+    # Item 2 tests: when set, each REQUEST consumes the next step instead of
+    # the single-text behaviour above (OpenAI shape only). A step is either
+    #   {"kind": "tool_call", "call_id": "...", "name": "...", "args": {...}}
+    #   {"kind": "text", "text": "..."}
+    # Requests beyond the last step replay the last step.
+    steps: list[dict] | None = None
 
 
 class FakeProvider:
@@ -50,11 +56,13 @@ class FakeProvider:
         self.script = Script()
         self.requests: list[dict] = []
         self.headers: list[dict] = []
+        self.step_index = 0
 
     def reset(self) -> None:
         self.script = Script()
         self.requests.clear()
         self.headers.clear()
+        self.step_index = 0
 
     # ── OpenAI chat-completions streaming ─────────────────────────────────
     async def openai_chat(self, request: Request) -> Response:
@@ -66,6 +74,10 @@ class FakeProvider:
             return JSONResponse({"error": {"message": "scripted failure"}}, status_code=s.status)
 
         usage = s.usage or {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        step: dict | None = None
+        if s.steps:
+            step = s.steps[min(self.step_index, len(s.steps) - 1)]
+            self.step_index += 1
 
         async def lines():
             n = 0
@@ -79,10 +91,21 @@ class FakeProvider:
                     payload.update(extra)
                 return f"data: {json.dumps(payload)}\n\n".encode()
 
-            out = [chunk({"role": "assistant", "content": ""})]
-            for word in s.text.split(" "):
-                out.append(chunk({"content": word + " "}))
-            out.append(chunk({}, finish=s.stop_reason))
+            if step is not None and step["kind"] == "tool_call":
+                out = [
+                    chunk({"role": "assistant", "content": None,
+                           "tool_calls": [{"index": 0, "id": step["call_id"], "type": "function",
+                                           "function": {"name": step["name"], "arguments": ""}}]}),
+                    chunk({"tool_calls": [{"index": 0,
+                                           "function": {"arguments": json.dumps(step["args"])}}]}),
+                    chunk({}, finish="tool_calls"),
+                ]
+            else:
+                text = step["text"] if step is not None else s.text
+                out = [chunk({"role": "assistant", "content": ""})]
+                for word in text.split(" "):
+                    out.append(chunk({"content": word + " "}))
+                out.append(chunk({}, finish=s.stop_reason))
             # usage-only chunk (stream_options.include_usage)
             payload = dict(base)
             payload["choices"] = []

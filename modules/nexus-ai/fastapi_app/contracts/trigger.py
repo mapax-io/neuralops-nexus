@@ -18,6 +18,24 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 
+class ApprovalDecisionIn(BaseModel):
+    """One decision inside a resume (item 2). Nucleus enforced WHO decided
+    (persona.approve_run at the topic, approval_scope); nexus-ai only applies it."""
+
+    decision: str  # "allow" | "deny"
+    reason: str | None = None  # deny only; defaults to the standard denial text
+
+
+class ResumeBlock(BaseModel):
+    """Resume a paused run (item 2 / item 27): the pause state nucleus stored
+    (exactly what nexus-ai POSTed at pause time) plus the decisions, keyed by
+    tool_call_id. Travels on the SAME trigger endpoint; the rest of the job's
+    fields are the original trigger's, resent."""
+
+    state: str  # ModelMessages JSON, verbatim from the pause POST
+    approvals: dict[str, ApprovalDecisionIn] = Field(default_factory=dict)
+
+
 class ContextSourceRef(BaseModel):
     """One attached context source, pushed by nucleus inside the job (0.8.0 shape)."""
 
@@ -50,6 +68,17 @@ class TriggerJob(BaseModel):
     project_id: str = ""
     user_id: str = ""
 
+    # Item 1 (nucleus change 8): the topic's stored loaded tool set. None from
+    # today's nucleus → the first-reply rule applies (all eligible, capped).
+    topic_tools: list[str] | None = None
+
+    # Item 2 (nucleus change 8, extended): catalog tool_ids the topic cleared
+    # as reads ("always allow" on an unlabeled MCP tool — decision 6).
+    topic_tool_clearances: list[str] | None = None
+
+    # Item 2: present only on a resume of a paused run.
+    resume: ResumeBlock | None = None
+
     # Accepted and ignored in Layer 0 — kept so the 0.8.0 payload validates.
     context_sources: list[ContextSourceRef] = Field(default_factory=list)
     output_type: str = "auto"
@@ -66,6 +95,20 @@ class AgentEventType(str, Enum):
     END = "message_done"
     ERROR = "message_error"
     KEEPALIVE = "keepalive"
+    # Item 2: the 0.8.0 names nucleus's relay already knows, kept
+    APPROVAL_REQUESTED = "approval_requested"
+    PAUSED = "message_paused"  # the final event of a paused run — no message_done
+
+
+class ApprovalRequestData(BaseModel):
+    """What the approval card shows — 0.8.0's exact shape (ApprovalRequestData
+    in nexus-ai-legacy/apps/schemas/trigger.py): a 300-char args preview, never
+    the raw object. The full args live inside the pause state (decision 7)."""
+
+    call_id: str
+    tool: str
+    capability_id: str
+    args_preview: str
 
 
 class AgentEvent(BaseModel):
@@ -101,3 +144,6 @@ class AgentEvent(BaseModel):
     # message_error only
     error: str | None = None
     error_code: str | None = None
+
+    # approval_requested only (item 2)
+    approval: ApprovalRequestData | None = None

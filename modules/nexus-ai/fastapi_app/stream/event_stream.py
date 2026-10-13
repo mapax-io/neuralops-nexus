@@ -3,9 +3,9 @@ EventStream — the stream guard. Three promises about every reply stream:
 
   1. a keepalive after `keepalive_seconds` of silence, so nucleus's read
      timeout never fires while the model thinks;
-  2. never more than one final event (message_done or message_error), and
-     exactly one whenever the client is still connected — a disconnected
-     client gets nothing, there is no one to send to;
+  2. never more than one final event (message_done, message_error or — item 2
+     — message_paused), and exactly one whenever the client is still
+     connected — a disconnected client gets nothing, there is no one to send to;
   3. an unexpected exception becomes one clean message_error, never a
      connection dropped mid-body.
 
@@ -27,7 +27,9 @@ from fastapi_app.contracts.trigger import AgentEvent, AgentEventType, TriggerJob
 
 log = logging.getLogger(__name__)
 
-_FINAL = (AgentEventType.END, AgentEventType.ERROR)
+# Item 2: message_paused ends a stream as legitimately as done/error — without
+# it here, the "ended without a final event" guard would add a bogus error.
+_FINAL = (AgentEventType.END, AgentEventType.ERROR, AgentEventType.PAUSED)
 
 
 class EventStream:

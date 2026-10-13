@@ -10,6 +10,7 @@ Layer 1 adds tools here.
 from __future__ import annotations
 
 from pydantic_ai import Agent
+from pydantic_ai.tools import DeferredToolRequests
 
 from ai_engine.core.specs import ModelRole, PersonaSpec
 from ai_engine.pydantic_ai_system.model_factory import ModelFactory
@@ -24,6 +25,10 @@ class AgentBuilder:
         return Agent(
             model=self._models.build(spec),
             instructions=instructions,
+            # Item 2: DeferredToolRequests in the output union is REQUIRED for
+            # an approval pause to surface (trial D mark, 2026-10-12); a plain
+            # text reply still comes out as str.
+            output_type=[str, DeferredToolRequests],
             model_settings={
                 "temperature": persona.temperature,
                 "max_tokens": persona.max_output_tokens,  # the OUTPUT cap, never the window
