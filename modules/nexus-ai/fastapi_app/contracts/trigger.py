@@ -34,6 +34,13 @@ class ResumeBlock(BaseModel):
 
     state: str  # ModelMessages JSON, verbatim from the pause POST
     approvals: dict[str, ApprovalDecisionIn] = Field(default_factory=dict)
+    # Item 5: the person's answers to ask_user questions, keyed by
+    # tool_call_id — each becomes that call's TOOL RESULT on the resume.
+    answers: dict[str, str] = Field(default_factory=dict)
+    # Item 13: which model ROLE was running when the run paused (from the
+    # pause POST) — the resume rebuilds the agent on the same seat, so a
+    # DEEP-paused run never resumes on the STANDARD model.
+    role: str = "STANDARD"
 
 
 class ContextSourceRef(BaseModel):
@@ -98,6 +105,58 @@ class AgentEventType(str, Enum):
     # Item 2: the 0.8.0 names nucleus's relay already knows, kept
     APPROVAL_REQUESTED = "approval_requested"
     PAUSED = "message_paused"  # the final event of a paused run — no message_done
+    # Item 19: the activity trail — 0.8.0's names and shapes, kept
+    TOOL_CALL_START = "tool_call_start"
+    TOOL_CALL_END = "tool_call_end"
+    # Item 13/46: the router handed over — the deeper model is taking the reply
+    ESCALATION = "deep_escalation"
+    # Layer 3 decision 10: the reply pulled project memory — references only
+    CONTEXT_RETRIEVED = "context_retrieved"
+    # Item 5 (Layer 4): the model asked the person something — the run pauses
+    QUESTION = "question_asked"
+    # Nudges / W8 (Layer 4): the caller's mid-run note reached the model
+    NUDGE_TAKEN = "nudge_taken"
+
+
+class RetrievedRef(BaseModel):
+    """One retrieved memory, as the UI sees it (Layer 3 decision 10): the
+    reference and score only — the chunk text itself never rides an event."""
+
+    id: str
+    kind: str                  # "message" | "context_source" | "recall"
+    label: str
+    score: float
+    topic_id: str | None = None
+
+
+class QuestionData(BaseModel):
+    """question_asked (item 5): what the model wants to know. The card posts
+    the answer back through the resume (ResumeBlock.answers[call_id])."""
+
+    call_id: str
+    question: str
+    options: list[str] = Field(default_factory=list)
+
+
+class ToolCallData(BaseModel):
+    """tool_call_start: a persona reached for a tool (0.8.0 shape)."""
+
+    name: str
+    args: dict = Field(default_factory=dict)
+
+
+class ToolResultData(BaseModel):
+    """tool_call_end: how it went (0.8.0 shape) — name, outcome, duration and a
+    clipped text preview, never the raw object."""
+
+    name: str
+    ok: bool
+    duration_ms: int
+    preview: str | None = None  # the result's text, clipped
+    error: str | None = None    # short reason when ok is False
+    # The page a web tool went to (web_fetch's url; a search's results page),
+    # so the app can open it beside the chat.
+    url: str | None = None
 
 
 class ApprovalRequestData(BaseModel):
@@ -147,3 +206,41 @@ class AgentEvent(BaseModel):
 
     # approval_requested only (item 2)
     approval: ApprovalRequestData | None = None
+
+    # question_asked only (item 5)
+    question: QuestionData | None = None
+
+    # nudge_taken only (W8): the text the model just received mid-run
+    nudge: str | None = None
+
+    # tool_call_start / tool_call_end only (item 19)
+    tool_call: ToolCallData | None = None
+    tool_result: ToolResultData | None = None
+
+    # deep_escalation only (items 13/46): the model now answering
+    escalated_to: str | None = None
+
+    # message_done / message_paused (items 13 + Layer 3 bridge):
+    # loaded_tools — the tool set this reply ran with; on a topic's FIRST
+    #   reply nucleus stores it as topic_tools (change 8). None when no
+    #   tool-bearing run happened (e.g. the router answered from knowledge) —
+    #   the topic's set then stays undecided, deliberately.
+    # used_tools — the tools that actually EXECUTED in this reply (from the
+    #   activity trail); stored on the message row, later carried as vector
+    #   metadata (item 44) so retrieval returns "text + what solved it".
+    loaded_tools: list[str] | None = None
+    used_tools: list[str] | None = None
+
+    # context_retrieved only (Layer 3 decision 10): what the search attached —
+    # emitted ONLY when something cleared the threshold, references and scores
+    # only. message_done carries the same list as retrieved_sources, which
+    # nucleus stores on the message row beside used_tools (change 8 pattern).
+    retrieved: list[RetrievedRef] | None = None
+    count: int | None = None
+    # message_done only (decision 10, second half)
+    retrieved_sources: list[RetrievedRef] | None = None
+
+    # message_done only (item 23, Layer 4): the <<<EMBED>>>/<<<CONTEXT>>>
+    # narrative for a RENDERED reply — what nucleus should embed for item 44
+    # instead of raw HTML/JSON. None for plain text replies.
+    embed_description: str | None = None

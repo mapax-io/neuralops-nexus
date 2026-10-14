@@ -13,10 +13,17 @@ Item 2 additions (2026-10-12):
     capability_id and the ApprovalGate maps tools back to sources through it;
   - filesystem/shell REQUIRE a workspace on the run (trial E finding b):
     a LocalWorkspace is added, rooted at the capability_config's
-    root_dir/cwd — absent, the build refuses loudly (item 22 wires the
-    project folder properly);
+    root_dir/cwd. Nucleus's project provisioning writes the project folder
+    there (/nexus/projects/<slug> — CapabilityInternal docstring); absent,
+    the root falls back to "." exactly as 0.8.0's FileSystem default did
+    (item 22 "stays as-is");
   - the ApprovalGate capability is appended last, built from ApprovalPolicy
     (persona.tool_levels + the topic's clearances) and the source map.
+
+ToolSearch (item 2 decision 4, trial F 2026-10-13): ALL eligible capabilities
+are built, not only the loaded ones; the gate hides tools outside the topic's
+set (defer_loading) and ToolSearch(strategy="keywords") lets the model
+discover them — their first use then asks the person once.
 
 stdio MCP servers are NOT built in this pass: the pinned MCP(local=...) shape
 is unverified for argv lists — flagged in the doc. HTTP/SSE servers are fully
@@ -27,7 +34,16 @@ from __future__ import annotations
 import inspect
 import logging
 
-from pydantic_ai.capabilities import MCP, LocalWorkspace, PrefixTools, Thinking, WebFetch, WebSearch
+from pydantic_ai.capabilities import (
+    MCP,
+    LocalWorkspace,
+    PrefixTools,
+    Thinking,
+    ToolSearch,
+    WebFetch,
+    WebSearch,
+)
+from pydantic_ai_harness import ClearToolResults, DeduplicateFileReads, SummarizingCompaction, TieredCompaction
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 
@@ -58,17 +74,19 @@ class UnsupportedToolSourceError(ValueError):
 class ToolsetBuilder:
     def build(self, loaded: LoadedSet, catalog: list[ToolCatalogEntry],
               persona: PersonaSpec, *, interactive: bool = True,
-              clearances: frozenset[str] | set[str] = frozenset()) -> list:
+              clearances: frozenset[str] | set[str] = frozenset(),
+              compaction_target: int | None = None) -> list:
         loaded_ids = set(loaded.tool_ids)
+        eligible_ids = {entry.tool_id for entry in catalog}
         capabilities: list = []
         sources: dict[str, ToolSource] = {}
 
-        # ── natives ────────────────────────────────────────────────────────
+        # ── natives — every ELIGIBLE one; the gate hides the unloaded ──────
         configs = _native_configs(persona)
         workspace_root: str | None = None
         for key, config in configs.items():
-            if key not in loaded_ids:
-                continue
+            if key not in eligible_ids:
+                continue  # explicitly off — out of the catalog entirely
             builder = _NATIVE_BUILDERS.get(key)
             if builder is None:
                 log.warning("unknown native capability %r — skipped", key)
@@ -80,22 +98,20 @@ class ToolsetBuilder:
             if key in _NEEDS_WORKSPACE and workspace_root is None:
                 workspace_root = config.get("root_dir") or config.get("cwd")
 
-        if any(k in _NEEDS_WORKSPACE and k in loaded_ids for k in configs):
+        if any(k in _NEEDS_WORKSPACE and k in eligible_ids for k in configs):
+            # 0.8.0 parity (item 22 "stays as-is"): root_dir defaulted to ".".
+            # Provisioned personas carry the project folder in the config.
             if not workspace_root:
-                # Refused loudly rather than crashing mid-run with the harness's
-                # UserError — item 22 wires the project folder as the root.
-                raise UnsupportedToolSourceError(
-                    "filesystem/shell need a workspace root (capability_config "
-                    "root_dir or cwd) — the project folder arrives with item 22"
-                )
+                log.warning("filesystem/shell without a configured root — using '.' (0.8.0 default)")
+                workspace_root = "."
             capabilities.insert(0, LocalWorkspace(workspace_root))
 
-        # ── external MCP servers (http/sse) ────────────────────────────────
+        # ── external MCP servers (http/sse) — every eligible server ────────
         for server in persona.mcp_servers:
             sid = str(server.get("id"))
-            # which of this server's tools are loaded?
-            whole_server = f"mcp:{sid}" in loaded_ids
-            tool_names = [t.split("/", 1)[1] for t in loaded_ids
+            # the server's ELIGIBLE tools (catalog); the gate narrows to loaded
+            whole_server = f"mcp:{sid}" in eligible_ids
+            tool_names = [t.split("/", 1)[1] for t in eligible_ids
                           if t.startswith(f"mcp:{sid}/")]
             if not whole_server and not tool_names:
                 continue
@@ -119,13 +135,45 @@ class ToolsetBuilder:
             sources[wrapper_id] = ToolSource(kind="mcp", cap_key=f"mcp:{sid}",
                                              source_id=sid, slug=slug)
 
-        # ── the gate, last (item 2) ────────────────────────────────────────
+        # ── the gate, then ToolSearch (item 2, decision 4) ─────────────────
         if capabilities:
             policy = ApprovalPolicy(persona.tool_levels, clearances)
             catalog_index = {entry.tool_id: entry for entry in catalog}
-            capabilities.append(ApprovalGate(policy, sources, catalog_index,
-                                             interactive=interactive))
+            something_hidden = bool(eligible_ids - loaded_ids)
+            capabilities.append(ApprovalGate(
+                policy, sources, catalog_index, interactive=interactive,
+                loaded_ids=loaded_ids if something_hidden else None,
+            ))
+            if something_hidden:
+                # "keywords" = the local, provider-independent strategy —
+                # pinned behaviour verified in trial F; native strategies can
+                # be revisited per provider later without a design change.
+                capabilities.append(ToolSearch(strategy="keywords"))
+            if compaction_target is not None:
+                # Item 16 (§4.1): mid-run growth → compaction tiers 1→2→3,
+                # 0.8.0's order kept, only the target fixed to the run's budget.
+                capabilities.append(TieredCompaction(
+                    tiers=[
+                        DeduplicateFileReads(file_key=_read_file_key),   # 1: lossless
+                        ClearToolResults(max_fraction=0.9, keep_pairs=5),  # 2: evict, don't summarize (0.8.0's numbers)
+                        SummarizingCompaction(max_fraction=0.9),         # 3: history, last resort
+                    ],
+                    target_tokens=compaction_target,
+                ))
         return capabilities
+
+
+def _read_file_key(call) -> str | None:
+    """Tier 1's dedup key — 0.8.0's read_file-only rule, kept (§4.1 notes it
+    needs revisiting when graph/DuckDB results flow through)."""
+    if call.tool_name.endswith("read_file"):
+        try:
+            import json as _json
+            args = call.args if isinstance(call.args, dict) else _json.loads(call.args or "{}")
+            return str(args.get("path")) if args.get("path") else None
+        except (ValueError, TypeError):
+            return None
+    return None
 
 
 def _native_configs(persona: PersonaSpec) -> dict[str, dict]:

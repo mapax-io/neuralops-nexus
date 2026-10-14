@@ -1,7 +1,7 @@
 # Pinned before any code was written — docs/NEXUS-AI-REVAMP.md §1.5
 # "Trial results and pinned versions". Python 3.13.
 # The full resolved set is frozen in requirements.lock (what Docker installs).
-pydantic-ai-slim[openai,anthropic,google,mcp,duckduckgo]==2.55.0  # duckduckgo: the web_search native (L1)
+pydantic-ai-slim[openai,anthropic,google,mcp]==2.55.0
 pydantic-ai-harness==0.55.0
 pydantic==2.14.0
 fastapi[standard]==0.143.0
@@ -10,4 +10,11 @@ uvicorn==0.54.0
 httpx==0.28.1
 genai-prices==0.1.10
 Jinja2==3.1.6
-# Layer 3 (not before): txtai==9.14.0, fastembed==0.9.0 — after the txtai setup checks
+# Layer 3 (trial C 7/7, 2026-10-13 — docs §1.3 "Trial C" block). Docker note:
+# install CPU torch FIRST (pip install torch --index-url
+# https://download.pytorch.org/whl/cpu) or txtai pulls ~6 GB of CUDA wheels.
+txtai==9.14.0
+fastembed==0.9.0
+sqlalchemy==2.1.4
+psycopg2-binary==2.9.13
+pgvector==0.5.1

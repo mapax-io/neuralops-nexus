@@ -23,3 +23,27 @@ class EngineSettings:
     keepalive_seconds: float = field(default_factory=lambda: float(_env("KEEPALIVE_SECONDS", "30")))
     nucleus_timeout_seconds: float = field(default_factory=lambda: float(_env("NUCLEUS_TIMEOUT_SECONDS", "10")))
     max_loaded_tools: int = field(default_factory=lambda: int(_env("MAX_LOADED_TOOLS", "12")))  # item 1
+    # Item 13: a router that hasn't finished within this window is abandoned
+    # and the reply falls through to STANDARD (source="router_failed").
+    router_timeout_seconds: float = field(default_factory=lambda: float(_env("ROUTER_TIMEOUT_SECONDS", "20")))
+    # Item 16 (§4.1 / §3.5's hardcoded numbers become settings):
+    # input_budget = context_window − max_output_tokens − loop_headroom;
+    # target ≈70% of budget (trim/compact down to), trigger ≈90% (compaction fires).
+    budget_loop_headroom: int = field(default_factory=lambda: int(_env("BUDGET_LOOP_HEADROOM", "8192")))
+    budget_target_pct: int = field(default_factory=lambda: int(_env("BUDGET_TARGET_PCT", "70")))
+    budget_trigger_pct: int = field(default_factory=lambda: int(_env("BUDGET_TRIGGER_PCT", "90")))
+    # Layer 3 (items 31/44/24/33). vector_db_url empty = the feature is OFF:
+    # no retrieval during replies, embed endpoints answer 503. The URL points
+    # at the nexus_vectors database (decision 2 — same pg instance as nucleus).
+    vector_db_url: str = field(default_factory=lambda: _env("NEXUS_VECTOR_DB_URL", ""))
+    # Where each index's txtai config dir is cached (trial C6: reconnect =
+    # saved dir + transform injected in code). Regenerable from the registry.
+    vector_config_dir: str = field(default_factory=lambda: _env("VECTOR_CONFIG_DIR", "/tmp/nexus-vector-config"))
+    # Decision 9: always-search v1 — the threshold throws away weak hits.
+    retrieval_top_k: int = field(default_factory=lambda: int(_env("RETRIEVAL_TOP_K", "6")))
+    retrieval_min_score: float = field(default_factory=lambda: float(_env("RETRIEVAL_MIN_SCORE", "0.30")))
+    # Item 23 (Layer 4): the output-type classifier's embedder, "provider[:model]".
+    # Default = the vector store's local default, ONE cached model in production;
+    # tests set "hash" (no downloads).
+    classifier_embedder: str = field(default_factory=lambda: _env(
+        "CLASSIFIER_EMBEDDER", "fastembed:nomic-ai/nomic-embed-text-v1.5"))

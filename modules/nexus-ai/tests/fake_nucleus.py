@@ -32,7 +32,10 @@ def make_model(provider: str, base_url: str, *, config_id: str = "m1",
 def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSONA-PROMPT-MARKER.",
                  project_brief: str | None = None, temperature: float = 0.3,
                  max_tokens: int = 777, capabilities: list | None = None,
-                 tool_levels: dict | None = None, mcp_servers: list | None = None) -> dict:
+                 tool_levels: dict | None = None, mcp_servers: list | None = None,
+                 router_model: dict | None = None, deep_model: dict | None = None,
+                 fallback_models: list | None = None, max_steps: int = 8,
+                 utility_model: dict | None = None) -> dict:
     """A PersonaInternal-shaped dict."""
     return {
         "id": "p1",
@@ -44,12 +47,15 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
         "capabilities": capabilities or [],
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "max_steps": 8,
+        "max_steps": max_steps,
         "project_brief": project_brief,
-        "utility_model": None,
+        "utility_model": utility_model,
         "tool_levels": tool_levels or {},
-        "fallback_models": [],
+        "fallback_models": fallback_models or [],
         "recall_enabled": True,
+        # item 13 (nucleus change 3): the optional seats
+        "router_model": router_model,
+        "deep_model": deep_model,
     }
 
 
@@ -61,6 +67,7 @@ class FakeNucleus:
         self.usage_status: int = 201          # set 500 for T15
         self.history_params: list[dict] = []
         self.pause_posts: list[dict] = []     # item 2: every pause POST (msg_id added)
+        self.nudges: dict[str, list[str]] = {}  # W8: msg_id → waiting texts (taken once)
 
     def reset(self) -> None:
         self.persona = {}
@@ -69,6 +76,7 @@ class FakeNucleus:
         self.usage_status = 201
         self.history_params.clear()
         self.pause_posts.clear()
+        self.nudges = {}
 
     async def get_persona(self, request: Request) -> JSONResponse:
         if not self.persona:
@@ -86,6 +94,11 @@ class FakeNucleus:
         self.usage_posts.append(body)
         return JSONResponse({"ok": True}, status_code=201)
 
+    async def get_nudges(self, request: Request) -> JSONResponse:
+        # W8: taken ONCE — nucleus consumes on GET (legacy contract)
+        msg_id = request.path_params["msg_id"]
+        return JSONResponse({"nudges": self.nudges.pop(msg_id, [])})
+
     async def post_pause(self, request: Request) -> JSONResponse:
         body = await request.json()
         body["msg_id"] = request.path_params["msg_id"]
@@ -99,4 +112,5 @@ def make_app(nucleus: FakeNucleus) -> Starlette:
         Route("/api/v1/internal/topics/{topic_id}/history/", nucleus.get_history, methods=["GET"]),
         Route("/api/v1/internal/usage/", nucleus.post_usage, methods=["POST"]),
         Route("/api/v1/internal/messages/{msg_id}/pause/", nucleus.post_pause, methods=["POST"]),
+        Route("/api/v1/internal/messages/{msg_id}/nudges/", nucleus.get_nudges, methods=["GET"]),
     ])

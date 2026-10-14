@@ -78,6 +78,15 @@ class PersonaSpec:
                 return spec
         raise LookupError(f"persona {self.id} has no model with role {role.value}")
 
+    def model_for_or_none(self, role: ModelRole) -> ModelSpec | None:
+        """Like model_for, but an empty seat is None, not an error (item 13:
+        the ROUTER/DEEP seats are optional; behaviour falls out of which seats
+        the admin filled)."""
+        for spec in self.models:
+            if spec.role is role:
+                return spec
+        return None
+
 
 @dataclass(frozen=True)
 class ToolCatalogEntry:
@@ -107,12 +116,15 @@ class LoadedSet:
 
 @dataclass(frozen=True)
 class PendingApproval:
-    """One tool call waiting on a person (item 2)."""
+    """One tool call waiting on a person (item 2; item 5 reuses the shape)."""
 
     call_id: str
     tool: str            # the MODEL-facing name (write_file, github__search)
     capability_id: str
     args_preview: str    # ≤300 chars (decision 7); full args are in the state
+    # item 5: "approval" = decide yes/no; "question" = ask_user, the resume
+    # carries the person's ANSWER (ResumeBlock.answers) instead of a decision.
+    kind: str = "approval"
 
 
 @dataclass(frozen=True)
@@ -146,6 +158,9 @@ class HistoryMessage:
     role: Literal["user", "assistant"]
     author: str | None
     text: str                 # already attributed (see HistoryPolicy)
+    # Item 23: the row's output type — the resolver's pick logic needs to find
+    # the last "choice" reply ("text" from an older nucleus, harmless).
+    output_type: str = "text"
 
 
 @dataclass(frozen=True)
@@ -208,6 +223,59 @@ class UsageRecord:
     finish_reason: str | None
     estimated: bool
     called_at: datetime       # UTC; the price in force at this moment applies
+    # Item 13: why this call happened when it wasn't the normal path —
+    # "router_failed" on a router call that errored/timed out (the reply then
+    # fell through to STANDARD); None otherwise.
+    source: str | None = None
     # cost — filled where prices live (O1); Decimal, never float
     cost: Decimal | None = None
     prices_used: dict | None = None
+
+
+# ── Layer 3 (items 31/44/24/33): the vector store's own shapes ────────────
+# Framework-free on purpose: ai_engine/vector_db/ implements them with txtai,
+# nothing outside that folder may import txtai (§1.3 quarantine, decision 1).
+
+@dataclass(frozen=True)
+class VectorItem:
+    """One row to index: a message, a document chunk, or a recall entry.
+    `text` is stored raw beside the vector (decision 4 — a re-embed never
+    re-fetches sources); `source` groups rows for delete-by-source."""
+
+    id: str                    # message_id | "{source_id}:{n}" | entry_id
+    kind: str                  # "message" | "context_source" | "recall" | "tool_result"
+    text: str
+    label: str                 # human-readable ("auth.py", sender name, tool+command, …)
+    source: str                # delete key ("chat:{topic}", "src:{source_id}", "recall:{entry_id}", "toolres:{msg_id}")
+    topic_id: str | None = None
+    used_tools: tuple[str, ...] = ()   # item 44: what solved the remembered answer
+    created_at: str = ""       # item 27: when the memory was made (staleness label)
+
+
+@dataclass(frozen=True)
+class SearchQuery:
+    """One scoped search (decision 9): company+project always; topic_id narrows
+    chat memory to the SAME topic (item 44's rule); kinds narrows by row kind."""
+
+    company_id: str
+    project_id: str
+    text: str
+    topic_id: str | None = None
+    kinds: tuple[str, ...] = ()
+    top_k: int = 6
+    min_score: float = 0.30
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """One result: reference + score + the stored text. The EVENT carries only
+    the reference and score (decision 10); the text goes to the model."""
+
+    id: str
+    kind: str
+    label: str
+    score: float
+    text: str
+    topic_id: str | None = None
+    used_tools: tuple[str, ...] = ()
+    created_at: str = ""       # item 27: shown on retrieved tool memory

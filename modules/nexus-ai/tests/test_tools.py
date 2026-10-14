@@ -201,9 +201,12 @@ async def test_l1_catalog_section_is_stable_across_turns(harness):
 
 async def test_l1_toolless_persona_is_plain_layer0(harness):
     """Items 3+1 — no tools configured → the Layer 0 contract is untouched.
-    No tools field pollution, no catalog section, T1-shape stream."""
+    No capability tools (only item 5's built-in ask_user), no catalog section, T1-shape stream."""
     events = await harness.trigger()
     assert [e for e in events if e["type"] == "message_done"]
     body = harness.provider.requests[-1]
-    assert not body.get("tools")
+    # item 5 (Layer 4): ask_user rides every interactive run — a toolless
+    # persona means no CAPABILITY tools, not no tools at all
+    names = [t["function"]["name"] for t in body.get("tools", [])]
+    assert names == ["ask_user"]
     assert "Tools available" not in json.dumps(body["messages"])

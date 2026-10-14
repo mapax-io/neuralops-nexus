@@ -20,10 +20,19 @@ from __future__ import annotations
 import dataclasses
 from typing import Sequence
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ModelRequest, TextPart, UserPromptPart
 from pydantic_ai_harness.compaction import estimate_token_count
 
 from ai_engine.core.specs import UsageRecord
+
+
+def estimate_tokens(text: str) -> int:
+    """Token estimate for one piece of text — the harness estimator wrapped so
+    framework-free code (BudgetFitter, item 16) can take it as an injected
+    callable without importing the framework (dependency rule 1)."""
+    if not text:
+        return 0
+    return estimate_token_count([ModelRequest(parts=[UserPromptPart(content=text)])])
 
 
 class UsageReader:

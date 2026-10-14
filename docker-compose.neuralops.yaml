@@ -533,7 +533,12 @@ services:
       - neuralops-network
 
   postgres-dev:
-    image: postgres:17-alpine
+    # pgvector/pgvector = official postgres 17 + the pgvector extension baked
+    # in (Layer 3, docs/NEXUS-AI-REVAMP.md §1.3 vector stack). Swapped from
+    # postgres:17-alpine 2026-10-13; same PG major, same data volume. One-time
+    # follow-ups after the swap: REINDEX DATABASE (musl→glibc collation) and
+    # CREATE EXTENSION vector in the nexus_vectors database.
+    image: pgvector/pgvector:0.8.7-pg17
     profiles: ["dev"]
     container_name: neuralops-postgres-dev
     restart: always

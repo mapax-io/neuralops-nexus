@@ -48,7 +48,8 @@ class HistoryPolicy:
                 if row.sender_name and row.sender_name != persona.name:
                     text = f"[Another Agent: {row.sender_name}]\n{text}"
 
-            selected.append(HistoryMessage(role=role, author=row.sender_name, text=text))
+            selected.append(HistoryMessage(role=role, author=row.sender_name, text=text,
+                                           output_type=row.output_type or "text"))
 
         # keep the newest `depth`, oldest first; never reorder (O3)
         return selected[-self.depth:]

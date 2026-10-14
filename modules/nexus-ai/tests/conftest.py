@@ -25,6 +25,44 @@ from fake_provider import FakeProvider, ServedApp, make_app as make_provider_app
 
 INTERNAL_KEY = "test-internal-key"
 
+# ── Layer 3: the vector DB tests need a REAL pgvector postgres ─────────────
+# NEXUS_VECTOR_DB_URL points at it (nexus_vectors with CREATE EXTENSION vector).
+# Unreachable → the whole suite still runs, vector tests SKIP with the reason.
+DEFAULT_TEST_PG = "postgresql+psycopg2://trialc@127.0.0.1:54333/nexus_vectors"
+
+
+def _probe_vector_db(url: str) -> str | None:
+    try:
+        from sqlalchemy import create_engine, text
+        engine = create_engine(url, connect_args={"connect_timeout": 3})
+        with engine.begin() as conn:
+            ok = conn.execute(text(
+                "SELECT count(*) FROM pg_extension WHERE extname='vector'"
+            )).scalar()
+            if not ok:
+                return "pgvector extension is not installed in this database"
+            # a clean slate per run: the registry and every vx_* schema go
+            conn.execute(text("DROP TABLE IF EXISTS public.vx_indexes"))
+            for (schema,) in conn.execute(text(
+                "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'vx\\_%'"
+            )).fetchall():
+                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        engine.dispose()
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
+
+
+_VECTOR_URL = os.environ.get("NEXUS_VECTOR_DB_URL") or DEFAULT_TEST_PG
+_VECTOR_SKIP = _probe_vector_db(_VECTOR_URL)
+
+
+@pytest.fixture(scope="session")
+def vector_url(tmp_path_factory) -> str:
+    if _VECTOR_SKIP:
+        pytest.skip(f"vector db unreachable ({_VECTOR_SKIP}) — set NEXUS_VECTOR_DB_URL")
+    return _VECTOR_URL
+
 
 @pytest.fixture(scope="session")
 def provider() -> FakeProvider:
@@ -45,6 +83,17 @@ def servers(provider: FakeProvider, nucleus: FakeNucleus):
     os.environ["INTERNAL_API_KEY"] = INTERNAL_KEY
     os.environ["HISTORY_DEPTH"] = "10"
     os.environ["KEEPALIVE_SECONDS"] = "30"
+    # Layer 3: vectors ON when the test pg is reachable, OFF (empty) otherwise —
+    # both are real production states. Projects without an index see no change.
+    os.environ["NEXUS_VECTOR_DB_URL"] = "" if _VECTOR_SKIP else _VECTOR_URL
+    os.environ["VECTOR_CONFIG_DIR"] = "/tmp/nexus-vector-config-tests"
+    # item 23: the output-type classifier runs on the hash embedder in tests —
+    # deterministic, no model downloads; production defaults to fastembed.
+    os.environ["CLASSIFIER_EMBEDDER"] = "hash"
+    # the DB was wiped at session start (probe) — a stale config cache from an
+    # earlier run must go with it, the registry is the truth (rule iii)
+    import shutil
+    shutil.rmtree("/tmp/nexus-vector-config-tests", ignore_errors=True)
 
     from fastapi_app.main import create_app
     app_srv = ServedApp(create_app()).start()

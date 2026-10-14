@@ -63,10 +63,23 @@ class NucleusClient:
             response = await client.post(url, json=payload, headers=self._headers)
             response.raise_for_status()
 
+    async def get_nudges(self, msg_id: str) -> list[str]:
+        """W8 (Layer 4): what the caller typed while this reply runs — taken
+        once (nucleus consumes on GET). Raises on failure; the NudgeGate treats
+        any failure as 'no nudge'."""
+        url = f"{self._base_url}/api/v1/internal/messages/{msg_id}/nudges/"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.get(url, headers=self._headers)
+            response.raise_for_status()
+            return [t for t in (response.json().get("nudges") or [])
+                    if isinstance(t, str) and t.strip()]
+
     async def save_pause(self, msg_id: str, job_id: str, topic_id: str,
-                         persona_id: str, pause: PauseInfo) -> None:
+                         persona_id: str, pause: PauseInfo, role: str = "STANDARD") -> None:
         """POST the paused run's state (item 2). MUST land before the stream's
-        message_paused is sent, so a decision can never race an unsaved state."""
+        message_paused is sent, so a decision can never race an unsaved state.
+        role (item 13): which model seat was running — the resume rebuilds on
+        the same seat (ResumeBlock.role)."""
         url = f"{self._base_url}{PAUSE_PATH.format(msg_id=msg_id)}"
         payload = {
             "job_id": job_id,
@@ -75,6 +88,7 @@ class NucleusClient:
             "state": pause.state,
             "catalog_hash": pause.catalog_hash,
             "pending": [asdict(p) for p in pause.pending],
+            "role": role,
         }
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(url, json=payload, headers=self._headers)
@@ -106,6 +120,13 @@ def persona_from(data: dict, company_id: str, project_id: str) -> PersonaSpec:
     """PersonaInternal → PersonaSpec. Every field nucleus sends has a place."""
     prompt = data.get("prompt") or {}
     models = [model_spec_from(data["model"], ModelRole.STANDARD)]
+    # Item 13 (nucleus change 3, concrete shape): the optional ROUTER and DEEP
+    # seats arrive as router_model / deep_model; absent = the seat is empty and
+    # the behaviour falls back (no routing / no escalation target beyond STANDARD).
+    if data.get("router_model"):
+        models.append(model_spec_from(data["router_model"], ModelRole.ROUTER))
+    if data.get("deep_model"):
+        models.append(model_spec_from(data["deep_model"], ModelRole.DEEP))
     models += [model_spec_from(m, ModelRole.FALLBACK) for m in data.get("fallback_models") or []]
     advisor = data.get("advisor_model")
     utility = data.get("utility_model")

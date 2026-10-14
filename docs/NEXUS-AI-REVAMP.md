@@ -417,15 +417,53 @@ Settled in discussion ahead of the Layer 1 item designs (items 3, 1, 2, 19, 22, 
 2. **Decision.** **Pause and resume via deferred tools** (§1.3 decision 1, trials D1–D5 + E confirmed): a run that hits an `ask` tool ends cleanly, its state goes to nucleus, and the decision later resumes it — in a different process if need be. The POLICY is 0.8.0's `level_for`, ported and narrowed by decision 6: reads auto, writes ask EVERY time, an unlabeled MCP tool asks unless the topic cleared it as a read (`topic_tool_clearances` — the only "always allow" left). Explicit persona `tool_levels` still win over all defaults (an admin's deliberate setting is a different lever than the card's button); `off` now removes the tool from the CATALOG, not just the run. `approval_scope: topic | requester_only` lives ON THE PERSONA (decision 5), enforced by nucleus under `persona.approve_run`. The card carries only the 300-char `args_preview` (decision 7). Unattended runs (`interactive=false`) never pause: the ask-tool is refused with 0.8.0's "nobody can approve" text and the model answers on. **Rejected:** 0.8.0's park-in-stream gate — kept only as the named fallback, a pause costs nothing and survives restarts; a general "always allow" — a write asks every time, per decision 6; a separate resume endpoint — the resume is the SAME `/trigger` with a `resume` block, so the whole reply path stays one road.
 3. **Mechanism.** `ApprovalPolicy` (pure: `runtime_level`, `catalog_level`, `args_preview`, the ported texts) + `ApprovalGate(AbstractCapability)`: `prepare_tools` sees EVERY capability's tool defs (trial E0), drops `off`, flips `ask` to `kind='unapproved'` (the pause mechanism, E1), and records name→capability_id for the cards; `before_tool_execute` refuses ask-tools in unattended runs via `SkipToolExecution`. A run ending in `DeferredToolRequests` sets `ReplyGenerator.pause_info()` (state = `all_messages()` JSON + pending calls + catalog hash); `PydanticAISystem` then records usage (the paused call's numbers are real — D5/E2), POSTs the state to nucleus, and closes with the new final event `message_paused` — state FIRST, so a decision can never race an unsaved pause; a failed save is a real error. `EventMapper` turns `DeferredToolRequestsEvent` into `approval_requested` events in 0.8.0's exact `ApprovalRequestData` shape. Resume: `TriggerJob.resume = {state, approvals: {call_id: {decision, reason?}}}` — the same agent is rebuilt (same persona → same tools, by construction), `message_history=` the stored state, `deferred_tool_results=` the decisions (`ToolDenied` carries 0.8.0's denial text when no reason is given), and the reply streams to `message_done`. `EventStream` counts `message_paused` as a final event. `AgentBuilder` sets `output_type=[str, DeferredToolRequests]` (required for the pause to surface — trial D mark).
 4. **At 0.8.0.** The whole gate exists as park-in-stream: `ToolApprovalGate` (prepare_tools filters off, before_tool_execute asks), `NucleusApprovals` announcing `approval_requested` and polling `GET /internal/messages/{msg_id}/approvals/{call_id}/`, decisions stored on the reply row under `persona.approve_run`, "always allow" clearing one tool for the rest of the RUN. Event name, `ApprovalRequestData` fields and the did-not-run texts are kept verbatim so nucleus's relay and card UI carry over; only the WAITING changes.
-5. **Open.** (a) ToolSearch ask-on-first-load (§1.3 decision 4) is NOT wired yet — it rides this same pause, but composing `defer_loading` + the gate needs its own small trial first; next pass. (b) The workspace root for filesystem/shell comes from `capability_config` `root_dir`/`cwd` and the build refuses loudly without one — item 22 wires the project folder as the proper root. (c) Whether a live MCP server's `readOnlyHint` annotations reach `ToolDefinition.metadata` on the pinned version is unverified (no e2e MCP dial test yet); the stored catalog `read_only` is the primary signal either way. (d) A resume emits a second `message_start` on the same msg_id — nucleus's relay must treat it as the stream reopening (handoff note). (e) Pause expiry is nucleus's job (e.g. a 24h cron that resumes-with-deny); nexus-ai holds nothing while paused.
+5. **Open.** (a) **RESOLVED 2026-10-13** — ToolSearch is wired (trial F below, tests/test_discovery.py). One deliberate reframe of decision 4: discovery itself is SILENT (portable across providers — the load mechanism differs per provider and cannot be intercepted uniformly); the ASK moved from load time to the tool's **first use** — one approval card both runs that call and adds the tool to `topic_tools` (change 8), so it stays once-per-tool-per-topic for reads, and writes keep asking every time. Loading a schema alone never asks, which also means a wrong discovery costs nothing. (b) **RESOLVED 2026-10-13** — the workspace root comes from `capability_config` `root_dir`/`cwd`; nucleus's project provisioning writes the project folder there (`/nexus/projects/<slug>` — CapabilityInternal docstring), and an unrooted config falls back to `"."` exactly as 0.8.0's FileSystem default did (item 22 "stays as-is"); the louder refusal built on 2026-10-12 was replaced with this parity. (c) **RESOLVED 2026-10-13** — the e2e dial test (tests/test_mcp_dial.py) proves a live server's `readOnlyHint` annotation survives the pinned MCP capability into `ToolDefinition.metadata`: an unlabeled-catalog read tool ran without asking on the annotation alone. (d) A resume emits a second `message_start` on the same msg_id — nucleus's relay must treat it as the stream reopening (handoff note). (e) Pause expiry is nucleus's job (e.g. a 24h cron that resumes-with-deny); nexus-ai holds nothing while paused.
 6. **Acceptance (built, tests/test_approvals.py).** A write tool pauses the run (approval_requested + message_paused, state POSTed BEFORE the final event, file not written, paused call billed); an approved resume executes the tool in the resumed process and finishes (both halves billed); a denied resume never runs the tool and the model sees the denial text; a read tool runs silently; `off` removes catalog + tools + section; an unattended run refuses instead of pausing. Policy units: native read/write defaults; explicit levels win; unlabeled-MCP ask / clearance / known-write-never-cleared / stored-read silent.
 7. **Classes and methods.** `ApprovalPolicy` + `ToolSource` (tools/approval_policy.py); `ApprovalGate` with `tool_capability_ids` (tools/approval_gate.py); `PendingApproval`, `PauseInfo` (core/specs.py); `PersonaSpec.approval_scope`; `ReplyGenerator.generate(request, capabilities, resume, catalog_hash)` + `pause_info()`; `NucleusClient.save_pause`; contracts: `ResumeBlock`, `ApprovalDecisionIn`, `ApprovalRequestData`, `AgentEventType.APPROVAL_REQUESTED/PAUSED`, `TriggerJob.topic_tool_clearances/resume`; `ToolsetBuilder.build(..., interactive=, clearances=)` now also assigns explicit capability ids and the `LocalWorkspace`.
 8. **API.** Nucleus change (9): `POST /api/v1/internal/messages/{msg_id}/pause/` ← `{job_id, topic_id, persona_id, state, catalog_hash, pending: [{call_id, tool, capability_id, args_preview}]}`; the resume is the SAME trigger endpoint with the stored `state` back in `resume`. Change (8) extended: the topic also stores the clearance list, shipped as `topic_tool_clearances`. The persona endpoint ships `approval_scope` (with change 7's `tool_access`). Nucleus owns: the card UI (it already has it), WHO may decide (`persona.approve_run` + `approval_scope`), firing the resume, and expiring stale pauses.
 9. **Sequence.** trigger → gate flips ask-tools → model calls one → run pauses → `approval_requested` event(s) → usage recorded → pause POST → `message_paused` → a person decides (nucleus checks the right and the scope) → nucleus resends the trigger with `resume` → same build, history = state, decisions in → tool executes (or the denial text goes to the model) → normal stream → `message_done` (or the next ask pauses again, same machinery).
 
+**ToolSearch trial (trial F, run 2026-10-13, pinned 2.55.0 — decision 4's mechanism CONFIRMED):** same throwaway instrument. (F0) a gate capability's `prepare_tools` can set `defer_loading=True` AND `kind='unapproved'` on another capability's tool defs in one pass. (F1) deferred tools are absent from the provider request; `ToolSearch(strategy="keywords")` exposes one model-facing tool named **`search_tools`**; after the model calls it, the discovered tool's schema appears in the NEXT request (`{"discovered_tools":[…]}` as the tool result). (F2) the discovered tool's first CALL pauses the run with `DeferredToolRequests` — the same pause machinery as approvals, one road. As built: `ToolsetBuilder` now builds ALL eligible capabilities (not only loaded); the gate hides tools outside `topic_tools` and arms their first use; `ToolSearch(strategy="keywords")` is appended only when something is hidden (zero overhead otherwise — and a toolless or fully-loaded persona keeps the exact Layer 0/1 request shape, byte for byte).
+
+#### Item 19 — tool activity visibility (ported 2026-10-13)
+
+1. **Problem.** A reader must see what a tool did — name, outcome, duration, a glimpse of the result — without the raw object, so a run can be audited from the chat.
+2. **Decision.** Port 0.8.0 verbatim: events `tool_call_start` (`ToolCallData: name, args`) and `tool_call_end` (`ToolResultData: name, ok, duration_ms, preview ≤600 chars, error ≤300, url`), the web-url rule included (web_fetch's url; a search's results page). One deliberate simplification: 0.8.0 subtracted approval WAIT from the duration (`ToolApprovalGate.waits`) — with pause/resume the wait happens BETWEEN runs, so a resumed call's duration counts from the resume and the subtraction bookkeeping is gone. **Rejected:** new event shapes — the relay already speaks these.
+3. **Mechanism.** `EventMapper` maps `FunctionToolCallEvent` → start (records t0 per call id) and `FunctionToolResultEvent` → end (`RetryPromptPart` = failed call); buffered text is flushed before each tool event so wire order mirrors what happened.
+4. **At 0.8.0.** `NA/implementations/agents/tool_events.py` + runner 174-201; nucleus relays and stores the trail (`NU/chat/services.py:800-815`).
+5. **Open.** None.
+6. **Acceptance (built).** tests/test_discovery.py::test_i19 — start before end, name+args on start, ok/duration/preview on end; the MCP dial test asserts the same for a real MCP tool.
+7. **Classes and methods.** contracts: `ToolCallData`, `ToolResultData`, `AgentEventType.TOOL_CALL_START/END`, `AgentEvent.tool_call/tool_result`; `EventMapper`: the two branches + `preview_of`, `url_of`, `_args_dict`.
+8. **API.** None — stream events only, 0.8.0 shapes unchanged.
+9. **Sequence.** model calls tool → `tool_call_start` → tool executes → `tool_call_end` → text resumes.
+
+#### Item 22 — execution sandboxing (reviewed 2026-10-13; stays as-is)
+
+1. **Problem.** Filesystem and shell tools must act inside the project's folder, under the patterns and command lists admins configured.
+2. **Decision.** **Stays as-is**, confirmed against the legacy config (`NA/schemas/trigger.py:90-177`): FileSystem's `root_dir`/`allowed_patterns`/`denied_patterns`/`protected_patterns` and Shell's `cwd`/`allowed_commands`/`denied_commands`/timeouts travel verbatim in `capability_config`; `_accepted_kwargs` passes exactly what the pinned harness accepts (pinned FileSystem takes BOTH `protected_patterns` and its newer `read_only_patterns` — verified from the 0.55 signature, nothing is dropped). NEW requirement from trial E: the pinned harness demands a workspace on the run — `LocalWorkspace(root)` is added, rooted per item 2 Open (b). **Rejected:** refusing to build without a configured root (the 2026-10-12 interim) — 0.8.0's default was `"."`, and parity wins until real isolation work.
+3. **Mechanism.** `ToolsetBuilder`: root = filesystem `root_dir` → shell `cwd` → `"."` (logged); `LocalWorkspace` inserted first.
+4. **At 0.8.0.** The config models above; nucleus provisioning writes `/nexus/projects/<slug>` into the config (CapabilityInternal docstring); the project bind-mount itself is deploy config (still not read — unchanged claim).
+5. **Open.** Real isolation (container/user separation) beyond path scoping — future, outside Layer 1.
+6. **Acceptance.** Every filesystem test runs inside a tmp root and never escapes it; the T-L1/approval suites all pass through this path.
+7. **Classes and methods.** None new.
+8. **API.** None.
+9. **Sequence.** `capability_config` → `ToolsetBuilder` → `LocalWorkspace` + capabilities, per run.
+
+#### Item 35 — bundled capability MCPs (audited 2026-10-13)
+
+1. **Problem.** The product wants first-party MCP servers available out of the box.
+2. **Decision.** **nexus-ai needs no special path** — a bundled server is an ordinary `MCPServerInternal` row: catalog, namespacing, gate, billing and the e2e dial path apply unchanged; `is_first_party` is carried and deliberately unused in the engine. 0.8.0's `_CAPABILITY_REGISTRY` (runner 84-105, 21 names → harness classes, never called) is NOT ported: `_NATIVE_BUILDERS` keeps exactly the five natives, and a new native is one added row when it is actually wired, not a pre-registered promise. **Rejected:** porting the full registry — dead code that implies support that doesn't exist.
+3. **Mechanism.** None here.
+4. **At 0.8.0.** `is_internal`/first-party flag exists (NU internal/api.py:36-59, the Capability/MCPServer split); the registry was unused.
+5. **Open.** WHICH servers ship bundled, and their provisioning — nucleus/product work, folded into the nucleus handoff.
+6. **Acceptance.** tests/test_mcp_dial.py doubles as the bundled-server path (same row shape, real dial).
+7. **Classes and methods.** None.
+8. **API.** None new.
+9. **Sequence.** N/A — same as any MCP server.
+
 #### Requirement → test traceability (Layer 1, added 2026-10-13)
 
-Same convention as the Layer 0 matrix (§1.5): every test's docstring is its report row; `python -m pytest` regenerates `tests/REPORT.md` (now 45 tests).
+Same convention as the Layer 0 matrix (§1.5): every test's docstring is its report row; `python -m pytest` regenerates `tests/REPORT.md` (now 70 tests).
 
 | Requirement (doc) | Tests (tests/test_tools.py, tests/test_approvals.py) |
 |---|---|
@@ -435,7 +473,73 @@ Same convention as the Layer 0 matrix (§1.5): every test's docstring is its rep
 | Item 2 — policy: defaults, explicit levels, decision 6's MCP rules | `test_a_policy_native_defaults` · `test_a_policy_explicit_levels_win` · `test_a_policy_mcp_unknown_asks_clearance_clears` |
 | Item 2 — pause/resume: pause on write, approve executes, deny never runs | `test_a1_write_tool_pauses_the_run` · `test_a2_resume_approved_runs_the_tool` · `test_a3_resume_denied_never_runs_the_tool` |
 | Item 2 — the quiet paths: reads silent, off invisible, unattended refusal | `test_a4_read_tool_runs_without_asking` · `test_a5_off_tool_is_invisible` · `test_a6_unattended_run_refuses_instead_of_pausing` |
-| Known gaps (Layer 1) | no e2e MCP dial test (a scripted MCP server — with ToolSearch's pass); ToolSearch ask-on-first-load unwired (item 2 Open a); `readOnlyHint` passthrough unverified (Open c); stdio MCP refused loudly pending `MCP(local=…)` verification |
+| Item 2 decision 4 — ToolSearch: hidden until discovered, ask on first use, unattended refusal (tests/test_discovery.py) | `test_f1_unloaded_tools_hidden_until_discovered` · `test_f2_approved_first_use_executes_and_finishes` · `test_f3_unattended_discovery_is_refused_not_paused` |
+| Item 19 — activity trail: start/end order, shapes, preview | `test_i19_tool_activity_events` · the dial test's end-event assert |
+| E2E MCP dial — real server over streamable HTTP: prefixed names, stored read runs / stored write pauses, live `readOnlyHint` passthrough (tests/test_mcp_dial.py) | `test_mcp_read_tool_executes_against_the_real_server` · `test_mcp_unlabeled_write_pauses` · `test_mcp_annotation_passthrough_without_stored_list` |
+| Items 13+46 — router/escalation (tests/test_router.py, Layer 2): simple answered by router, hand-over announced + billed apart, hints become the set, fall-through, standard-as-router, no seats untouched | `test_r1_router_answers_simple_questions` · `test_r2_escalation_hands_over_announced_and_billed_apart` · `test_r3_tool_hints_become_the_topic_set` · `test_r4_router_failure_falls_through_to_standard` · `test_r5_standard_escalates_when_no_router_seat` · `test_r6_no_seats_means_yesterdays_behaviour` |
+| Item 16 — budget/selection/limits (tests/test_budget.py, Layer 2): formula, untouched-under-target, oldest-first, protected list, small-window trim, max_steps cap | `test_b_budget_formula_keeps_the_two_numbers_apart` · `test_b_fitter_under_target_is_untouched` · `test_b_fitter_drops_oldest_history_first` · `test_b_fitter_drops_catalog_before_touching_protected` · `test_b_small_window_trims_history_before_the_run` · `test_b_max_steps_caps_the_tool_loop` |
+| Item 12 — fallbacks (tests/test_fallbacks.py, Layer 2): labelled fallback answer, all-dead one error, default unchanged | `test_fb1_fallback_answers_and_is_labelled` · `test_fb2_all_candidates_dead_is_one_clean_error` · `test_fb3_no_fallbacks_fails_clean_unchanged` |
+| Item 40 — model check (tests/test_model_check.py, Layer 2): ok+latency, unsupported provider, dead endpoint never a 500 | `test_mc1_working_model_checks_ok` · `test_mc2_unsupported_provider_is_named` · `test_mc3_dead_endpoint_is_a_model_failure` |
+| Known gaps (Layer 1, closing state 2026-10-13) | stdio MCP refused loudly pending `MCP(local=…)` verification; drift-sync endpoint shape — nucleus handoff; resume's second `message_start` — relay handoff note |
+
+#### Layer 2 — decisions before design (settled 2026-10-13)
+
+Settled in discussion ahead of the Layer 2 item designs (items 16, 12, 13, 11, 10, 40, 14, 46). Item 16 was already fully settled (§4.1) and needs no new decision.
+
+1. **Fallback models (item 12) are OPT-IN per persona, with 0.8.0's own retry ported.** A persona with no `fallback_models` configured (the default) fails cleanly: one `message_error`, the run stops — Layer 0's T9, unchanged. Only where an admin deliberately configured fallbacks does the retry run: each candidate tried with a whole fresh stream, **never switching after the first token reached the reader**, and the reply labelled "answered by X (fallback)". **Rejected:** pydantic-ai's `FallbackModel` — its retry semantics are the library's, and `answered_by_model` + the no-switch-mid-stream rule would have to be dug back out of it; dropping the feature entirely — an admin who configured a backup asked for it to work.
+2. **The ROUTER seat lives on the persona** (the `PersonaSpec.models` role slot built for it on day one). No router model on the persona = `off` — the query goes straight to STANDARD. A company-level default may fill the empty seat; resolved in NUCLEUS inside the persona endpoint (same pattern as `tool_access`, change 7).
+3. **Rate limits (items 11 + 10) are enforced by NUCLEUS, before the trigger fires** — nexus-ai writes zero code. Unit: **requests or tokens**; window: **per hour or per day** (admin settings); computed from the usage records nexus-ai already posts per call (change 1). Scope: per user, and per model (concurrency / volume). Mid-run token precision (per-second/minute TPM) is EXPLICITLY out of scope: enforcement happens at trigger time and a run's tokens land as its calls finish; the `WrapperModel` seam stays reserved in the design so that, if fine-grained gating is ever truly needed, it is one class plus a store — not a redesign. **Rejected:** a Redis for nexus-ai — same reasoning as item 1 (new infrastructure for one feature), now twice.
+4. **Escalation (item 46) needs NO custom plumbing — trial G below retired the flagged risk.** `Escalate` is a structured OUTPUT TYPE on the router's agent (`output_type=[str, Escalate]`), exactly the struct item 13 promised: the model "calling escalate" is the model calling the `final_result` output tool, which ends the router's run cleanly with the `Handover` fields. The deep answer is then a SECOND ordinary streaming run inside the same ReplyGenerator — no in-tool stream splicing, no run termination tricks, both halves billed separately by the machinery Layer 0 already has.
+
+**Escalate/hand-over trial (trial G, run 2026-10-13, pinned 2.55.0 — decision 4 CONFIRMED):** same throwaway instrument (fake OpenAI-shaped server, no product code). (G0) with `output_type=[str, Escalate]` the model sees ONE extra tool named `final_result` carrying Escalate's fields, `tool_choice=auto` — so the router can still answer plain text (verified both paths). (G1) the router's run ends cleanly with `result.output == Escalate(task=…, summary=…, expected_output=…)`. (G2) the deep model's answer streams token by token to the caller as an ordinary second run. (G3) BOTH runs' usage is readable separately (`ModelResponse.usage` per run) — router billed role=ROUTER, deep as the reply; nothing lost at the seam. (G4) the deep run received ONLY the `Handover` content, not the router's history — "Handover kept small" holds by construction (and switching models loses the provider cache anyway, §1.3).
+
+#### Items 13 + 46 — router and escalation (settled and built 2026-10-13)
+
+1. **Problem.** Every question costs the standard model's price even when a cheap model could answer it; and a persona has no way to bring MORE capability to a genuinely hard question. One decision point — made while trying, not by pre-classification — should route between cheap, standard and deep.
+2. **Decision.** The persona's model bench decides everything — **there is no separate on/off setting**: ROUTER seat filled → the cheap model screens first; no ROUTER but a DEEP seat → **STANDARD plays the router role** (it answers normally, at today's cost, and may hand over on a hard question — the user's amendment, 2026-10-13); neither seat → Layer 0/1 behaviour, untouched (verified: no Escalate tool on the wire). The hand-over is trial G's mechanism: `Escalate` (task, summary, expected_output, **tool_hints**) as a structured output type; the deep answer is a second ordinary run. The ROUTING run gets **no tools** (it hints, it does not act — a deliberate narrowing of §1.3's "read tools run if permitted"; running tools in the router returns with its own pass later if wanted). **Router text streams LIVE** (settled: speed is the router's point); if the model misbehaves and talks before escalating, **the form wins** — the stray words flicker on the live stream only, because `message_done.content` is the deep run's text alone. On a topic's FIRST reply the router's `tool_hints` (∩ eligible) become the loaded set — item 1's reserved seam filled. The resume of a paused run rebuilds on the SAME seat (`ResumeBlock.role`, from the pause POST). **Rejected:** a separate escalate tool with in-tool stream splicing — trial G made it unnecessary; a project/company router switch — seats on the persona already express it per agent; holding router text until the run ends — every simple question would lose streaming to cosmetically fix a rare case.
+3. **Mechanism.** `escalation.py`: the `Escalate` model, `ROUTER_INSTRUCTIONS` (stable: "answer OR escalate, never both"), `handover_suffix()` (the deep run keeps topic history + the user's message — same persona, same conversation; cross-persona hand-overs in Layer 6 travel alone). `AgentBuilder.build(escalate=)` adds Escalate to the output union. `ReplyGenerator`: records ACCUMULATE across runs; `escalation()`, `used_tools()`, `set_source_on_last_run()`; router records carry `kind="router"`, `role=ROUTER`. `PydanticAISystem.respond`: the routing stage (case A router / case B standard-as-router), `asyncio.timeout(ROUTER_TIMEOUT_SECONDS)` + any failure → fall through to STANDARD with `source="router_failed"` on the router's record (a broken router never blocks a reply; a client disconnect is NOT a router failure); on escalation a `deep_escalation` event (`escalated_to`) precedes the deep run; `message_done` carries `answered_by_model`, **`loaded_tools`** (None when no tool-bearing run happened, so a router-answered first reply leaves the topic's set deliberately undecided) and **`used_tools`** (what actually executed — the Layer 3 bridge: stored on the message row, later vector metadata so retrieval returns "text + what solved it", and a future router hint).
+4. **At 0.8.0.** Nothing — no router, no escalation; every reply paid the persona's one model.
+5. **Open.** (a) The router runs toolless — letting it run READ tools (§1.3's fuller flow) is a later pass on the same seams. (b) The company-level default for an empty ROUTER seat is nucleus-side resolution (change 3) — nexus-ai just reads the seats. (c) `is_code`/output-type hints in the router struct (§4's sketch) — deferred until the output-type work (item M7 territory) needs them.
+6. **Acceptance (built, tests/test_router.py).** Router answers simple questions itself (one call, streamed, role=ROUTER/kind=router); escalation announced + billed apart (ROUTER then DEEP records, deep text is the content, answered_by_model set); tool_hints become the set (deep request carries the hinted schema; done carries loaded_tools; the router request carries none); a dead router endpoint falls through (done, no error, source=router_failed on the router record only); STANDARD escalates when no router seat; a persona with no seats is byte-for-byte yesterday's behaviour.
+7. **Classes and methods.** `escalation.Escalate/ROUTER_INSTRUCTIONS/handover_suffix`; `PersonaSpec.model_for_or_none`; `UsageRecord.source`; `EngineSettings.router_timeout_seconds`; contracts: `AgentEventType.ESCALATION`, `AgentEvent.escalated_to/loaded_tools/used_tools`, `ResumeBlock.role`; `EventMapper.used_tools`; `ReplyGenerator.escalation/used_tools/set_source_on_last_run`; the routing stage in `PydanticAISystem.respond`.
+8. **API.** Nucleus change (3), concrete shape: `PersonaInternal` += optional `router_model` / `deep_model` (ModelInternal-shaped; a company default fills the empty router seat nucleus-side). Change (8) carried by events: nucleus stores `message_done/message_paused.loaded_tools` as `topic_tools` on the topic's first reply, and `used_tools` on the message row (Layer 3 reads it into vector metadata, item 44). Change (9) extended: the pause POST and `ResumeBlock` carry `role`. The usage endpoint's records gain `kind="router"` and `source`.
+9. **Sequence.** trigger → seats read → (router run, toolless, timed → text = done | Escalate | failure → fall through) → on Escalate: `deep_escalation` event → hints∩eligible become the set (first reply) → deep run with handover suffix + full tools → done with answered_by_model + loaded_tools + used_tools; every run's usage posted with its own role.
+
+#### Item 16 — context budget, selection and the tool loop (built 2026-10-13; design was already settled, §4.1)
+
+1. **Problem.** §4.1 — the budget was computed from the wrong number (`max_output_tokens` read as the window), nothing capped agent rounds, and selection and compaction were conflated.
+2. **Decision.** §4.1 verbatim — nothing was re-decided; this entry records the BUILD. `input_budget = context_window − max_output_tokens − loop_headroom`; target ≈70% / trigger ≈90%; selection before the run, compaction during it; eviction order 1→2→3, only history ever summarized; protected: the current message, the persona prompt/brief, attached files. The three hardcoded numbers became settings (`BUDGET_LOOP_HEADROOM`=8192, `BUDGET_TARGET_PCT`=70, `BUDGET_TRIGGER_PCT`=90).
+3. **Mechanism.** `ai_engine/context/budget.py`: `Budget`, `budget_for(spec, …)` (window from the MODEL, output cap from the PERSONA — two fields, never one), `BudgetFitter.fit(plan, budget)` — pure, estimator injected (`usage_reader.estimate_tokens`, the harness estimator wrapped, so context/ stays framework-free). Fit runs in `ReplyGenerator.generate` before anything is sent (never on a resume). Over target: history oldest-first, then sections below the persona prompt's priority (the tool catalog); protected content over target is sent anyway with a warning — §4.1's escape valve (indexing, 33/34) is the real answer, never truncation. Compaction: `ToolsetBuilder` appends `TieredCompaction(tiers=[DeduplicateFileReads(read_file key), ClearToolResults(max_fraction=0.9, keep_pairs=5), SummarizingCompaction(max_fraction=0.9)], target_tokens=run budget target)` whenever tools are built — 0.8.0's tier order kept, the target finally right, per-run per-model. Limits: `persona.max_steps` → `UsageLimits(request_limit=…)` on every run — agent rounds finally capped; the limit error is one clean `message_error` and the spent rounds still bill.
+4. **At 0.8.0.** The tiers existed in the right order with the wrong target (Appendix A); `UsageLimits` unused; `max_steps` dropped on the wire.
+5. **Open.** Tier 1's dedup key is still read_file-only and tier 2's knobs are 0.8.0's — both flagged in §4.1 for revisiting when graph (32) / DuckDB (34) results flow through; tool-result size caps before entering the transcript remain future work.
+6. **Acceptance (built, tests/test_budget.py).** The budget formula with the two numbers apart; a plan under target passes byte-identical; oldest history drops first, newest survives, message/persona never dropped; the catalog drops before protected content, which is sent anyway; through the service: a small window trims history before the run; max_steps=3 stops an endless scripted tool loop with one error, ≤4 provider calls, usage still recorded.
+7. **Classes and methods.** `Budget`, `budget_for`, `BudgetFitter` (context/budget.py); `estimate_tokens` (usage_reader.py); `EngineSettings.budget_*`; `ToolsetBuilder.build(compaction_target=)`; `_read_file_key`; UsageLimits wiring in `ReplyGenerator.generate`.
+8. **API.** None — engine-internal.
+9. **Sequence.** plan built → fit to the run model's budget (selection) → run with UsageLimits + compaction tiers armed at the same budget's target → growth mid-run handled by tiers 1→2→3.
+
+#### Item 12 — fallback models (built 2026-10-13; decision 1 of the Layer 2 block)
+
+1. **Problem.** A provider outage took the persona down even when the admin had configured backup models.
+2. **Decision.** Layer 2 decision 1, built as settled: OPT-IN per persona; candidates tried in order with a whole fresh stream each; **never a switch after the first token reached the reader** (the mapper's received text is the witness); the reply labelled "answered by X (fallback)"; no fallbacks configured → Layer 0's clean single error, byte-for-byte.
+3. **Mechanism.** The candidate loop in `ReplyGenerator.generate`: `[seat's model] + persona FALLBACK specs`; each failed attempt bills (estimated, under the failed model's own ids — T9's rule per candidate); retry only while `mapper.text() == ""`; `fallback_used()` → `message_done.answered_by_model = "<name> (fallback)"`. `AgentBuilder.build(spec=)` override builds a candidate for the same seat. The loop wraps EVERY run — router, standard and deep alike.
+4. **At 0.8.0.** `apps/managers/fallbacks.py` — the same user-visible behaviour; re-implemented on the rebuilt generator rather than ported line by line.
+5. **Open.** None.
+6. **Acceptance (built, tests/test_fallbacks.py).** Dead primary → fallback answers, labelled, two records (estimated dead + real fallback); both dead → exactly one message_error, both billed estimated; no fallbacks → one error, one record — unchanged default.
+7. **Classes and methods.** the candidate loop + `fallback_used()` (reply_generator.py); `AgentBuilder.build(spec=)`.
+8. **API.** None new — `fallback_models` already arrives in PersonaInternal.
+9. **Sequence.** run candidate 1 → fails before any token → bill it estimated → candidate 2 fresh stream → answers → done labelled "(fallback)".
+
+#### Item 40 — model check endpoint (nexus-ai half ported 2026-10-13)
+
+1. **Problem.** Nucleus's Register/Edit model dialogs verify a model+key before saving; the endpoint lived in the old module and had to come across.
+2. **Decision.** Ported with 0.8.0's path and answer shape unchanged (`POST /api/v1/models/check/` → `{ok, latency_ms}` or `{ok:false, error_code, error, status_code}`); the check now BUILDS the model with the rebuild's own `ModelFactory` and STREAMS the tiny call — so passing means "a persona on this model will run", the same code path. The §4.6 fingerprint-persistence half (verify once, store the fingerprint, re-verify on drift) is NUCLEUS work — handoff. **Rejected:** a new response shape — nucleus's dialogs already word these codes.
+3. **Mechanism.** `pydantic_ai_system/model_check.py` (`check_model`, `SUPPORTED_PROVIDERS`, `_is_model_failure`); `fastapi_app/routers/models.py` behind the same `X-Internal-Key` check as the trigger.
+4. **At 0.8.0.** `routers/models.py` + `managers/model_check.py` — same contract, non-streaming call.
+5. **Open.** Fingerprint persistence + MCPServer verify-and-store-tools (change 6) — nucleus handoff; a future check could also return the live tool list for MCP rows (item 3's capture point).
+6. **Acceptance (built, tests/test_model_check.py).** Reachable model → ok + latency; unknown provider → `unsupported_provider`, no call attempted; dead endpoint → HTTP 200 with ok=false + `model_failure` — a broken model never breaks the endpoint that tests models.
+7. **Classes and methods.** `check_model` et al. above.
+8. **API.** `POST /api/v1/models/check/` — kept verbatim.
+9. **Sequence.** nucleus dialog → POST config → one streamed 5-token call → worded dict back.
 
 ### 1.4 APIs between nucleus and nexus-ai (read from code 2026-10-10)
 
@@ -585,6 +689,329 @@ modules/nexus-ai/                  (old code: modules/nexus-ai-legacy/)
 | `SearchQuery` / `SearchHit` | A vector search with company, project, topic, sources, top_k; and one result |
 | `Handover` | Context passed to a delegated model or persona: task, summary, references, constraints, expected output |
 | `UsageRecord` | One model call's usage: who/where (company, project, topic, persona, user, message), model and role, kind; token counts (input total, uncached input, cache read, cache write 5m, cache write 1h, output total, of which reasoning); finish reason; estimated flag; cost frozen with the prices used. Field list: §1.5 Layer 0 spec |
+
+#### Layer 3 — decisions before design (settled 2026-10-13)
+
+Scope: items 31 (vector store), 44 (persona chat vectors), 24 (RAG), 33 (content
+routing) are designed and built now; item 32 (code graph) was settled in §4.2 and
+is reached through the router, not through embeddings; items 28 (vision), 36
+(object storage) and 34 (DuckDB) stay deferred until these land.
+
+1. **Quarantine.** txtai and pgvector are touched only inside
+   `ai_engine/vector_db/`, behind the `VectorStore` interface and its factory —
+   the same rule that confines pydantic-ai to `pydantic_ai_system/`. Nothing
+   outside that folder imports txtai, sqlalchemy-for-vectors, or pgvector.
+2. **One database.** A separate `nexus_vectors` database on the SAME Postgres
+   instance nucleus uses — no second DB server. The dev stack's `postgres-dev`
+   image was swapped to `pgvector/pgvector:0.8.7-pg17` on 2026-10-13 (same PG 17,
+   same data volume; one-time REINDEX for the musl→glibc collation change). The
+   production `postgres` service gets the same one-line swap when next touched.
+3. **Embedder is a project setting.** Each project's settings name its embedder
+   (owner's words: "The embedder will be given in project settings, and can be
+   changed later"). Default: local fastembed `nomic-ai/nomic-embed-text-v1.5`.
+   A remote embedder is billed under kind=remote_embedder. Open (a) RESOLVED
+   2026-10-13: NO company default — a project with no embedder set uses the
+   system default (the local one) directly. Nucleus's ai-config is per-project
+   only.
+4. **Embedder change ⇒ full re-embed.** Changing a project's embedder rebuilds
+   ALL of that project's embeddings — nothing is silently dropped. Raw text is
+   stored beside every vector so the rebuild never re-fetches sources. While the
+   rebuild runs, search keeps answering from the OLD model's vectors and flips
+   only when the new set is complete — vectors are never compared across models
+   (per-model tables, per-model dimensions). Where the rebuild job runs and how
+   progress is reported = a design point in item 31's entry.
+5. **Code files are never embedded.** A code file attached to a prompt rides the
+   prompt only. Deep code inspection is the code-graph MCP's job (item 32, §4.2
+   — CodeGraphContext + FalkorDB); no code embeddings, confirmed.
+6. **used_tools is vector metadata.** Every answer row carries the tools/MCPs
+   that produced it (Layer 2, nucleus change 8); item 44's search returns the
+   chat text with that list as metadata, so retrieval can say which MCPs were
+   in play when the remembered answer was written.
+7. **One index per PROJECT** (settled 2026-10-13) — follows from the
+   per-project embedder. Each index lives in its own pg schema,
+   `vx_p{project_id}_{model_slug}` (trial C rule i). Chat vectors (item 44) and
+   document vectors (item 24) share the project's index, distinguished by
+   `kind` metadata (message | context_source) plus topic, source, used_tools.
+   A registry table in the public schema — `vx_indexes(project_id, model_id,
+   schema_name, status active|building)` — says which schema answers searches.
+8. **ReembedJob runs inside nexus-ai** (settled 2026-10-13) — vectors are
+   nexus-ai's property. Nucleus triggers `POST /api/v1/embed/reindex/`
+   (internal key) and polls a status endpoint; nucleus makes the project
+   INACCESSIBLE to users until the rebuild completes (owner's decision). The
+   job builds the NEW model's schema from the old schema's stored raw text,
+   flips the registry row only when complete, then drops the old schema — so a
+   crash mid-rebuild loses nothing (the old index stays active underneath the
+   lock). A reindex while one is building → 409. Changing a project's embedder
+   — and therefore triggering reindex — is restricted to the company
+   owner/admin, enforced by NUCLEUS at the project-settings endpoint; nexus-ai
+   trusts the internal key.
+9. **Retrieval trigger, v1 (item 33; settled 2026-10-13).** Every reply ALWAYS
+   searches the project's active index with the user's message (hybrid,
+   filters: company+project for documents, company+project+topic for chat
+   memory — decision in item 44's entry). Hits above the similarity threshold
+   become a RETRIEVED section in the ContextPlan (priority < 90, governed by
+   item 16's BudgetFitter); below-threshold or empty → nothing attached, the
+   reply proceeds as if the index were empty. Owner's words: "it will find and
+   if found something its ok, otherwise db is empty for it." The search is
+   local-embedder cheap; a router-decides upgrade can replace the
+   always-search rule later on the same seam.
+10. **Retrieval shows itself in events** (owner's call, settled 2026-10-13:
+    "i think we should include all such things in events"). A new
+    `context_retrieved` event is emitted after the search, before the model
+    run, ONLY when something was attached: `{retrieved: [{id, kind:
+    message|context_source|recall, label, score, topic_id?}], count}` —
+    references and scores only, never the chunk text. `message_done` carries
+    the same list as `retrieved_sources` beside `used_tools`, and nucleus
+    stores it on the message row (change 8 pattern) — so an answer's vector
+    metadata says which tools ran AND which memories were used.
+11. **Recall endpoints ported now** (settled 2026-10-13): `POST
+    /api/v1/embed/recall/` and `DELETE /api/v1/embed/recall/{entry_id}/` —
+    legacy W5 contract kept (entry_id is the doc id, edit = upsert); recall
+    entries are rows in the project index with kind=recall. `type="code"` on
+    POST /embed/ is REFUSED with a clear error — enforcement of decision 5;
+    the nucleus handoff notes to stop sending it. `GET /api/v1/directives/`
+    is NOT ported (legacy plugin machinery) — known gap, flagged in the
+    handoff for nucleus to confirm nothing calls it.
+12. **Items 32, 34 and 36 are ADD-ON MCPs, not engine code** (settled
+    2026-10-13). They formally leave nexus-ai's backlog and become their own
+    MCP-server projects — item 35's audit already proved the engine needs NO
+    special path for first-party servers (ordinary MCPServerInternal rows:
+    catalog, namespacing, approval gate, billing and the e2e dial all apply
+    unchanged, test-proven). Concretely:
+    - **One combined DATA MCP for items 34 + 36**: a server running MinIO
+      (object storage) + DuckDB (SQL over large CSV/Parquet) together —
+      DuckDB's httpfs speaks the S3 API, so it queries MinIO's files
+      directly. One toolset (≈ upload_file, list_files, describe_table,
+      query_sql); the TOOL NAMES ARE THE CONTRACT — the query engine behind
+      query_sql can be swapped for Spark later without touching personas,
+      topics or this doc. Multi-tenancy lives IN the MCP: bucket per project,
+      DuckDB confined to that project's bucket.
+    - **Item 32 (code graph) stays its OWN MCP** — CodeGraphContext +
+      FalkorDB per §4.2; different data and lifecycle, never merged into the
+      data MCP.
+    - **Item 28 (vision) is NOT an MCP** — images in the prompt are model
+      input capability, engine-side work; it stays deferred as the one
+      remaining Layer 3 ENGINE item.
+
+Legacy contract verification (2026-10-13, read from
+`modules/nexus-ai-legacy/apps/routers/embed.py` + `apps/schemas/embed.py`):
+POST /api/v1/embed/ takes EmbedRequest{source_id, type "file"|"code", label,
+content, language?, topic_id?, channel_id?, project_id?, company_id?} and
+answers EmbedResponse{source_id, collection_id, chunks_count} — nucleus stores
+collection_id back, so the port returns an equivalent key.
+DELETE /embed/context-source/{collection_id}/ → {ok}. POST /embed/message/
+takes MessageEmbedRequest{message_id, company_id, sequence, topic_id,
+channel_id, project_id, sender_id, sender_name, sender_type, content,
+created_at} → MessageEmbedResponse{message_id, collection, embedding_model,
+ok}; the port ADDS optional used_tools (decision 6 / nucleus change 8).
+DELETE /embed/message/{message_id}/?company_id= → {ok}. Also present in
+legacy, NOT yet ruled on: GET /api/v1/directives/, POST /embed/recall/ and
+DELETE /embed/recall/{entry_id}/ (W5 Recall entries) — owner to decide port
+now vs defer; and type="code" ingestion, which decision 5 forbids — proposed:
+the port refuses type="code" with a clear error and nucleus stops sending it.
+
+Trial C — RESULT 7/7 PASSED (2026-10-13, run by the owner in nexus-ai-debug
+against the real `nexus_vectors` DB on `pgvector/pgvector:0.8.7-pg17`; script
+was `modules/nexus-ai/trial-c/trial_c.py`, throwaway, delete after):
+
+| Claim | Result |
+|---|---|
+| C1 semantic search on pgvector, EXTERNAL embedder (our code calls the embedder; txtai only receives vectors via `method="external", transform=fn`) | PASS (top=m4) |
+| C2 company+project+topic as parameterized SQL WHERE on content storage | PASS |
+| C2b cross-company isolation — c2's filter never sees c1 rows | PASS |
+| C3 hybrid: pgvector similarity + pgtext keyword finds an exact term | PASS (`scoring={"method":"pgtext"}, hybrid=True`) |
+| C5 delete by source: SQL select ids → `delete(ids)` → gone | PASS |
+| C6 reconnect from a fresh process | PASS — the ONE working strategy: `emb.save(dir)` once, then `Embeddings().load(dir, config={**config, "transform": fn})` — the transform callable is ALWAYS injected in code; txtai refuses to resolve an external transform from a saved config (`ALLOW_RESOLVE_TRANSFORM` guard). `load(config=)` alone and lazy-connect both FAIL. |
+| C4 two embedding dimensions in one DB | PASS — but ONLY with ONE SCHEMA PER INDEX. txtai indexes use fixed content/scoring table names: a second index in the same schema blocks forever on the first one's open transaction (the first trial run hung exactly there) and would clobber its content tables. Second index in its own schema (`schema=` top-level + in the pgvector dict): 384-dim index worked AND the 768-dim original stayed intact. |
+
+Confirmed pins: `txtai==9.14.0`, `fastembed==0.9.0` (embedder
+`nomic-ai/nomic-embed-text-v1.5`, 768 dims), plus what pip resolved with them:
+`sqlalchemy 2.1.4`, `psycopg2-binary 2.9.13`, `pgvector 0.5.1` (python client —
+txtai's own ceiling), server extension pgvector 0.8.7. Docker/image note:
+install CPU torch FIRST (`pip install torch --index-url
+https://download.pytorch.org/whl/cpu`) or txtai pulls ~6 GB of CUDA wheels.
+Infra one-timers done during the trial: dev postgres image swapped (entry 2
+above), cluster password re-aligned to secrets.env (`ALTER USER` — the volume
+predated the generated secrets), nexus-ai's container must be on
+`neuralops-network` to resolve the postgres host.
+
+Design rules the trial adds: (i) one Postgres DATABASE, one SCHEMA per txtai
+index; (ii) the Embeddings object is constructed fresh each process start with
+the transform injected in code — nothing executable is ever loaded from saved
+config; (iii) the saved-config dir is tiny and regenerable — treat it as cache,
+the truth lives in Postgres.
+
+#### Items 31 + 44 + 24 + 33 — vector store, chat memory, document RAG, retrieval (designed 2026-10-13)
+
+1. **Problem.** A persona must remember: documents attached to a project (24), the project's own chat beyond the context window (44, SAME TOPIC ONLY), and short recall entries (W5) — searchable semantically, strictly inside the tenant, and visible when used. Item 31 is the store itself; item 33 decides when a reply searches it.
+2. **Decision.** pgvector + txtai 9.14.0 behind `VectorStore` in `ai_engine/vector_db/` — Layer 3 decisions 1–11 plus trial C's rules: one `nexus_vectors` DATABASE, ONE SCHEMA PER INDEX, ONE INDEX PER PROJECT (schema `vx_p{project_id}_{model_slug}`); EXTERNAL embedder (our code embeds, txtai receives vectors); kinds `message | context_source | recall` in the one project index; always-search v1 with a score threshold; retrieval announced in events. **Rejected:** Chroma (legacy — a second store when pg already holds everything); code embeddings (decision 5); a per-company index (the embedder is per-project); self-embedding replies inside respond() (one writer path: nucleus calls POST /embed/message/ for every stored message, answers included).
+3. **Mechanism.** `EmbedderFactory` → `LocalEmbedder` (fastembed, process-cached per model) or `RemoteEmbedder` (OpenAI-compatible `/v1/embeddings` via httpx; billed kind=remote_embedder). `TxtaiVectorStore` keeps a registry table `public.vx_indexes(project_id, model_id, schema_name, status active|building, updated_at)`; opening a project reads the ACTIVE row and constructs the txtai Embeddings FRESH — saved-config-dir cache + `load(path, config={**cfg, "transform": embedder})` (trial C6's one working strategy; nothing executable ever loads from disk). `index()` upserts (ids: message_id / `{source_id}:{n}` per chunk / entry_id), raw text always stored (content=URL). `search(SearchQuery)` is hybrid SQL with parameterized filters. Chunker: paragraph-pack to ~1000 chars with one-paragraph overlap. `ReembedJob.start(project, embedder)`: registry row (new schema, status=building) → stream old schema's raw text → embed+index with the new model → flip active → drop the old schema; a second start while building → 409; the status endpoint reads the registry. Retrieval in `PydanticAISystem.respond()` right after the plan is built: active index exists → search (documents: company+project; chat memory + recall: company+project+topic) → hits ≥ RETRIEVAL_MIN_SCORE up to RETRIEVAL_TOP_K → one `retrieved` PromptSection (priority 50, unstable — item 16's BudgetFitter governs it) + `context_retrieved` event + the refs ride to message_done as `retrieved_sources`.
+4. **At 0.8.0.** ChromaDB collections per company (`company_{id}_chat` …), fastembed default, endpoints in NA/routers/embed.py + schemas/embed.py (shapes quoted in the verification block above); retrieval lived in the chat/document/recall context-source managers.
+5. **Open.** (a) `GET /api/v1/directives/` not ported — handoff asks nucleus to confirm nothing calls it. (b) threshold/top_k are settings — tune after real use. (c) router-decides retrieval — later, same seam (decision 9). (d) `collection_id` returned by POST /embed/ is `{project_id}:{source_id}` — the delete endpoint carries no other scope, so the key must locate the project index on its own.
+6. **Acceptance** (tests/test_vector_db.py, test_embed_endpoints.py, test_retrieval.py; fake deterministic embedder, real pgvector pg via NEXUS_VECTOR_DB_URL). Store: scoped index+search, cross-company isolation, hybrid exact-term, delete by source, two models' schemas coexist with the first intact (trial C re-asserted as regression tests); reembed: build→flip→old dropped, searches answer OLD vectors until the flip, second start → 409. Endpoints: POST /embed/ chunks and answers collection_id + chunks_count; type="code" refused 422; context-source delete empties the source; message embed stores used_tools; recall upsert-on-same-id + delete; every endpoint 401 without the key; 503 when NEXUS_VECTOR_DB_URL is unset. Retrieval e2e (harness): topic with indexed rows → context_retrieved with refs+scores, a retrieved section reaches the model's instructions, retrieved_sources lands on message_done; empty index → no event, no section; another topic's chat memory is never retrieved (same-topic rule); below-threshold hits attach nothing.
+7. **Classes and methods.** vector_db/: `VectorStore` (index / search / delete_source / delete_ids / active_model), `TxtaiVectorStore`, `Embedder` + `LocalEmbedder` + `RemoteEmbedder` + `EmbedderFactory`, `ReembedJob`, `chunk_text`; specs: `VectorItem(id, kind, text, label, source, topic_id?, used_tools?)`, `SearchQuery(company_id, project_id, text, topic_id?, kinds?, top_k, min_score)`, `SearchHit(id, kind, label, score, text, topic_id?, used_tools?)`; contracts: `AgentEventType.CONTEXT_RETRIEVED("context_retrieved")`, `AgentEvent.retrieved / retrieved_sources`; config: `vector_db_url (NEXUS_VECTOR_DB_URL, empty = feature off)`, `retrieval_top_k (RETRIEVAL_TOP_K, 6)`, `retrieval_min_score (RETRIEVAL_MIN_SCORE, 0.30)`, `vector_config_dir (VECTOR_CONFIG_DIR)`.
+8. **API.** Ported verbatim paths (contracts in the verification block): `POST /api/v1/embed/` (+ optional `embedder` block — nucleus sends the project's embedder spec, omitted = system default; `type="code"` refused 422), `DELETE /api/v1/embed/context-source/{collection_id}/`, `POST /api/v1/embed/message/` (+ optional `used_tools`), `DELETE /api/v1/embed/message/{message_id}/?company_id=`, `POST /api/v1/embed/recall/`, `DELETE /api/v1/embed/recall/{entry_id}/`. New: `POST /api/v1/embed/reindex/` {company_id, project_id, embedder} → 202 | 409, `GET /api/v1/embed/reindex/{project_id}/status/` → {status, done, total}. Nucleus handoff additions: per-project embedder setting with owner/admin-only change; lock the project while reindex runs and poll status; store `retrieved_sources` from message_done beside used_tools; keep calling the embed/delete endpoints exactly as 0.8.0 did; stop sending type="code"; confirm /directives/ is unused.
+9. **Sequence.** Reply: trigger → plan → active index? → search → `context_retrieved` + retrieved section → routing stage (items 13/46, unchanged) → run → message_done{used_tools, retrieved_sources}. Ingest: nucleus → POST /embed/* → chunk → embed with the index's model → upsert into the active schema. Reindex: admin changes the embedder → nucleus locks the project → POST reindex → new schema builds → flip → drop old → nucleus unlocks.
+
+#### Requirement → test traceability (Layer 3, added 2026-10-13; built, suite now 86 tests, supersedes the earlier 70-test count)
+
+| Requirement | Test |
+|---|---|
+| Scoped search + tenant isolation (decisions 1/7, item 44 topic rule at store level) | test_vector_db.py::test_tv1 |
+| Hybrid vector+keyword (trial C3) | test_tv2 |
+| Delete by source (trial C5) | test_tv3 |
+| Per-model dimensions, schema-per-index, no clobber (trial C4) | test_tv4 |
+| Fresh-process reconnect from the registry alone (trial C6 + rule iii) | test_tv5 |
+| Re-embed: build → serve-old → flip → drop; 409 on double start (decisions 4+8) | test_tv6, test_embed_endpoints.py::test_te7 |
+| POST /embed/ 0.8.0 contract, chunking, collection_id (item 24) | test_te1 |
+| type="code" refused (decisions 5/11) | test_te2 |
+| Context-source delete by collection key | test_te3 |
+| Message embed + used_tools metadata + M6 delete (item 44 / decision 6) | test_te4 |
+| Recall upsert-on-id + delete (W5, decision 11) | test_te5 |
+| Internal-key lock + 503 when unconfigured | test_te6 |
+| Retrieval e2e: event + section + retrieved_sources, same-topic rule (decisions 9+10) | test_retrieval.py::test_tr1 |
+| Empty project → byte-same pre-Layer-3 stream | test_tr2 |
+| Below-threshold → nothing attached, no event | test_tr3 |
+
+Known gaps carried: /directives/ not ported (Open a); requirements.lock not yet
+regenerated with the Layer 3 pins (regenerate in the Docker build with CPU
+torch first); retrieval thresholds are defaults pending real-use tuning;
+router-decides retrieval deferred (decision 9).
+
+**The nucleus side of everything above is compiled in
+`docs/NUCLEUS-HANDOFF.md` (written 2026-10-13)** — changes 1–9 from Layers
+0–2, the rate-limit decisions (items 10/11), and Layer 3's change 10
+(embedder setting, reindex flow, embed-endpoint call points, event relay).
+That document is the prompt for the nucleus work, as this one is for nexus-ai.
+
+#### Layer 4 — decisions before design (settled 2026-10-13)
+
+1. **Item 5 (ask_user) is a REAL pausing tool** — a built-in `ask_user` tool
+   that pauses the run on item 2's road (deferred tools → state to nucleus →
+   message_paused); the user's ANSWER rides the resume as the tool result.
+   One road for approvals, discovery and questions — no new machinery.
+   Legacy had only a prompt convention (NA/managers/prompt_builder.py:55-78).
+2. **Item 23 (output types): auto = the model decides, the user always wins.**
+   `TriggerJob.output_type` already travels (default "auto"): auto → the model
+   decides the render type; an explicit value → the engine obeys without
+   second-guessing. The declared type is VALIDATED before `render_as` claims
+   it (a broken "html" falls back to text — T13's instinct, applied at
+   output). How much of legacy's output_types/ package ports — after the
+   verification read.
+3. **Nudges (W8) is PLACED: Layer 4, in the rebuild.** What it is: the user
+   types while the reply runs; the engine polls nucleus after EACH tool call
+   and injects waiting nudges into that tool's result ("[The reader adds
+   while you work: …]"), emits nudge_taken; a toolless run can't take one,
+   nucleus posts it as a message after the reply. Ports as a capability
+   beside ApprovalGate — PENDING verification that the pinned harness
+   (0.55.0) offers after_tool_execute with the legacy signature
+   (NA/managers/nudges.py:46).
+4. **Item 6 (new topic / summary) is NUCLEUS-side, zero engine code**: a
+   "continue in new topic" action — nucleus sends an ordinary trigger asking
+   the persona for a handover summary, opens the new topic with that summary
+   as its first message. Compaction (item 16) keeps handling the invisible
+   mechanics; this is the visible, correctable cut. Note: chat memory (item
+   44) is same-topic-only, so the summary IS the carryover — deliberate.
+5. **Item 38 (concurrency): parallel across topics, QUEUE per topic.** The
+   engine is stateless-per-run and fully async — cross-topic parallelism
+   already works, nothing to build. Inside one topic nucleus serializes
+   triggers (per-topic lock/chain): replies in order, no topic_tools race.
+   Deliberate in-topic parallelism arrives with Layer 6's supervisor.
+6. **Unplaced features placed** (owner + assistant, 2026-10-13): preflight →
+   Layer 6; runbooks → Layer 6; routines → with item 29 (nucleus-side
+   scheduling); recall front-half (entry CRUD/UI) → nucleus — its vector
+   half shipped in Layer 3 (decision 11); nudges → Layer 4 (decision 3
+   above). The trigger keeps accepting their fields meanwhile.
+7. **Items 27 and 29 are VERIFY-FIRST**: 27 (state persistence) is checked
+   against legacy (NA pydantic_ai_runner.py:223-227) — likely already
+   covered by stateless-rebuild + item 2's pause state, but proven, not
+   assumed; 29 (scheduled runs) is checked for anything beyond
+   interactive=false, which the engine already honors (tested).
+8. **Item 27 RESOLVED (settled 2026-10-13): the MEMORY PASS — tool outputs
+   become vector memory, the model decides what deserves it.** Verified
+   first: legacy persisted the run's INTERNAL model state across turns
+   (pydantic_ai_runner.py, the PERSIST event carrying events.new_messages())
+   — that road is deliberately NOT ported (version-fragile JSON, unbounded
+   growth, incompatible with item 16's text-based budget machinery).
+   Instead, owner's design: after any reply that ran tools, ONE cheap model
+   call — seat chain UTILITY → ROUTER → STANDARD (owner: "there must be
+   some utility, otherwise router or standard will be utility") — reviews
+   the run's tool outputs (previews, not megabytes) and rules per output:
+   `raw` (exact data worth keeping → text chunked into the project index,
+   kind=tool_result), `summary` (a verbal note WITH exact key figures and
+   provenance → one small row), or `skip` (re-runnable / worthless →
+   nothing). Guidance in the pass's prompt: local project files are
+   re-readable → usually skip; remote/ephemeral sources (the lost-CSV case)
+   → usually save — but the model may override either way. Every saved row
+   carries {tool, command/args, message_id, topic_id, created_at};
+   source="toolres:{message_id}" so a message delete drops its memory;
+   SAME-TOPIC retrieval rule applies (like chat memory); the retrieved
+   section labels it "(memory from <date>, via <command> — may be outdated,
+   re-run to confirm)". nexus-ai indexes these itself right after the run —
+   a deliberate, documented exception to nucleus-as-writer (which is about
+   messages). The pass is billed as its own usage record under its seat's
+   role, kind="memory". Ephemeral data the USER will need as a durable file
+   still belongs in the data MCP (decision 12), not in memory rows.
+
+Trial H — RESULT 3/3 PASSED (2026-10-13, pinned 2.55.0; throwaway script):
+the ask_user road. (H1) a `kind='external'` tool (via
+`ExternalToolset([ToolDefinition(...)])`) called by the model ends the run
+with `DeferredToolRequests.calls` — NOT `.approvals` — the same pause shape
+as item 2. (H2) a second run with `message_history` +
+`DeferredToolResults(calls={tool_call_id: "the user's answer"})` hands the
+ANSWER to the model as the tool result and the run finishes on it. (H3) both
+runs' usage is separate (trial G's rule holds). Design consequence: item 5
+needs no new machinery — one ExternalToolset beside the gate, a
+`question_asked` event, and `ResumeBlock.answers` beside `approvals`.
+
+Verification notes for the other Layer 4 engine items (2026-10-13): the
+nudges hook `after_tool_execute(ctx, *, call, tool_def, args, result)` EXISTS
+at pinned 2.55.0 (inspected) — legacy's NudgeGate signature carries over.
+Legacy output_types verified by reading all six files: ten types (text, html,
+chart, table, diagram, form, terminal, code explicit-only, preflight,
+choice); resolution = explicit non-auto → cosine-centroid classifier over
+example_prompts (+0.05 over text to win) → text; markers tolerant of mangled
+closers; recovery files an unmarked whole-object chart/choice reply as its
+type, strictly. Item 27's legacy PERSIST event verified (internal state
+across turns) and deliberately not ported — decision 8 replaces it.
+
+#### Items 23 + 5 + W8 + 27 — output types, ask_user, nudges, the memory pass (built 2026-10-14)
+
+1. **Problem.** A reply is not always prose: the caller (or the model) may want a chart, an HTML page, a table (23). Mid-run, the model sometimes needs the person's answer before it can continue (5). The person types while a reply runs and that text should reach the working model, not wait (W8). And a run's tool outputs vanish with the run — the lost-CSV case (27).
+2. **Decision.** Layer 4 decisions 1–3 + 8 above, plus three build-time calls: (i) a TYPED turn skips the router screen — the type's contract needs a capable model, the cheap screen is for plain text only; (ii) a taken nudge's event rides out with the next mapped flush — no side-channel merge into the stream; (iii) memory-pass failure is logged and never surfaced — the reply is already done. ask_user availability: `allow_ask AND job.interactive` — every interactive run carries the schema (four Layer 1/2 tests updated to this truth), the router's screening run passes allow_ask=False, an unattended run never gets the tool.
+3. **Mechanism.** *Output types* — `ai_engine/output_types/` ports legacy's ten specs verbatim: `resolve_output_spec(job.output_type, message, history)` = explicit non-auto → cosine-centroid classifier over example_prompts (injectable embedder, `CLASSIFIER_EMBEDDER`, +0.05 over text to win; request-behind-pick reads `HistoryMessage.output_type`) → text; the chosen contract rides as an `output_format` PromptSection (priority 85, unstable) wrapped "--- OUTPUT FORMAT INSTRUCTION ---" with the CHOICE_EXCEPTION appended for every type except preflight/choice. At END, `finalise_reply(raw, resolved_type)`: `parse_output_markers` (tolerant of mangled closers; MCP markers override; EMBED/CONTEXT block → embed_description) → recovery files an UNMARKED whole-object chart/choice only when the resolver asked for that type → `_holds` validation (chart/choice/preflight must be one JSON object, html must start `<!doctype`/`<html`; a broken claim downgrades to text/text) → message_done carries clean content + output_type + render_as + embed_description, with a byte-parity guard so an untouched plain reply equals its streamed deltas exactly (T1 kept). *ask_user* — `tools/ask_user.py`: one `ToolDefinition(kind="external")` in an `ExternalToolset(id="ask-user")`, passed as `toolsets=` when ask is on (trial H); the run ends in `DeferredToolRequests.calls` → mapper emits `question_asked` (call_id, question, options), pause pending rows get kind="question", and the resume's `answers={call_id: text}` becomes `DeferredToolResults(calls=...)` — the answer IS the tool result. *Nudges* — `tools/nudge_gate.py`: a NudgeGate capability whose `after_tool_execute` (verified at 0.55.0) polls `GET /internal/messages/{msg_id}/nudges/` (consume-on-GET), appends "[The reader adds while you work: …]" to that tool's result and queues `nudge_taken` events, drained after each flush; built only when job.interactive and attached only when capabilities exist (a toolless run can't take one). *Memory pass* — `memory_pass.py`, fired as `asyncio.create_task` AFTER message_done: skips (zero cost) when the project has no ACTIVE index — the pass never guesses an embedder; otherwise one structured-output call (MemoryRulings) on the UTILITY → ROUTER → STANDARD seat, streamed like every other call; rulings → rows id `{msg_id}:tr{i}(:{n})`, kind=tool_result, label="{tool} {args_preview}", source=`toolres:{msg_id}`, topic_id, created_at (summary = one row; raw = chunked, capped 4000 chars); billed kind="memory" under the seat; EventMapper collects each ok tool output capped at 20k chars for the pass's previews (1500 chars each in its prompt).
+4. **At 0.8.0.** output_types was a six-file package under the legacy app root (all read); ask_user existed only as a prompt convention (prompt_builder.py:55-78); nudges lived in NA/managers/nudges.py with the same poll-after-tool shape; item 27 was the PERSIST internal-state event — deliberately not ported (decision 8 replaces it).
+5. **Open.** (a) The nucleus half — nudge storage + endpoint + leftovers-posted-after-done, the question card + `answers` on resume, `pending[].kind`, storing embed_description and output_type — is handoff change 11. (b) The retrieved-section label for memory rows ("memory from <date>, via <command>") rides the existing section via created_at — wording tuned with real use. (c) Classifier centroids are computed per process on first use; the production default (fastembed) downloads its model once — fine now, revisit if types multiply. (d) Item 29 is PARKED WITH THE NUCLEUS PROJECT (owner, 2026-10-14): the verify-first read of 0.8.0's scheduling code and everything it may imply live in `docs/NUCLEUS-HANDOFF.md` change 12; the engine side — interactive=false honored (refuse, never pause; no ask_user) — is already built and tested (a6/f3/q3), and nothing more is planned engine-side. With that, LAYER 4 IS CLOSED ON NEXUS-AI.
+6. **Acceptance** (tests/test_output_types.py, test_ask_user.py, test_nudges_memory.py; four existing tests updated to the always-ask_user truth). Markers parse and survive mangled closers; recovery only on the resolved type; broken claims fall to text while a good html holds; explicit chart e2e — contract (with choice exception) in the request, validated typed done out with embed_description; a plain auto turn stays byte-identical to its deltas; a typed turn produces no kind=router record on a router-seated persona. ask_user pauses with question_asked and pending kind=question; the answer resumes, reaches the model as the tool result, and both halves bill; interactive=false carries no ask_user schema. A waiting nudge rides the next tool result, is announced and consumed exactly once; a toolless run leaves it untouched. The memory pass saves a summary ruling with full provenance into the project index and bills kind="memory" on the utility seat; a skip ruling saves nothing but still bills; the pass runs after done.
+7. **Classes and methods.** `ai_engine/output_types/`: registry (OutputTypeSpec, TYPES_WITHOUT_CHOICE), types (ten specs), markers (`parse_output_markers`), classifier (centroids, `set_embedder`), resolver (`resolve_output_spec`), recovery (`finalise_reply`, `_holds`), prompting (`output_instruction_block`, CHOICE_EXCEPTION); `tools/ask_user.py` (`ask_user_toolset`, ASK_USER_CAPABILITY_ID), `tools/nudge_gate.py` (`NudgeGate`, NUDGE_NOTE), `memory_pass.py` (`MemoryRuling(s)`, `memory_seat`, `run_memory_pass`). Contracts: `AgentEventType.QUESTION("question_asked")` / `NUDGE_TAKEN("nudge_taken")`, `QuestionData{call_id, question, options}`, `AgentEvent.question / nudge / embed_description`, `ResumeBlock.answers`, `PendingApproval.kind("approval"|"question")`, `HistoryMessage.output_type`, `VectorItem.created_at` / `SearchHit.created_at`, `PersonaSpec.utility_model`, `EngineSettings.classifier_embedder (CLASSIFIER_EMBEDDER, default fastembed nomic-embed-text-v1.5; "hash" in tests)`, `NucleusClient.get_nudges`.
+8. **API.** message_done gains `output_type`, `render_as`, `embed_description`; new events `question_asked` and `nudge_taken`; the pause payload's pending rows gain `kind`; the resume block gains `answers`; nexus-ai calls `GET /api/v1/internal/messages/{msg_id}/nudges/` (nucleus consumes on GET); usage records gain kind="memory". TriggerJob is unchanged — output_type already travelled.
+9. **Sequence.** Typed turn: trigger → resolve type → contract section → router SKIPPED → run → finalise → done{output_type, render_as, embed_description} → memory pass if tools ran. Question: run → ask_user → calls-pause → state to nucleus (pending kind=question) → question_asked + message_paused → person answers → resume{answers} → answer as tool result → done. Nudge: person types mid-run → nucleus stores → engine polls after the next tool → injected into that result + nudge_taken → leftovers posted by nucleus after done.
+
+#### Requirement → test traceability (Layer 4, added 2026-10-14; built, suite now 99 tests, supersedes the 86-test count)
+
+| Requirement | Test |
+|---|---|
+| Markers parse; mangled/missing closers tolerated; EMBED extracted | test_output_types.py::test_ot1 |
+| Recovery files an unmarked chart ONLY on a chart turn | test_ot2 |
+| Broken claimed type → text; valid html holds (decision 2) | test_ot3 |
+| Explicit type: contract (+ choice exception) in, validated done out | test_ot4 |
+| Plain auto turn byte-identical to deltas (T1 kept through parsing) | test_ot5 |
+| Typed turn skips the router (build call i) | test_ot6 |
+| ask_user pauses: question_asked + pending kind=question + usage (decision 1, trial H1) | test_ask_user.py::test_q1 |
+| Answer rides the resume as the tool result; both halves billed (H2/H3) | test_q2 |
+| Unattended run never offered ask_user | test_q3 |
+| Interactive runs ALWAYS carry ask_user (updated claims) | test_approvals.py::test_a5, test_router.py::test_r6, test_tools.py::test_l1, test_discovery.py::test_f1 |
+| Nudge rides the next tool result; announced; consumed once (decision 3) | test_nudges_memory.py::test_n1 |
+| Toolless run takes no nudge — nucleus keeps it | test_n2 |
+| Memory pass saves the ruling with provenance; billed kind=memory on the UTILITY seat (decision 8) | test_m1 |
+| Skip ruling saves nothing, still bills; pass runs after done | test_m2 |
+
+Known gaps carried: the memory pass skips projects without an active index
+(deliberate — it never creates one); the production classifier embedder
+downloads its model on first use (tests pin "hash"); item 29 is parked with
+the nucleus project (handoff change 12); the nucleus half of everything
+above is handoff change 11 in `docs/NUCLEUS-HANDOFF.md`. Verified by the
+owner 2026-10-14: 99 passed, 0 skipped, against the dev pgvector stack.
 
 #### Layer 0 — one plain reply, step by step
 

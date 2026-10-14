@@ -182,13 +182,16 @@ async def test_a4_read_tool_runs_without_asking(harness, tmp_path):
 
 async def test_a5_off_tool_is_invisible(harness, tmp_path):
     """Item 2 — an explicit 'off' removes the capability entirely.
-    tool_levels {"filesystem": "off"} → no catalog entry, no tools field in the
-    provider request, no catalog section: the reply is a plain Layer 0 reply."""
+    tool_levels {"filesystem": "off"} → no catalog entry, no capability tools in
+    the provider request (only item 5's built-in ask_user), no catalog section."""
     harness.nucleus.persona = _fs_persona(harness, tmp_path, tool_levels={"filesystem": "off"})
     events = await harness.trigger()
     assert [e for e in events if e["type"] == "message_done"]
     body = harness.provider.requests[-1]
-    assert not body.get("tools")
+    # item 5: the built-in ask_user is always there on an interactive run —
+    # "off" must remove every CAPABILITY tool, nothing else survives
+    names = [t["function"]["name"] for t in body.get("tools", [])]
+    assert names == ["ask_user"]
     assert "Tools available" not in json.dumps(body["messages"])
 
 
