@@ -20,6 +20,7 @@ loop), so the async pipeline is invoked via asgiref.sync.async_to_sync.
 """
 import logging
 import uuid
+from datetime import timedelta
 
 from asgiref.sync import async_to_sync
 from celery import shared_task
@@ -34,6 +35,33 @@ logger = logging.getLogger(__name__)
 def run_runbook(run_id: str) -> None:
     """Drive one queued RunbookRun to its end (W6) -- see scheduling/runbooks.py."""
     runbooks.execute_run(run_id)
+
+
+@shared_task(name="scheduling.tasks.expire_waiting_checkpoints")
+def expire_waiting_checkpoints() -> str:
+    """
+    Step 7 ruling 4: a chain parked at a checkpoint waits 24 hours (the same
+    window as question cards), then the checkpoint's on_failure decides —
+    skip carries the run past it, stop ends it. Hourly, like
+    chat.tasks.expire_paused_runs (see CELERY_BEAT_SCHEDULE).
+    """
+    from nucleus.models import RunbookRun
+
+    cutoff = timezone.now() - timedelta(hours=runbooks.CHECKPOINT_EXPIRY_HOURS)
+    rows = list(
+        RunbookRun.objects.filter(status=RunbookRun.Status.WAITING, updated_at__lt=cutoff)
+        .select_related("runbook", "topic", "project", "company", "started_by")
+    )
+    expired = 0
+    for run in rows:
+        try:
+            runbooks.expire_waiting_run(run)
+            expired += 1
+        except Exception:  # noqa: BLE001 — one broken run must not strand the rest
+            logger.exception("[checkpoint-expiry] failed for run %s", run.id)
+    if rows:
+        logger.info("[checkpoint-expiry] expired %d of %d waiting runs", expired, len(rows))
+    return f"expired {expired} of {len(rows)}"
 
 
 @shared_task(name="scheduling.tasks.fire_persona_schedule")
@@ -101,6 +129,12 @@ def fire_persona_schedule(schedule_id: str) -> None:
             # row exists either way, and the banner follows it.
             if not schedule.runbook_id or not schedule.runbook.is_active:
                 raise RuntimeError("the runbook this schedule starts no longer exists")
+            # Step 7 ruling 5: schedules stay simple. Creation already refuses a
+            # checkpoint chain; this re-check catches one EDITED after scheduling.
+            if runbooks.has_checkpoint(schedule.runbook):
+                raise RuntimeError("this chain waits for a person at a checkpoint — it cannot run on a schedule; run it by hand")
+            if not (schedule.runbook.steps or []):
+                raise RuntimeError("this chain has no steps yet — edit it and add its steps first")
             run = runbooks.start_run(company, project, schedule.runbook, actor, topic)
             run_runbook.delay(str(run.id))
             PersonaSchedule.objects.filter(id=schedule.id).update(

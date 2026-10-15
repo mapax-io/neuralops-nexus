@@ -97,8 +97,8 @@ class McpDoorTests(GatewayFixture):
         self.assertEqual(result["protocolVersion"], "2025-06-18")
         r = self.mcp(token, "tools/list")
         names = [t["name"] for t in r.json()["result"]["tools"]]
-        self.assertEqual(sorted(names), ["ask_persona", "list_projects", "list_topics",
-                                         "post_message", "search_memory"])
+        self.assertEqual(sorted(names), ["ask_persona", "chain_status", "list_chains", "list_projects", "list_topics",
+                                         "post_message", "run_chain", "search_memory"])
         is_error, projects = self.tool(token, "list_projects")
         self.assertFalse(is_error, projects)
         self.assertIn("Alpha", [p["name"] for p in projects])

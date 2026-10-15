@@ -32,7 +32,17 @@ OUTPUT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 # "retry" gives a failing step ONE more attempt before the stop rule applies.
 RETRY_MAX = 1
 
-ACTIVE_STATUSES = ("queued", "running")
+# Step 7 (chains). Ruling 3: a REDO verdict may rerun a stage at most this
+# many times, whatever redo_limit says. Ruling 4: a checkpoint waits this long.
+REDO_CAP = 2
+CHECKPOINT_EXPIRY_HOURS = 24
+# How much of the stage's reply the reviewer sees, and how much of the
+# reviewer's notes ride the redo prompt -- heads, so neither can crowd a prompt.
+REVIEW_CLIP = 6000
+NOTES_CLIP = 2000
+
+# "waiting" (parked at a checkpoint) is active: stoppable, shown as in-flight.
+ACTIVE_STATUSES = ("queued", "running", "waiting")
 
 
 # ── Definition ────────────────────────────────────────────────────────────────
@@ -49,6 +59,19 @@ def validate_steps(project, steps) -> list[dict]:
     for i, step in enumerate(steps, 1):
         if not isinstance(step, dict):
             raise ValueError(f"Step {i} is not a step.")
+        # Step 7: two step kinds. No `kind` key (every pre-chain row) = persona.
+        kind = (step.get("kind") or "persona").strip().lower()
+        if kind == "checkpoint":
+            question = (step.get("question") or "").strip()
+            if not question or len(question) > PROMPT_MAX:
+                raise ValueError(f"Step {i} is a checkpoint and needs a question of at most {PROMPT_MAX:,} characters.")
+            on_failure = step.get("on_failure") or "stop"
+            if on_failure not in ("stop", "skip"):
+                raise ValueError(f"Step {i}: a checkpoint's on_failure is stop or skip — it has nothing to retry.")
+            out.append({"kind": "checkpoint", "question": question, "on_failure": on_failure})
+            continue
+        if kind != "persona":
+            raise ValueError(f"Step {i} has a kind this server does not know.")
         persona_id = str(step.get("persona_id") or "")
         if persona_id not in personas:
             raise ValueError(f"Step {i} names a persona that is not in this project.")
@@ -65,10 +88,16 @@ def validate_steps(project, steps) -> list[dict]:
         if on_failure not in ON_FAILURE:
             raise ValueError(f"Step {i}: on_failure is stop, skip or retry.")
         out.append({
+            "kind": "persona",
             "persona_id": persona_id, "prompt": prompt, "routine_id": str(routine_id) if routine_id else None,
             "output_type": output_type, "on_failure": on_failure,
         })
     return out
+
+
+def has_checkpoint(runbook) -> bool:
+    """Ruling 5: a chain that waits for a person cannot run on a schedule."""
+    return any((s.get("kind") or "persona") == "checkpoint" for s in (runbook.steps or []))
 
 
 def validate_runbook_data(project, data: dict, *, partial: bool = False) -> dict:
@@ -85,6 +114,26 @@ def validate_runbook_data(project, data: dict, *, partial: bool = False) -> dict
         out["description"] = description
     if "steps" in data or not partial:
         out["steps"] = validate_steps(project, data.get("steps"))
+    # Step 7 (rulings 2+3): the one optional supervisor, and the redo bound.
+    if data.get("supervisor_id"):
+        from django.core.exceptions import ValidationError
+        from nucleus.models import Persona
+        try:
+            supervisor = Persona.objects.filter(
+                id=data["supervisor_id"], project=project, is_active=True,
+            ).first()
+        except (ValueError, ValidationError):
+            supervisor = None
+        if not supervisor:
+            raise ValueError("The supervisor must be a persona in this project.")
+        out["supervisor"] = supervisor
+    if data.get("clear_supervisor"):
+        out["supervisor"] = None
+    if data.get("redo_limit") is not None:
+        redo = data["redo_limit"]
+        if not isinstance(redo, int) or isinstance(redo, bool) or not 0 <= redo <= REDO_CAP:
+            raise ValueError(f"redo_limit is 0 to {REDO_CAP}.")
+        out["redo_limit"] = redo
     return out
 
 
@@ -130,8 +179,8 @@ def serialise_runbook(runbook, personas: dict | None = None, routines: dict | No
 
     steps = runbook.steps or []
     if personas is None:
-        ids = {s.get("persona_id") for s in steps}
-        personas = {str(p.id): p.name for p in Persona.objects.filter(id__in=ids)}
+        ids = {s.get("persona_id") for s in steps if s.get("persona_id")}
+        personas = {str(p.id): p.name for p in Persona.objects.filter(id__in=ids)} if ids else {}
     if routines is None:
         ids = {s.get("routine_id") for s in steps if s.get("routine_id")}
         routines = {str(r.id): r.title for r in Routine.objects.filter(id__in=ids)} if ids else {}
@@ -140,6 +189,10 @@ def serialise_runbook(runbook, personas: dict | None = None, routines: dict | No
         "project_id": str(runbook.project_id),
         "title": runbook.title,
         "description": runbook.description or "",
+        "supervisor_id": str(runbook.supervisor_id) if runbook.supervisor_id else None,
+        "supervisor_name": runbook.supervisor.name if runbook.supervisor_id and runbook.supervisor else None,
+        "redo_limit": runbook.redo_limit,
+        "has_checkpoint": has_checkpoint(runbook),
         "steps": [
             {
                 **s,
@@ -156,7 +209,7 @@ def serialise_runbook(runbook, personas: dict | None = None, routines: dict | No
 def serialise_runbooks(runbooks: list) -> list[dict]:
     from nucleus.models import Persona, Routine
 
-    persona_ids = {s.get("persona_id") for rb in runbooks for s in (rb.steps or [])}
+    persona_ids = {s.get("persona_id") for rb in runbooks for s in (rb.steps or []) if s.get("persona_id")}
     routine_ids = {s.get("routine_id") for rb in runbooks for s in (rb.steps or []) if s.get("routine_id")}
     personas = {str(p.id): p.name for p in Persona.objects.filter(id__in=persona_ids)} if persona_ids else {}
     routines = {str(r.id): r.title for r in Routine.objects.filter(id__in=routine_ids)} if routine_ids else {}
@@ -180,6 +233,7 @@ def serialise_run(run) -> dict:
         "current_step": run.current_step,
         "step_count": len(run.runbook.steps or []),
         "step_results": run.step_results or [],
+        "checkpoint": run.checkpoint,
         "skipped_count": skipped_count(run),
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "ended_at": run.ended_at.isoformat() if run.ended_at else None,
@@ -244,11 +298,15 @@ def stop_run(run, user) -> str:
         return "finished"
     name = user.get_display_name()
     run.error = f"Stopped by {name}"
-    if run.status == RunbookRun.Status.QUEUED:
+    if run.status in (RunbookRun.Status.QUEUED, RunbookRun.Status.WAITING):
+        # Queued (nothing started) or parked at a checkpoint (nothing in
+        # flight): the run ends here and now, no pending reply to signal.
+        waited = run.status == RunbookRun.Status.WAITING
         run.status = RunbookRun.Status.STOPPED
+        run.checkpoint = None
         run.ended_at = timezone.now()
-        run.save(update_fields=["status", "error", "ended_at", "updated_at"])
-        _announce(run, f"Runbook: {run.runbook.title} stopped by {name} before it started.")
+        run.save(update_fields=["status", "error", "checkpoint", "ended_at", "updated_at"])
+        _announce(run, f"Runbook: {run.runbook.title} stopped by {name}" + (" while waiting at its checkpoint." if waited else " before it started."))
         _publish_run(run)
         return "stopped"
     run.status = RunbookRun.Status.STOPPED
@@ -287,14 +345,18 @@ def _end(run, status: str, *, error: str = "", line: str) -> None:
 
 
 def _after_step(run) -> None:
-    """Record the steps recorded so far on the run row and tell the topic."""
+    """Record the steps so far AND the context the next one builds on (Step 7:
+    persisted so a checkpoint pause can resume in a fresh task), tell the topic."""
     from nucleus.models import RunbookRun
-    RunbookRun.objects.filter(id=run.id).update(step_results=run.step_results, updated_at=timezone.now())
+    RunbookRun.objects.filter(id=run.id).update(
+        step_results=run.step_results, context=run.context or "", updated_at=timezone.now(),
+    )
     _publish_run(run)
 
 
-def _run_step(run, step: dict, index: int, count: int, context: str | None, actor) -> tuple[str, str | None, str, str]:
-    """One attempt: (status done|failed|stopped, message id, error, content)."""
+def _run_step(run, step: dict, index: int, count: int, context: str | None, actor, prompt: str | None = None) -> tuple[str, str | None, str, str]:
+    """One attempt: (status done|failed|stopped, message id, error, content).
+    `prompt` overrides the step's own (Step 7: a redo carries the reviewer's notes)."""
     from chat import services as chat_svc
     from nucleus.models import ChatMessage, Persona, Routine
 
@@ -308,7 +370,7 @@ def _run_step(run, step: dict, index: int, count: int, context: str | None, acto
             return "failed", None, "its routine is gone", ""
     msg_id = async_to_sync(chat_svc.trigger_ai_response_async)(
         company=run.company, project=run.project, topic=run.topic, persona=persona,
-        user_message=step["prompt"], user_message_id=str(uuid.uuid4()), topic_id=str(run.topic_id),
+        user_message=prompt if prompt is not None else step["prompt"], user_message_id=str(uuid.uuid4()), topic_id=str(run.topic_id),
         output_type=step.get("output_type") or "auto",
         interactive=False,  # a runbook has nobody waiting to approve a plan
         routine=routine, triggered_by=actor,
@@ -333,11 +395,14 @@ def execute_run(run_id: str) -> None:
     # and both drove every step into the chat (audit, 2026-09-21). Exactly one
     # update can move the row out of QUEUED, and only that one goes on.
     claimed = RunbookRun.objects.filter(id=run_id, status=RunbookRun.Status.QUEUED).update(
-        status=RunbookRun.Status.RUNNING, started_at=timezone.now(), updated_at=timezone.now(),
+        status=RunbookRun.Status.RUNNING, updated_at=timezone.now(),
     )
     if not claimed:
         logger.info("[runbook] run %s was not queued, nothing to do", run_id)
         return
+    # started_at only on the FIRST claim -- a resume after a checkpoint (Step 7)
+    # re-enters here QUEUED and must keep the original start time.
+    RunbookRun.objects.filter(id=run_id, started_at__isnull=True).update(started_at=timezone.now())
     run = RunbookRun.objects.select_related("runbook", "topic", "project", "company", "started_by").filter(id=run_id).first()
     if not run:
         return
@@ -359,7 +424,8 @@ def execute_run(run_id: str) -> None:
 
 
 def _drive(run) -> None:
-    """The steps themselves, from the first to whichever one ends the run."""
+    """The steps themselves — from the first (or, resuming after a checkpoint,
+    the one after it) to whichever one ends the run."""
     from authn.permissions.checker import PermissionChecker
     from nucleus.models import Persona, RunbookRun
 
@@ -367,8 +433,13 @@ def _drive(run) -> None:
     steps = run.runbook.steps or []
     count = len(steps)
     actor = run.started_by
+    # current_step is -1 on a fresh run; a checkpoint answer re-enqueues the run
+    # with current_step already advanced past the answered step (Step 7).
+    resuming = run.current_step >= 0
+    start = max(run.current_step, 0)
 
-    # The starter is the actor of every step -- their right to call personas here is re-checked, as a schedule's is.
+    # The starter is the actor of every step -- their right to call personas here
+    # is re-checked, as a schedule's is. On a resume too: rights move.
     if actor is None:
         reason = "its starter no longer has an account here"
     elif not PermissionChecker.can(actor, "persona.mention", obj=run.topic):
@@ -379,12 +450,28 @@ def _drive(run) -> None:
         _end(run, RunbookRun.Status.FAILED, error=f"Did not start: {reason}.", line=f"Runbook: {title} did not start — {reason}.")
         return
 
-    _announce(run, f"Runbook: {title} started by {actor.get_display_name()} — {count} steps.")
+    if resuming:
+        _announce(run, f"Runbook: {title} continuing at step {start + 1} of {count}.")
+    else:
+        _announce(run, f"Runbook: {title} started by {actor.get_display_name()} — {count} steps.")
     _publish_run(run)
 
-    names = {str(p.id): p.name for p in Persona.objects.filter(project=run.project, id__in={s["persona_id"] for s in steps})}
-    context: str | None = None
-    for index, step in enumerate(steps):
+    # Ruling 2: the one optional supervisor. A retired/removed supervisor stops
+    # the reviewing, never the chain.
+    supervisor = None
+    if run.runbook.supervisor_id:
+        supervisor = Persona.objects.filter(
+            id=run.runbook.supervisor_id, project=run.project, is_active=True,
+        ).select_related("identity_user").first()
+    # Ruling 3: redo_limit, hard-capped. No supervisor, no redos.
+    redo_allowed = min(run.runbook.redo_limit or 0, REDO_CAP) if supervisor else 0
+
+    names = {str(p.id): p.name for p in Persona.objects.filter(
+        project=run.project, id__in={s["persona_id"] for s in steps if s.get("persona_id")},
+    )}
+    context: str | None = (run.context or "").strip() or None
+    for index in range(start, count):
+        step = steps[index]
         # Stopped from outside between steps: the next one never starts.
         fresh = RunbookRun.objects.filter(id=run.id).values_list("status", flat=True).first()
         if fresh == RunbookRun.Status.STOPPED:
@@ -396,22 +483,56 @@ def _drive(run) -> None:
         run.save(update_fields=["current_step", "updated_at"])
         _publish_run(run)
 
+        # Ruling 4: a checkpoint parks the run WAITING; the answer endpoint (or
+        # the 24h expiry task) picks it up from here in a fresh Celery task.
+        if (step.get("kind") or "persona") == "checkpoint":
+            run.checkpoint = {"index": index, "question": step["question"], "asked_at": timezone.now().isoformat()}
+            run.status = RunbookRun.Status.WAITING
+            run.save(update_fields=["checkpoint", "status", "updated_at"])
+            _announce(run, f"Runbook: {title} is waiting for a person at step {index + 1} of {count} — {step['question']}")
+            _publish_run(run)
+            return
+
         attempts = 0
+        redos = 0
+        verdict = None
+        prompt = step["prompt"]
         started = timezone.now()
         while True:
             attempts += 1
-            status, msg_id, error, content = _run_step(run, step, index, count, context, actor)
+            status, msg_id, error, content = _run_step(run, step, index, count, context, actor, prompt=prompt)
             if status == "failed" and step.get("on_failure") == "retry" and attempts <= RETRY_MAX:
                 continue
+            if status != "done" or supervisor is None:
+                break
+            # Rulings 2+3: the supervisor judges the stage; its verdict is a
+            # visible reply in the topic like everything else.
+            verdict, notes = _review(run, supervisor, step, content, actor, index, count)
+            if verdict == "redo" and redos < redo_allowed:
+                redos += 1
+                prompt = (
+                    f"{step['prompt']}\n\nThe reviewer asked for changes — redo this step and address these notes:\n"
+                    f"{(notes or '')[:NOTES_CLIP]}"
+                )
+                continue
+            if verdict in ("fail", "redo"):  # redo with none left fails too (ruling 3)
+                status = "failed"
+                first_line = (notes or "").strip().splitlines()[0][:200] if (notes or "").strip() else ""
+                error = "the reviewer did not pass this step" + (f": {first_line}" if first_line else "")
             break
         result = {
             "index": index, "persona_id": step["persona_id"], "persona_name": names.get(step["persona_id"]),
             "message_id": msg_id, "status": status, "attempts": attempts,
             "started_at": started.isoformat(), "ended_at": timezone.now().isoformat(), "error": error,
         }
+        if supervisor is not None:
+            result["redos"] = redos
+            result["verdict"] = verdict
         if status == "failed" and step.get("on_failure") == "skip":
             result["status"] = "skipped"
         run.step_results = [*(run.step_results or []), result]
+        if status == "done":
+            run.context = content or ""
         _after_step(run)
 
         if status == "done":
@@ -429,3 +550,141 @@ def _drive(run) -> None:
     # "finished" on its own would hide a skipped step from everyone reading the chat.
     skipped = skipped_count(run)
     _end(run, RunbookRun.Status.DONE, line=f"Runbook: {title} finished — {count} steps" + (f", {skipped} skipped." if skipped else "."))
+
+
+# ── The supervisor (Step 7, rulings 2+3) ───────────────────────────────
+
+def _parse_verdict(content: str) -> tuple[str, str]:
+    """(verdict, full text). The review prompt demands one first word — APPROVE,
+    REDO or FAIL; a reply that follows no format reads as "unclear" and the
+    stage STANDS (a reviewer that cannot follow format must not kill a chain),
+    with the verdict recorded so the step result says so."""
+    text = (content or "").strip()
+    first = text.splitlines()[0].strip().upper() if text else ""
+    for word, verdict in (("APPROVE", "approve"), ("REDO", "redo"), ("FAIL", "fail")):
+        if word in first:
+            return verdict, text
+    return "unclear", text
+
+
+def _review(run, supervisor, step: dict, content: str, actor, index: int, count: int) -> tuple[str, str]:
+    """Ask the chain's supervisor to judge the stage, through the same mention
+    road as everything else (interactive=False — reviews never ask questions).
+    Returns (approve|redo|fail|unclear|unreviewed, notes). Never raises."""
+    from chat import services as chat_svc
+    from nucleus.models import ChatMessage
+
+    question = (
+        f"You are the reviewer of a chain stage that just finished (step {index + 1} of {count}).\n"
+        f"The stage's goal:\n{step['prompt'][:1000]}\n\n"
+        f"The stage's reply:\n{(content or '')[:REVIEW_CLIP]}\n\n"
+        "Start your reply with exactly one word on its own line — APPROVE, REDO or FAIL — "
+        "then your notes. REDO means the stage runs again with your notes; "
+        "FAIL means it did not do its job and cannot be fixed by redoing."
+    )
+    try:
+        msg_id = async_to_sync(chat_svc.trigger_ai_response_async)(
+            company=run.company, project=run.project, topic=run.topic, persona=supervisor,
+            user_message=question, user_message_id=str(uuid.uuid4()), topic_id=str(run.topic_id),
+            output_type="text",
+            interactive=False,  # a review never raises a question card
+            triggered_by=actor,
+            runbook_run={"id": str(run.id), "title": run.runbook.title, "step": index + 1, "of": count, "review": True},
+        )
+        row = ChatMessage.objects.filter(id=msg_id).first() if msg_id else None
+    except Exception:  # noqa: BLE001 -- a broken reviewer must not kill the chain
+        logger.exception("[runbook] run %s: the supervisor review itself failed", run.id)
+        row = None
+    if row is None or row.status != ChatMessage.Status.COMPLETED:
+        _announce(run, f"Runbook: {run.runbook.title} — the reviewer could not review step {index + 1}; the step stands.")
+        return "unreviewed", ""
+    return _parse_verdict(row.content or "")
+
+
+# ── Checkpoints (Step 7, ruling 4) ──────────────────────────────────────
+
+def may_answer_checkpoint(user, run) -> bool:
+    """Ruling 4: the starter, or any of the four roles (the project.update
+    holders — same four as the configure fence). Fails CLOSED on an
+    unregistered right, like the Step 6 fence."""
+    from authn.permissions.checker import PermissionChecker
+
+    if user is None:
+        return False
+    if run.started_by_id and str(run.started_by_id) == str(user.id):
+        return True
+    try:
+        return PermissionChecker.can(user, "project.update", obj=run.project)
+    except ValueError:
+        return False
+
+
+def answer_checkpoint(run, user, answer: str):
+    """Record the person's answer, step past the checkpoint and re-enqueue the
+    run. Returns the refreshed run, or None when someone else got there first
+    (the WAITING→QUEUED claim is the lock, like execute_run's)."""
+    from nucleus.models import RunbookRun
+    from scheduling.tasks import run_runbook
+
+    claimed = RunbookRun.objects.filter(id=run.id, status=RunbookRun.Status.WAITING).update(
+        status=RunbookRun.Status.QUEUED, updated_at=timezone.now(),
+    )
+    if not claimed:
+        return None
+    checkpoint = run.checkpoint or {}
+    index = int(checkpoint.get("index", max(run.current_step, 0)))
+    answer = (answer or "").strip()
+    name = user.get_display_name()
+    run.step_results = [*(run.step_results or []), {
+        "index": index, "kind": "checkpoint", "status": "answered",
+        "question": checkpoint.get("question", ""), "answer": answer[:PROMPT_MAX], "answered_by": name,
+        "persona_id": None, "persona_name": None, "message_id": None, "error": "",
+        "started_at": checkpoint.get("asked_at"), "ended_at": timezone.now().isoformat(),
+    }]
+    block = f"A person ({name}) answered the checkpoint question \"{checkpoint.get('question', '')}\":\n{answer}"
+    run.context = f"{run.context}\n\n{block}".strip() if (run.context or "").strip() else block
+    run.checkpoint = None
+    run.current_step = index + 1
+    run.status = RunbookRun.Status.QUEUED
+    run.save(update_fields=["step_results", "context", "checkpoint", "current_step", "status", "updated_at"])
+    _announce(run, f"Runbook: {run.runbook.title} — {name} answered the checkpoint; continuing.")
+    _publish_run(run)
+    run_runbook.delay(str(run.id))
+    return run
+
+
+def expire_waiting_run(run) -> None:
+    """24 hours passed with nobody answering (ruling 4, same window as question
+    cards): the checkpoint's own on_failure decides — skip carries on past it,
+    stop ends the run. Claim-guarded against a racing answer."""
+    from nucleus.models import RunbookRun
+    from scheduling.tasks import run_runbook
+
+    claimed = RunbookRun.objects.filter(id=run.id, status=RunbookRun.Status.WAITING).update(
+        status=RunbookRun.Status.QUEUED, updated_at=timezone.now(),
+    )
+    if not claimed:
+        return
+    checkpoint = run.checkpoint or {}
+    index = int(checkpoint.get("index", max(run.current_step, 0)))
+    steps = run.runbook.steps or []
+    step = steps[index] if 0 <= index < len(steps) else {}
+    run.step_results = [*(run.step_results or []), {
+        "index": index, "kind": "checkpoint", "status": "expired",
+        "question": checkpoint.get("question", ""),
+        "persona_id": None, "persona_name": None, "message_id": None,
+        "error": "nobody answered within 24 hours",
+        "started_at": checkpoint.get("asked_at"), "ended_at": timezone.now().isoformat(),
+    }]
+    run.checkpoint = None
+    if step.get("on_failure") == "skip":
+        run.current_step = index + 1
+        run.save(update_fields=["step_results", "checkpoint", "current_step", "updated_at"])
+        _announce(run, f"Runbook: {run.runbook.title} — the checkpoint expired with no answer; skipping it.")
+        _publish_run(run)
+        run_runbook.delay(str(run.id))
+        return
+    run.save(update_fields=["step_results", "checkpoint", "updated_at"])
+    _end(run, RunbookRun.Status.FAILED,
+         error="The checkpoint expired — nobody answered within 24 hours.",
+         line=f"Runbook: {run.runbook.title} failed — its checkpoint expired with nobody answering.")

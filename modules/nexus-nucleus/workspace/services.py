@@ -225,6 +225,20 @@ def create_project(company, user, name: str, description: str = None):
         company=company, project=project, channel=channel,
         title="configure", slug="configure", is_configure=True,
     )
+    # Step 7 (ruling 7): every project is born with one example chain, like
+    # the four built-in routines — the chains screen is never empty. It ships
+    # WITHOUT steps because a newborn project has no personas to put in them
+    # (recorded honestly in the doc): running it is refused with "add steps
+    # first", and the description says what to fill in. Editable, deletable.
+    from nucleus.models import Runbook
+    Runbook.objects.create(
+        company=company, project=project, created_by=user,
+        title="Draft and review",
+        description=("An example chain: step 1, a persona drafts; step 2, a checkpoint asks a "
+                     "person to weigh in. Name a supervisor persona and every stage gets reviewed. "
+                     "Edit this chain and add its steps once the project has personas."),
+        steps=[],
+    )
 
     # Legacy membership record -- kept alongside the new RoleAssignment below
     # so untouched code that still reads ProjectMember directly (list_team,

@@ -353,6 +353,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "chat.tasks.expire_paused_runs",
         "schedule": 60 * 60,
     },
+    # Step 7 (ruling 4): a chain parked at a checkpoint older than 24h is
+    # carried past it (skip) or ended (stop) — same window as question cards.
+    "expire-waiting-checkpoints-hourly": {
+        "task": "scheduling.tasks.expire_waiting_checkpoints",
+        "schedule": 60 * 60,
+    },
 }
 
 # =========================================================

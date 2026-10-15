@@ -72,9 +72,30 @@ diagram, form, terminal, code, preflight, choice.
    dir/file mixed up · 409 the project has no folder yet · 413 too big to
    view (offer the download) · 415 binary (offer the download). Later: git
    diff, edit, select-a-portion-to-chat.
-5. **Chain / workflow screens** (Step 6) — define a team + stages, watch the
-   chain run (stage posts in the topic), the supervisor's review verdicts,
-   bounded-redo counter, "ask the user" moments.
+5. **Chain / workflow screens** (Step 7 — nucleus half BUILT). Chains ARE
+   runbooks; same endpoints, new powers:
+   - **Definition:** `RunbookIn/Out` gained `supervisor_id`/`supervisor_name`
+     (one optional reviewing persona), `redo_limit` (0–2), `has_checkpoint`,
+     and steps gained `kind` ("persona" | "checkpoint") — a checkpoint step is
+     `{kind: "checkpoint", question, on_failure: stop|skip}`. Patch clears the
+     supervisor with `clear_supervisor: true`.
+   - **Watching a run:** `RunbookRunOut.status` adds `waiting`;
+     `checkpoint: {index, question, asked_at}` is set while waiting — show the
+     question as a banner/card in the topic. Step results now carry `redos`
+     and `verdict` (approve | redo | fail | unclear | unreviewed) when a
+     supervisor reviewed, and checkpoint entries
+     `{kind: "checkpoint", status: answered|expired, question, answer,
+     answered_by}`. Verdicts are ordinary persona messages in the topic —
+     nothing extra to render there.
+   - **Answering:** POST `…/runbooks/runs/{run_id}/checkpoint/` `{answer}` —
+     200 continues the run; 403 = only the starter or a project admin may
+     answer; 409 = not waiting (someone else answered, or it expired). A
+     checkpoint expires after 24h (like question cards) — the run then skips
+     or fails per the step's on_failure.
+   - **Scheduling guard:** a chain with `has_checkpoint: true` cannot be
+     scheduled — the 400's detail says "run it by hand"; grey the option out.
+     A chain with no steps (the birth template "Draft and review") cannot run
+     until edited — 400 "add its steps first".
 6. **The "configure" topic** (Step 6 — nucleus half BUILT) — every project
    now carries a topic titled "configure" (in its general channel,
    `is_configure: true` — but the flag never reaches the API; the topic

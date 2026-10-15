@@ -321,7 +321,11 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - REDIS_URL=redis://redis-dev:6379/0
-      - NEXUS_AI_URL=http://nexus-ai-dev:8000
+      # STEP 8 SWITCH-OVER (docs/NUCLEUS-REVAMP.md): dev now talks to the
+      # REBUILT engine (nexus-ai-new). The legacy nexus-ai-dev service stays
+      # up as a fallback during verification and is removed once Step 8 is
+      # verified. Rolling back is this one line.
+      - NEXUS_AI_URL=http://nexus-ai-new:8000
       - CENTRIFUGO_API_URL=http://centrifugo-dev:8000/api
       # Hardcoded, NOT ${NEURALOPS_SERVER_URL} -- that variable comes from
       # neuralops/app.env, which is shared with the PRODUCTION nucleus/
@@ -366,7 +370,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - REDIS_URL=redis://redis-dev:6379/0
-      - NEXUS_AI_URL=http://nexus-ai-dev:8000
+      - NEXUS_AI_URL=http://nexus-ai-new:8000   # Step 8 switch-over — see nucleus-dev
       - CENTRIFUGO_API_URL=http://centrifugo-dev:8000/api
       - DEBUG=true   # Step 4 posture — see nucleus-dev's comment
     networks:
@@ -459,14 +463,29 @@ services:
     command: ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
       - ./modules/nexus-ai:/nexus/ai
+      # The engine's fastembed/huggingface model cache (the image runs as the
+      # `nexus` user, UID 1000) — without this every recreate re-downloads
+      # the embedding model.
+      - neuralops_fastembed_cache_new:/home/nexus/.cache
+      # Same projects mount as nucleus-dev/legacy — the engine's filesystem/
+      # shell capabilities act on each project's folder.
+      - ./projects:/nexus/projects
     env_file:
       - ./neuralops/secrets.env
     environment:
       - NEXUS_NUCLEUS_URL=http://nucleus-dev:8000
+      # Step 8: Layer 3 vector stack ON — the nexus_vectors database on the
+      # SAME pgvector postgres nucleus uses (decision 2). sqlalchemy DSN.
+      # Interpolated from infra.env (user) + secrets.env (password): both are
+      # in the standard `up` command's --env-file flags. Empty URL = vectors
+      # off and the embed endpoints answer 503, so a missing flag shows up
+      # loudly, not silently.
+      - NEXUS_VECTOR_DB_URL=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-dev:5432/nexus_vectors
     networks:
       - neuralops-network
     depends_on:
       - nucleus-dev
+      - postgres-dev
 
   centrifugo-dev:
     build:
@@ -650,5 +669,6 @@ volumes:
   neuralops_redis_data_dev:
   neuralops_chroma_data_dev:
   neuralops_fastembed_cache_dev:
+  neuralops_fastembed_cache_new:
   neuralops_projects_dev:
   neuralops_web_app_node_modules:

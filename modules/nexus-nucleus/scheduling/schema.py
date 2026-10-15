@@ -66,32 +66,45 @@ class ScheduleOut(Schema):
 # ── Runbooks (W6) ─────────────────────────────────────────────────────────────
 
 class RunbookStepIn(Schema):
-    persona_id: str
-    prompt: str
+    # Step 7: two kinds. "persona" (the default) runs a stage; "checkpoint"
+    # waits for a person's answer (question required, persona fields ignored).
+    kind: str = "persona"
+    persona_id: Optional[str] = None   # required for persona steps — validated server-side
+    prompt: Optional[str] = None       # required for persona steps
+    question: Optional[str] = None     # required for checkpoint steps
     routine_id: Optional[str] = None
     output_type: str = "auto"
-    on_failure: str = "stop"   # stop | skip | retry
+    on_failure: str = "stop"   # stop | skip | retry (checkpoints: stop | skip)
 
 
 class RunbookIn(Schema):
     title: str
     description: str = ""
     steps: list[RunbookStepIn]
+    # Step 7 (rulings 2+3): the one optional reviewing persona, and how many
+    # REDO verdicts may rerun a stage (0..2).
+    supervisor_id: Optional[str] = None
+    redo_limit: int = 1
 
 
 class RunbookPatchIn(Schema):
     title: Optional[str] = None
     description: Optional[str] = None
     steps: Optional[list[RunbookStepIn]] = None
+    supervisor_id: Optional[str] = None
+    clear_supervisor: bool = False     # exclude_none makes None mean "not sent"
+    redo_limit: Optional[int] = None
 
 
 class RunbookStepOut(Schema):
-    persona_id: str
+    kind: str = "persona"                # persona | checkpoint
+    persona_id: Optional[str] = None
     persona_name: Optional[str] = None   # as the persona is named now; None once it is gone
-    prompt: str
+    prompt: Optional[str] = None
+    question: Optional[str] = None       # checkpoint steps only
     routine_id: Optional[str] = None
     routine_title: Optional[str] = None
-    output_type: str
+    output_type: Optional[str] = None
     on_failure: str
 
 
@@ -101,6 +114,11 @@ class RunbookOut(Schema):
     title: str
     description: str
     steps: list[RunbookStepOut]
+    # Step 7: the chain powers.
+    supervisor_id: Optional[str] = None
+    supervisor_name: Optional[str] = None
+    redo_limit: int = 1
+    has_checkpoint: bool = False         # a checkpoint chain cannot be scheduled
     created_by_id: Optional[str] = None
     created_at: str
 
@@ -110,6 +128,11 @@ class RunbookStartIn(Schema):
     topic_id: Optional[str] = None
     channel_id: Optional[str] = None
     title: Optional[str] = None
+
+
+class CheckpointAnswerIn(Schema):
+    """Step 7 ruling 4: the person's answer at a waiting chain's checkpoint."""
+    answer: str
 
 
 class RunbookRunOut(Schema):
@@ -122,8 +145,10 @@ class RunbookRunOut(Schema):
     topic_title: str
     started_by_id: Optional[str] = None
     started_by_name: Optional[str] = None
-    status: str                 # queued | running | done | failed | stopped
+    status: str                 # queued | running | waiting | done | failed | stopped
     current_step: int           # 0-based; -1 before the first step
+    # Step 7: the pending checkpoint while status=waiting — {index, question, asked_at}.
+    checkpoint: Optional[dict] = None
     step_count: int
     step_results: list          # [{index, persona_id, persona_name, message_id, status, attempts, started_at, ended_at, error}]
     skipped_count: int = 0      # steps that did not complete -- a "done" run with one is not a clean one

@@ -213,3 +213,86 @@ async def search_memory(user, query: str, project_id: str | None = None) -> list
     else:
         ordered = await sync_to_async(search_svc.literal)(query, topic_ids, SEARCH_LIMIT)
     return [search_svc._result(m, query) for m in ordered[:SEARCH_LIMIT]]
+
+
+# ── chains (Step 7, ruling 6: the workflow MCP is these tools on the SAME door,
+#    same tokens, same rights-as-the-person — never a separate server) ───────
+
+async def list_chains(user, project_id: str) -> list[dict]:
+    """The chains (runbooks) of one project — the same right the app's list uses."""
+    def _run():
+        from authn.permissions.checker import PermissionChecker
+        from scheduling import runbooks
+        from workspace import services as ws_svc
+
+        company = _company()
+        project = ws_svc.get_project(company, user, project_id)
+        if not project or not PermissionChecker.can(user, "topic.list", obj=project):
+            raise GatewayToolError("No such project.")
+        return [
+            {"id": r["id"], "title": r["title"], "description": r["description"],
+             "steps": len(r["steps"]), "supervisor": r["supervisor_name"],
+             "has_checkpoint": r["has_checkpoint"]}
+            for r in runbooks.serialise_runbooks(runbooks.list_runbooks(project))
+        ]
+    return await sync_to_async(_run)()
+
+
+async def run_chain(user, chain_id: str, topic_id: str) -> dict:
+    """Start a chain in a topic — exactly the app's start road: runbook.run +
+    persona.mention, the caller is the starter and the actor of every step."""
+    def _run():
+        from authn.permissions.checker import PermissionChecker
+        from scheduling import runbooks
+        from scheduling.tasks import run_runbook
+
+        company, project, topic = _find_topic(user, topic_id)
+        runbook = runbooks.get_runbook(project, chain_id)
+        if not runbook:
+            raise GatewayToolError("No such chain in that topic's project.")
+        if not (runbook.steps or []):
+            raise GatewayToolError("This chain has no steps yet — edit it in the app first.")
+        if not PermissionChecker.can(user, "runbook.run", obj=project):
+            raise GatewayToolError("You can't run chains in this project.")
+        if not PermissionChecker.can(user, "persona.mention", obj=topic):
+            raise GatewayToolError("You can't call personas in this topic.")
+        run = runbooks.start_run(company, project, runbook, user, topic)
+        run_runbook.delay(str(run.id))
+        return {"run_id": str(run.id), "status": "queued", "topic_id": topic_id,
+                "note": "The chain runs in the topic; chain_status follows it."}
+    return await sync_to_async(_run)()
+
+
+async def chain_status(user, run_id: str) -> dict:
+    """One run's progress — status, the step it is on, each step's outcome, and
+    the checkpoint it may be waiting at. Invisible = nonexistent, as everywhere."""
+    def _run():
+        from authn.permissions.checker import PermissionChecker
+        from nucleus.models import RunbookRun
+        from scheduling import runbooks
+        from workspace import services as ws_svc
+
+        company = _company()
+        try:
+            run = (RunbookRun.objects.filter(id=run_id, is_active=True)
+                   .select_related("runbook", "topic", "project", "started_by").first())
+        except Exception:  # noqa: BLE001 — a malformed id is just "no such run"
+            run = None
+        if not run:
+            raise GatewayToolError("No such run.")
+        project = ws_svc.get_project(company, user, str(run.project_id))
+        if not project or not PermissionChecker.can(user, "topic.list", obj=project):
+            raise GatewayToolError("No such run.")
+        full = runbooks.serialise_run(run)
+        return {
+            **{k: full[k] for k in (
+                "id", "runbook_id", "runbook_title", "status", "current_step", "step_count",
+                "checkpoint", "skipped_count", "error", "started_at", "ended_at",
+            )},
+            "steps": [
+                {"index": s.get("index"), "status": s.get("status"), "persona": s.get("persona_name"),
+                 "verdict": s.get("verdict"), "error": s.get("error")}
+                for s in (full["step_results"] or [])
+            ],
+        }
+    return await sync_to_async(_run)()

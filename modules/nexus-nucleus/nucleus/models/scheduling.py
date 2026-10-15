@@ -268,8 +268,23 @@ class Runbook(ProjectBaseModel):
 
     title = models.CharField(max_length=120)
     description = models.CharField(max_length=500, blank=True, default="")
-    # [{persona_id, prompt, routine_id | null, output_type, on_failure}] -- 1 to 12 steps.
+    # Steps, 1 to 12, validated in scheduling/runbooks.py. Two kinds (Step 7):
+    #   {kind: "persona" (default), persona_id, prompt, routine_id|null,
+    #    output_type, on_failure}                      -- a stage
+    #   {kind: "checkpoint", question, on_failure}     -- waits for a person
+    # Rows written before Step 7 carry no `kind` key and read as persona steps.
     steps = models.JSONField(default=list)
+    # Step 7 (ruling 2): ONE optional supervisor persona; when set, it reviews
+    # EVERY stage and its verdict (approve / redo with notes / fail) is posted
+    # in the topic as a visible message. SET_NULL: a retired supervisor stops
+    # the reviewing, never the chain's definition.
+    supervisor = models.ForeignKey(
+        "nucleus.Persona", on_delete=models.SET_NULL, null=True, blank=True, related_name="supervised_runbooks",
+    )
+    # Step 7 (ruling 3): how many times a REDO verdict may rerun one stage.
+    # Default 1, hard cap 2 (enforced in validation); exhaustion falls to the
+    # step's on_failure rule.
+    redo_limit = models.PositiveSmallIntegerField(default=1)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_runbooks",
     )
@@ -291,6 +306,8 @@ class RunbookRun(ProjectBaseModel):
     class Status(models.TextChoices):
         QUEUED = "queued", "Queued"
         RUNNING = "running", "Running"
+        # Step 7 (ruling 4): paused at a checkpoint step, waiting for a person.
+        WAITING = "waiting", "Waiting for a person"
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
         STOPPED = "stopped", "Stopped"
@@ -304,7 +321,16 @@ class RunbookRun(ProjectBaseModel):
     # 0-based index of the step in progress; -1 before the first starts.
     current_step = models.IntegerField(default=-1)
     # [{index, persona_id, persona_name, message_id, status, started_at, ended_at, error}] in step order.
+    # Step 7 adds per-stage `redos` and `verdict` when a supervisor reviewed, and
+    # checkpoint entries {index, kind: "checkpoint", status: answered|expired, ...}.
     step_results = models.JSONField(default=list)
+    # Step 7: the context the NEXT step builds on (the last good output, plus a
+    # checkpoint's answer) -- persisted so a run paused at a checkpoint resumes
+    # in a fresh Celery task without losing what came before.
+    context = models.TextField(blank=True, default="")
+    # Step 7 (ruling 4): the pending checkpoint while status=WAITING --
+    # {index, question, asked_at}; cleared on answer/expiry.
+    checkpoint = models.JSONField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     error = models.TextField(blank=True, default="")

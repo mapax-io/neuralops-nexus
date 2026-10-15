@@ -122,6 +122,17 @@ TOOL_DEFS = [
      "description": "Search across the chats you can see — by meaning first, literally as a fallback.",
      "inputSchema": _schema({"query": {"type": "string"},
                              "project_id": {"type": "string"}}, ["query"])},
+    # Step 7 (ruling 6): the workflow tools — the same door, rights-as-you.
+    {"name": "list_chains",
+     "description": "The chains (multi-step persona runs) defined in one project you can see.",
+     "inputSchema": _schema({"project_id": {"type": "string"}}, ["project_id"])},
+    {"name": "run_chain",
+     "description": "Start one of a project's chains in a topic; it runs step by step in that topic.",
+     "inputSchema": _schema({"chain_id": {"type": "string"},
+                             "topic_id": {"type": "string"}}, ["chain_id", "topic_id"])},
+    {"name": "chain_status",
+     "description": "How one chain run is going: its status, each step's outcome, and any checkpoint it waits at.",
+     "inputSchema": _schema({"run_id": {"type": "string"}}, ["run_id"])},
 ]
 
 _DISPATCH = {
@@ -130,6 +141,9 @@ _DISPATCH = {
     "post_message": lambda user, topic_id, content: gw.post_message(user, topic_id, content),
     "ask_persona": lambda user, topic_id, persona, message: gw.ask_persona(user, topic_id, persona, message),
     "search_memory": lambda user, query, project_id=None: gw.search_memory(user, query, project_id),
+    "list_chains": lambda user, project_id: gw.list_chains(user, project_id),
+    "run_chain": lambda user, chain_id, topic_id: gw.run_chain(user, chain_id, topic_id),
+    "chain_status": lambda user, run_id: gw.chain_status(user, run_id),
 }
 
 

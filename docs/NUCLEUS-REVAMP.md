@@ -691,6 +691,71 @@ runbook are one table family, touched once.
 **Done when:** a scheduled run fires unattended, a saved chain reruns, and a
 two-stage chain runs supervised end to end.
 
+**Step 7 rulings (owner, 2026-10-15):**
+
+1. **Chains ARE runbooks grown up** — the new powers land on the existing
+   Runbook/RunbookRun tables; no parallel table family, old runs stay as
+   history. "Chain" is the word the UI uses; the tables keep their names.
+2. **Supervisor:** a chain names ONE optional supervisor persona; it reviews
+   EVERY stage (through the same mention road as everything else) and its
+   verdict — approve / redo with notes / fail — is posted in the topic as a
+   visible message. The team watches the chain think; nothing hidden.
+3. **Bounded redo:** "redo" reruns the stage with the supervisor's notes
+   added; default 1 redo per stage, hard cap 2; when redos run out the
+   step's existing on_failure rule (stop/skip) decides.
+4. **Checkpoints ("ask the user" steps):** the run pauses and posts the
+   question in the topic; the starter or any of the four roles may answer;
+   24-hour expiry (same as question cards), then on_failure applies.
+5. **Schedules stay simple (owner's words: "usually some simple tasks…
+   without any answer query").** A chain with a checkpoint step CANNOT be
+   scheduled — refused at schedule creation with a plain message ("this
+   chain waits for a person — run it by hand"). And EVERY scheduled fire
+   tells the engine nobody is watching: the persona decides and notes it in
+   the reply instead of raising a question card. The exact engine flag comes
+   from the verify-first read of the 0.8.0 trigger/scheduling code (handoff
+   change 12) — never guessed.
+6. **The workflow MCP's nucleus half is NOT a new server** — it is 2–3 new
+   tools on the Step 6 gateway (list_chains / run_chain / chain_status):
+   same door, same tokens, same rights-as-the-person.
+7. **Default template:** every project is born with one editable two-stage
+   example chain (draft → supervisor reviews), like the four built-in
+   routines — the screen is never empty.
+
+**Verify-first findings (engine + nucleus, read 2026-10-15) — ruling 5's
+trigger half was ALREADY BUILT:** schedules fire with `interactive=False`
+(`scheduling/tasks.py:134`) and so does every runbook step
+(`runbooks.py` `_run_step`); nucleus turns that into the engine payload and
+suppresses preflight (`chat/services.py` — "a schedule has nobody to ask");
+the rebuilt engine honours it (`fastapi_app/contracts/trigger.py`:
+`TriggerJob.interactive`, "Layer 4 made interactive live — ask/nudge
+gating") and the ask_user toolset is "added only on INTERACTIVE,
+question-capable runs" (`ai_engine/pydantic_ai_system/tools/ask_user.py`).
+Nothing to add on that road — Step 7 built the pieces that did not exist.
+
+**Built, Step 7 — chains (2026-10-15):**
+
+| Piece | File | Notes |
+|---|---|---|
+| Model + migration | `nucleus/models/scheduling.py` + `0036_chains` (schema only, per 0034's lesson) | Runbook +`supervisor` (SET_NULL persona) +`redo_limit` (default 1); RunbookRun +`waiting` status +`checkpoint` {index, question, asked_at} +`context` (the last good output, persisted so a paused run resumes in a fresh Celery task) |
+| Step kinds | `scheduling/runbooks.py` validate_steps | `kind: "persona"` (default — every pre-chain row reads unchanged) and `kind: "checkpoint"` {question, on_failure stop\|skip}; `has_checkpoint()` is ruling 5's gate |
+| The supervisor loop | `runbooks.py` `_drive` + `_review` + `_parse_verdict` | After every done stage the supervisor replies through the SAME mention road (interactive=False), visible in the topic; first word APPROVE / REDO / FAIL. REDO reruns the stage with the notes appended (redo_limit, hard cap 2); FAIL or exhausted REDO = step failure → its on_failure. Unclear verdict = the stage stands, recorded "unclear"; a broken/retired reviewer never kills a chain (announced, "unreviewed") |
+| Checkpoints | `runbooks.py` `_drive` / `answer_checkpoint` / `expire_waiting_run` + POST `/projects/{id}/runbooks/runs/{run_id}/checkpoint/` | The run parks WAITING and the Celery slot is RELEASED (the 2026-09-21 time-limit lesson); the starter or any project.update holder (fail-closed, the Step 6 fence pattern) answers; the answer joins the next step's context; WAITING→QUEUED claim is the race lock; stop works while waiting; 24h expiry (`scheduling.tasks.expire_waiting_checkpoints`, hourly beat entry) applies the checkpoint's own on_failure |
+| Schedules stay simple | `scheduling/api.py` create_schedule + `tasks.py` fire time | A checkpoint chain is refused at scheduling (400, "run it by hand") AND at fire time (catches one edited after scheduling); the step-less template is refused at start/schedule/fire with "add its steps first" |
+| Gateway tools | `gateway/tools.py` + `gateway/api.py` | `list_chains` / `run_chain` / `chain_status` on the Step 6 door — same tokens, rights-as-the-person (topic.list to see, runbook.run + persona.mention to start); the five-tool list test now expects eight |
+| Birth template | `workspace/services.py` create_project | "Draft and review", seeded like the configure topic. HONEST LIMIT: it ships with NO steps — a newborn project has no personas to put in them — so running it is refused with "add steps first" and its description says what to fill in; editable and deletable |
+| Tests | `scheduling/tests_chains.py` (15) | supervisor/redo round-trip + bounds; checkpoint validation; checkpoint chain refused at scheduling AND at fire time after an edit; approvals finish, redo carries the notes, exhaustion/FAIL fall to on_failure (stop and skip both), unclear stands; the park→answer→resume road end to end incl. 403/409 and the answer riding the next step's context; expiry both ways + the hourly task's window; stop while waiting; the template at birth; the three gateway tools incl. a viewer refused |
+
+**Step 7 VERIFIED — CLOSED (owner, 2026-10-15):** migration 0036 applied;
+full suite **457 tests, all passed** on the first run (442 + 15). The log
+shows the rulings live: the fire-time guard's own words ("this chain waits
+for a person at a checkpoint — it cannot run on a schedule; run it by hand")
+and the resume/redo roads all green. The done-when criteria all hold: a
+scheduled run fires unattended (interactive=False end to end, proven in the
+verify-first read), a saved chain reruns, and a two-stage chain runs
+supervised end to end (SupervisorTests). Remaining after this step: Step 8
+only (switch-over + distribution), plus the standing portal-side and
+engine-side items recorded at Step 6's close.
+
 ### Step 8 — Switch-over and distribution (§5)
 Point the stack at the new engine module, retire the legacy one, ship the
 unified image.

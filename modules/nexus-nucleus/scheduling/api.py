@@ -35,6 +35,7 @@ from scheduling import hooks as hook_svc
 from scheduling import runbooks
 from scheduling import services as sched_svc
 from scheduling.schema import (
+    CheckpointAnswerIn,
     HookIn, HookOut, HookPatchIn, RunbookIn, RunbookOut, RunbookPatchIn, RunbookRunOut, RunbookStartIn,
     ScheduleCreateIn, ScheduleUpdateIn, ScheduleOut,
 )
@@ -129,6 +130,12 @@ def create_schedule(
         if not PermissionChecker.can(user, "runbook.run", obj=project):
             raise HttpError(403, "You don't have permission to run runbooks in this project.")
         runbook = runbooks.get_runbook(project, payload.runbook_id)
+        # Step 7 ruling 5 (owner): schedules stay simple — a chain that waits
+        # for a person cannot run unattended on a clock.
+        if runbook and runbooks.has_checkpoint(runbook):
+            raise HttpError(400, "This chain waits for a person at a checkpoint — run it by hand instead of scheduling it.")
+        if runbook and not (runbook.steps or []):
+            raise HttpError(400, "This chain has no steps yet — edit it and add its steps first.")
         if not runbook:
             raise HttpError(404, "Runbook not found.")
     else:
@@ -253,6 +260,27 @@ def list_runbook_runs(request, project_id: str, runbook_id: Optional[str] = None
     return [runbooks.serialise_run(r) for r in runbooks.list_runs(project, runbook_id=runbook_id, topic_id=topic_id, active=active)]
 
 
+@router.post("/{project_id}/runbooks/runs/{run_id}/checkpoint/", response=RunbookRunOut)
+def answer_runbook_checkpoint(request, project_id: str, run_id: str, payload: CheckpointAnswerIn):
+    """
+    Step 7 ruling 4: answer the checkpoint a chain is waiting at. The starter
+    may answer, and so may the four roles (the project.update holders). The
+    run continues from the next step in a fresh task.
+    """
+    _, user, project = _runbook_project(request, project_id, "topic.list")
+    run = runbooks.get_run(project, run_id)
+    if not run:
+        raise HttpError(404, "Run not found.")
+    if not runbooks.may_answer_checkpoint(user, run):
+        raise HttpError(403, "Only the person who started this run, or a project admin, may answer its checkpoint.")
+    answer = (payload.answer or "").strip()
+    if not answer or len(answer) > 4000:
+        raise HttpError(400, "An answer is at most 4,000 characters.")
+    if run.status != "waiting" or not runbooks.answer_checkpoint(run, user, answer):
+        raise HttpError(409, "This run is not waiting at a checkpoint.")
+    return runbooks.serialise_run(runbooks.get_run(project, run_id))
+
+
 @router.post("/{project_id}/runbooks/runs/{run_id}/stop/", response=RunbookRunOut)
 def stop_runbook_run(request, project_id: str, run_id: str):
     _, user, project = _runbook_project(request, project_id, "runbook.run")
@@ -293,6 +321,10 @@ def start_runbook(request, project_id: str, runbook_id: str, payload: RunbookSta
     runbook = runbooks.get_runbook(project, runbook_id)
     if not runbook:
         raise HttpError(404, "Runbook not found.")
+    # Step 7: the template a project is born with ships without steps — it is
+    # there to edit, not to run.
+    if not (runbook.steps or []):
+        raise HttpError(400, "This chain has no steps yet — edit it and add its steps first.")
     if bool(payload.topic_id) == bool(payload.channel_id):
         raise HttpError(400, "Say where to run it: a topic, or a channel for a new one.")
     if payload.topic_id:
