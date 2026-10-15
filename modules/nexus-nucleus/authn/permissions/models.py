@@ -196,11 +196,9 @@ class RoleAssignment(models.Model):
     object (a Company, a Project, or a ChatTopic).
 
     `scope_object_type` + `scope_object_id` point at that object using a
-    plain string + UUID pair (the same pattern already used elsewhere in
-    this codebase for generic references — see AuditEvent.target_type /
-    EmbeddingJob.target_type in nucleus/models/extended.py — rather than
-    Django's ContentType/GenericForeignKey framework, to stay consistent
-    with the rest of the app).
+    plain string + UUID pair (a generic reference as plain columns, rather
+    than Django's ContentType/GenericForeignKey framework, to stay
+    consistent with the rest of the app).
 
     A user CAN hold more than one RoleAssignment at the same scope at
     once (e.g. Member + a "Persona Creator" capability role on the same

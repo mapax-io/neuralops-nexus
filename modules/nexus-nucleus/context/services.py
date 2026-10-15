@@ -99,6 +99,7 @@ def attach_file(
             channel_id=str(topic.channel_id),
             project_id=str(topic.project_id),
             company_id=str(company.id),
+            embedder=topic.project.embedder,
         )
         source.collection_id = collection_id
         source.status = ContextSource.Status.READY
@@ -149,6 +150,7 @@ def attach_web(
             channel_id=str(topic.channel_id),
             project_id=str(topic.project_id),
             company_id=str(company.id),
+            embedder=topic.project.embedder,
         )
         source.collection_id = collection_id
         source.status = ContextSource.Status.READY
@@ -207,49 +209,32 @@ def _embed(
     channel_id: str = "",
     project_id: str = "",
     company_id: str = "",
+    embedder: dict | None = None,
 ) -> str:
-    """POST to nexus-ai /embed/ and return the collection_id."""
-    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
-    internal_key = getattr(settings, "INTERNAL_API_KEY", "")
+    """Embed a context source through NexusAIClient (Step 3: every engine
+    call goes through the one client; the payload now carries the project's
+    embedder spec — handoff change 10.3). type='code' is never sent: the
+    engine refuses it (decision 5)."""
+    from chat.nexus_ai import NexusAIClient
 
-    if not nexus_ai_url:
-        raise RuntimeError("NEXUS_AI_URL not configured")
-
-    resp = httpx.post(
-        f"{nexus_ai_url}/api/v1/embed/",
-        json={
-            "source_id": source_id,
-            "type": source_type,
-            "label": label,
-            "content": content,
-            "topic_id": topic_id,
-            "channel_id": channel_id,
-            "project_id": project_id,
-            "company_id": company_id,
-        },
-        headers={"X-Internal-Key": internal_key},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()["collection_id"]
+    return NexusAIClient().embed_document({
+        "source_id": source_id,
+        "type": source_type,
+        "label": label,
+        "content": content,
+        "topic_id": topic_id,
+        "channel_id": channel_id,
+        "project_id": project_id,
+        "company_id": company_id,
+        "embedder": embedder,
+    })
 
 
 def _delete_collection(collection_id: str) -> None:
-    """DELETE nexus-ai /embed/context-source/{collection_id}/."""
-    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
-    internal_key = getattr(settings, "INTERNAL_API_KEY", "")
+    """Drop a context source's vectors through NexusAIClient (never raises)."""
+    from chat.nexus_ai import NexusAIClient
 
-    if not nexus_ai_url:
-        return
-
-    try:
-        httpx.delete(
-            f"{nexus_ai_url}/api/v1/embed/context-source/{collection_id}/",
-            headers={"X-Internal-Key": internal_key},
-            timeout=10,
-        )
-    except Exception as exc:
-        logger.warning("[context] failed to delete collection %s: %s", collection_id, exc)
+    NexusAIClient().delete_context_source(collection_id)
 
 
 # ---------------------------------------------------------------------------

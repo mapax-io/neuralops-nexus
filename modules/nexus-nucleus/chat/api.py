@@ -232,6 +232,7 @@ async def send_message(
             sender_type=msg["sender_type"],
             content=directives.clean_message,
             created_at=msg["created_at"],
+            embedder=project.embedder,  # Step 3 (change 10.3)
         )
     )
 
@@ -320,13 +321,13 @@ async def send_message(
         if directives.message_without_mentions(clean_message):
             refusals = await _trigger_personas(mentioned_personas, company, project, topic,
                                                 topic_id, msg, clean_message,
-                                                directives.output_type, directives.swarm, routine, user) or refusals
+                                                directives.output_type, routine, user) or refusals
 
     elif mentioned_personas:
         # Rule 3: @mentions (no @session) — trigger only mentioned, session unchanged
         refusals = await _trigger_personas(mentioned_personas, company, project, topic,
                                             topic_id, msg, clean_message,
-                                            directives.output_type, directives.swarm, routine, user) or refusals
+                                            directives.output_type, routine, user) or refusals
 
     else:
         # Rules 4 + 5: no explicit mention — check session
@@ -345,7 +346,7 @@ async def send_message(
                 )
                 refusals = await _trigger_personas(session_personas, company, project, topic,
                                                     topic_id, msg, clean_message,
-                                                    directives.output_type, directives.swarm, routine, user) or refusals
+                                                    directives.output_type, routine, user) or refusals
         # Rule 5: no mention, no session — human-only message, nothing to do
 
     if refusals:
@@ -370,7 +371,6 @@ async def _trigger_personas(
     msg: dict,
     clean_message: str,
     output_type: str,
-    swarm: bool,
     routine=None,
     triggered_by=None,
 ) -> list[dict]:
@@ -388,62 +388,39 @@ async def _trigger_personas(
     """
     if not personas:
         return []
-    # Turn off swarm mode if only one persona is mentioned
-    swarm = swarm and len(personas) > 1
-
-    if swarm:
-        # A gated persona proposes before it acts, and the swarm path has no plan
-        # to approve — it used to run them with the gate simply ignored, so the
-        # same persona was safe alone and not safe in company (audit, 2026-09-21).
-        # One at a time is the honest answer until a swarm can carry a plan.
-        gated = [p for p in personas if getattr(p, "acts_after_approval", False)]
-        if gated:
-            names = ", ".join(f"@{p.name}" for p in gated)
-            logger.warning("[chat/api] swarm refused: gated personas %s", [p.name for p in gated])
-            return _refuse(
-                personas, "gated_in_swarm",
-                f"{names} proposes a plan before acting, which a /swarm run cannot ask you to approve. "
-                "Mention them on their own.",
-            )
+    # Step 3 (change 10.2): while the project's vectors rebuild, persona
+    # triggers here are refused with a worded message — a reply mid-rebuild
+    # would search a half-built index.
+    if getattr(project, "reindex_status", "") == "building":
+        return _refuse(personas, "reindexing",
+                       "This project's memory is being rebuilt right now; personas are back once it finishes.")
+    # (The /swarm road is gone — Step 2 ruling 1. Several mentions simply
+    # trigger several replies, and the relay's queue-per-topic runs them in
+    # order, gates intact.)
+    for persona in personas:
+        # One gate now, where there used to be two. A persona no longer
+        # has a source_type -- it has exactly one ModelConfig, optionally
+        # an advisor, and zero or more MCP servers, and "has tools" is
+        # just "mcp_servers is non-empty". model is NOT NULL at the
+        # database level, so this can only be falsy if the row it points
+        # at was soft-deleted.
+        if not persona.model_id:
+            logger.info("[chat/api] skipping persona=%s (no model configured)", persona)
+            continue
         asyncio.create_task(
-            chat_svc.trigger_ai_swarm_response_async(
+            chat_svc.trigger_ai_response_async(
                 company=company,
                 project=project,
                 topic=topic,
-                personas=personas,
+                persona=persona,
                 user_message=clean_message,
                 user_message_id=msg["id"],
                 topic_id=topic_id,
                 output_type=output_type,
+                routine=routine,
                 triggered_by=triggered_by,
             )
         )
-
-    else:
-        for persona in personas:
-            # One gate now, where there used to be two. A persona no longer
-            # has a source_type -- it has exactly one ModelConfig, optionally
-            # an advisor, and zero or more MCP servers, and "has tools" is
-            # just "mcp_servers is non-empty". model is NOT NULL at the
-            # database level, so this can only be falsy if the row it points
-            # at was soft-deleted.
-            if not persona.model_id:
-                logger.info("[chat/api] skipping persona=%s (no model configured)", persona)
-                continue
-            asyncio.create_task(
-                chat_svc.trigger_ai_response_async(
-                    company=company,
-                    project=project,
-                    topic=topic,
-                    persona=persona,
-                    user_message=clean_message,
-                    user_message_id=msg["id"],
-                    topic_id=topic_id,
-                    output_type=output_type,
-                    routine=routine,  # a swarm run ignores routines (documented)
-                    triggered_by=triggered_by,
-                )
-            )
     return []
 
 
@@ -477,6 +454,24 @@ async def decide_tool_approval(request, project_id: str, channel_id: str, topic_
     _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
     try:
         return await chat_svc.decide_tool_approval(topic=topic, message_id=message_id, call_id=call_id, user=user, decision=payload.decision, always=payload.always)
+    except chat_svc.ApprovalError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.post(
+    "/{project_id}/channels/{channel_id}/topics/{topic_id}/messages/{message_id}/questions/{call_id}/",
+    response={200: dict},
+)
+async def answer_persona_question(request, project_id: str, channel_id: str, topic_id: str, message_id: str, call_id: str, payload: NudgeIn):
+    """
+    Answer a question a paused persona asked (item 5, Step 3). The payload's
+    `text` is the answer (free text; the card's options are suggestions, not
+    an enum). Only the person who called the persona answers; when every
+    pending call of the paused run is decided, the run resumes by itself.
+    """
+    _company, user, _project, _channel, topic = await _resolve_topic(request, project_id, channel_id, topic_id)
+    try:
+        return await chat_svc.answer_question(topic=topic, message_id=message_id, call_id=call_id, user=user, answer=payload.text)
     except chat_svc.ApprovalError as exc:
         raise HttpError(exc.status, str(exc))
 

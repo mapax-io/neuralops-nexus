@@ -87,6 +87,9 @@ class TriggerJob(BaseModel):
     resume: ResumeBlock | None = None
 
     # Accepted and ignored in Layer 0 — kept so the 0.8.0 payload validates.
+    # Layer 4 made interactive live (ask/nudge gating); Layer 6 made preflight,
+    # approved_plan and step_context live (turn_rules). routine_id and
+    # context_sources stay accepted-and-ignored (routines are nucleus-side).
     context_sources: list[ContextSourceRef] = Field(default_factory=list)
     output_type: str = "auto"
     preflight: bool = False
@@ -94,6 +97,10 @@ class TriggerJob(BaseModel):
     interactive: bool = True
     routine_id: str | None = None
     step_context: str | None = None
+
+    # Item 46 (Layer 6): set to 1 on the inner job of a call_persona run —
+    # the depth limit; a called persona never gets the delegation tool.
+    delegation_depth: int = 0
 
 
 class AgentEventType(str, Enum):

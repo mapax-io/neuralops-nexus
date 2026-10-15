@@ -143,6 +143,37 @@ def visible_channels(user, project, include_archived=False):
     return _with_archived(user, qs, Channel, "channel.archive").order_by("name")
 
 
+def _configure_fence(user, project, qs):
+    """
+    Step 6 (change 13.3): each project's reserved "configure" topic — the
+    provisioning persona's room — is visible to exactly the four admin-tier
+    roles: the holders of project.update (company owner/admin through a
+    company-scope assignment, project owner/admin through a project-scope
+    one). For everyone else it simply isn't there — filtered here so every
+    road that lists or resolves topics honours the fence from one place.
+    A direct topic-scoped assignment does NOT override it.
+
+    can() RAISES on an unregistered right code — which is what a server (or a
+    test fixture) with a minimal/not-yet-reseeded registry hits. The fence
+    then fails CLOSED: the configure topic stays hidden rather than every
+    topic list crashing over a deployment step.
+    """
+    try:
+        if PermissionChecker.can(user, "project.update", obj=project):
+            return qs
+    except ValueError:
+        pass
+    return qs.filter(is_configure=False)
+
+
+def _can_see_configure(user, project) -> bool:
+    """The fence's boolean form — same fail-closed rule on an unseeded right."""
+    try:
+        return PermissionChecker.can(user, "project.update", obj=project)
+    except ValueError:
+        return False
+
+
 def visible_topics(user, channel, include_archived=False):
     """
     Every ChatTopic in `channel` this user can see.
@@ -168,6 +199,8 @@ def visible_topics(user, channel, include_archived=False):
             ).values_list("scope_object_id", flat=True)
         )
         qs = ChatTopic.objects.filter(channel=channel, id__in=topic_ids)
+
+    qs = _configure_fence(user, channel.project, qs)
 
     if not include_archived:
         return qs.filter(is_active=True).order_by("created_at")
@@ -268,6 +301,11 @@ def visible_topic(user, project, topic_id):
     )
     if not topic:
         return None
+    # Step 6: the configure topic answers like a nonexistent one outside the
+    # four roles — same fence as visible_topics, checked here because this
+    # helper is the single-topic fast path.
+    if topic.is_configure and not _can_see_configure(user, project):
+        return None
     if PermissionChecker.can(user, "topic.list", obj=topic.channel):
         return topic
     # Narrow: invited to this one topic. Its channel surfaces as a waypoint,
@@ -313,4 +351,12 @@ def visible_topic_ids(user, company) -> set:
             str(i) for i in
             ChatTopic.objects.filter(channel__in=channels, id__in=scoped, is_active=True).values_list("id", flat=True)
         )
+
+    # Step 6: drop configure topics the user's roles don't reach — the same
+    # fence the list functions apply, for this bulk helper (search, gateway).
+    for topic in ChatTopic.objects.filter(
+        channel__in=channels, is_active=True, is_configure=True,
+    ).select_related("project"):
+        if str(topic.id) in ids and not _can_see_configure(user, topic.project):
+            ids.discard(str(topic.id))
     return ids

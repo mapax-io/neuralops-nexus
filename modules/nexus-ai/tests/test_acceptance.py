@@ -267,13 +267,15 @@ async def test_t10_keepalive(harness):
     assert len(finals) == 1 and finals[0]["type"] == "message_done"
 
 
-# ── T14: unplaced-feature fields are accepted and ignored ──────────────────────
+# ── T14: the full 0.8.0 payload still validates and replies ────────────────────
 
 async def test_t14_unplaced_fields(harness):
-    """T14 — Unplaced-feature fields are accepted and ignored.
+    """T14 — the full 0.8.0 payload validates; a loaded job still replies clean.
     A job carrying preflight, approved_plan, routine_id, step_context,
-    output_type and context_sources still produces a normal plain reply —
-    the 0.8.0 payload validates against the new module unchanged."""
+    output_type and context_sources produces exactly one message_done and no
+    error. (Since Layer 6, preflight/approved_plan/step_context are LIVE —
+    turn_rules — and output_type is live since Layer 4; routine_id and
+    context_sources stay accepted-and-ignored. Compatibility holds either way.)"""
     job = harness.job(
         preflight=True, approved_plan="the plan", routine_id="r1",
         step_context="step one said hello", output_type="chart",

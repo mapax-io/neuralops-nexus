@@ -656,3 +656,180 @@ def _invitation_is_scoped(invitation) -> bool:
 # /auth/status/ — it signs in via Supabase directly and calls auth_verify()
 # (above) instead. See git history to revive if device-poll login is needed
 # later (e.g. a CLI client without a browser).
+#
+# Step 4 brought the device-code IDEA back, but the other way around: the
+# portal (not this server) runs the device flow, and this server only asks it
+# for a code and polls — see authn/portal.py and claim_install() below.
+
+
+# =========================================================
+# Step 4 — first-run setup: the install claims its owner
+# =========================================================
+
+class SetupError(Exception):
+    """A refused claim (owner already exists, bad claims). API maps it to 409."""
+
+
+def server_needs_owner() -> bool:
+    """True while no active company has an owner — the 'unclaimed install' state."""
+    from nucleus.models import Company
+
+    company = Company.objects.filter(is_active=True).first()
+    return not (company and company.owner_id)
+
+
+@transaction.atomic
+def claim_install(claims: dict, workspace_name: str | None = None):
+    """
+    Make the person in `claims` (a VERIFIED Supabase token's claims — the
+    caller must have run verify_supabase_token first) the owner of this
+    server. Mirrors manage.py create_owner's creation block exactly — that
+    command stays as the air-gapped fallback; change both together.
+
+    Returns (user, company). Raises SetupError when the server already has
+    an owner or the claims carry no email.
+    """
+    from django.core.management import call_command
+    from django.utils.text import slugify
+    from nucleus.models import Company, CompanyAccess
+    from authn.permissions.checker import PermissionChecker
+    from authn.permissions.models import Role
+
+    email = claims.get("email")
+    if not email:
+        raise SetupError("The token carries no email address.")
+
+    if not server_needs_owner():
+        raise SetupError("This server already has an owner.")
+
+    user, _ = User.objects.get_or_create(
+        email=email,
+        defaults={"username": email, "is_active": True},
+    )
+
+    name = (workspace_name or "").strip() or f"{email.split('@')[0].capitalize()}'s Workspace"
+
+    slug = slugify(name) or "workspace"
+    base_slug = slug
+    counter = 1
+    while Company.objects.filter(slug=slug).exists():
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+
+    company = Company.objects.create(
+        name=name,
+        slug=slug,
+        is_personal=True,
+        owner=user,
+    )
+    CompanyAccess.objects.create(
+        company=company,
+        user=user,
+        role=CompanyAccess.Role.OWNER,
+    )
+    user.current_company = company
+    user.save(update_fields=["current_company"])
+
+    # The REAL RBAC Owner role — PermissionChecker only ever reads
+    # RoleAssignment, never CompanyAccess.role (the same bug create_owner's
+    # _grant_owner_role fixed: an owner with no RoleAssignment fails every
+    # can() check).
+    owner_role, _ = Role.objects.get_or_create(
+        company=company, name="Owner", scope="company",
+        defaults={"description": "Default Owner role."},
+    )
+    PermissionChecker.assign_role(user, owner_role, company, granted_by=None)
+
+    _create_default_groups(user)
+
+    # Idempotent; fills the Owner role (and the other three defaults) with
+    # their RoleRights RIGHT NOW, so the owner holds real rights the moment
+    # the claim returns — nobody is at a terminal to run the command by hand
+    # when the claim came through the API.
+    call_command("seed_permissions")
+
+    assign_display_name(user)
+    assign_avatar(user)
+
+    logger.info("[setup] install claimed by %s — workspace '%s'", email, name)
+    return user, company
+
+
+def _create_default_groups(owner_user) -> None:
+    """Default Django auth groups — mirrors create_owner._create_default_groups."""
+    from django.contrib.auth.models import Group, Permission
+
+    all_perms = Permission.objects.filter(content_type__app_label="nucleus")
+    view_perms = all_perms.filter(codename__startswith="view_")
+    add_change_view_perms = (
+        all_perms.filter(codename__startswith="add_")
+        | all_perms.filter(codename__startswith="change_")
+        | view_perms
+    )
+
+    owner_group, _ = Group.objects.get_or_create(name="Owner")
+    owner_group.permissions.set(all_perms)
+    owner_user.groups.add(owner_group)
+
+    admin_group, _ = Group.objects.get_or_create(name="Admin")
+    admin_group.permissions.set(
+        all_perms.exclude(codename__in=["delete_company", "remove_company"])
+    )
+
+    member_group, _ = Group.objects.get_or_create(name="Member")
+    member_group.permissions.set(add_change_view_perms)
+
+    viewer_group, _ = Group.objects.get_or_create(name="Viewer")
+    viewer_group.permissions.set(view_perms)
+
+
+# =========================================================
+# Step 4 — local passwords (offline sign-in)
+# =========================================================
+
+class LocalSignInError(Exception):
+    """Wrong email/password, or a refused password. API maps it to 401/400."""
+
+
+def local_signin(email: str, password: str) -> dict:
+    """
+    Check a local password and hand back a local token (authn/local_auth.py).
+    One failure message for every cause — no hint whether the email exists,
+    whether a password was ever set, or which half was wrong.
+    """
+    from django.conf import settings as dj_settings
+    from .local_auth import issue_local_token
+
+    user = User.objects.filter(
+        email=(email or "").strip(),
+        is_active=True,
+        user_type=User.UserType.HUMAN,
+    ).first()
+    if not user or not user.has_usable_password() or not user.check_password(password or ""):
+        raise LocalSignInError("Wrong email or password.")
+
+    logger.info("[local-signin] %s signed in with a local password", user.email)
+    return {
+        "access_token": issue_local_token(user),
+        "token_type": "bearer",
+        "expires_hours": int(getattr(dj_settings, "LOCAL_TOKEN_HOURS", 24)),
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "username": user.username,
+            "is_new_user": False,
+        },
+    }
+
+
+def set_local_password(user, password: str) -> None:
+    """Set `user`'s local password, refused with Django's own validator reasons."""
+    from django.contrib.auth.password_validation import validate_password
+    from django.core.exceptions import ValidationError
+
+    try:
+        validate_password(password or "", user=user)
+    except ValidationError as exc:
+        raise LocalSignInError(" ".join(exc.messages))
+    user.set_password(password)
+    user.save(update_fields=["password"])

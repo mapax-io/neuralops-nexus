@@ -70,6 +70,9 @@ class PersonaSpec:
     # BY NUCLEUS on the approval path; carried here so one object holds the
     # persona's whole trust rule.
     approval_scope: str = "topic"
+    # Item 46 (Layer 6): nucleus's supervisor checkbox — this persona may run
+    # other personas through call_persona (handoff change 14).
+    delegation_enabled: bool = False
 
     def model_for(self, role: ModelRole) -> ModelSpec:
         """The persona's first model with this role; raises if it has none."""

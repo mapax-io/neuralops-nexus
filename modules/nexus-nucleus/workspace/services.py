@@ -214,9 +214,16 @@ def create_project(company, user, name: str, description: str = None):
     project = Project.objects.create(
         company=company, name=name, slug=slug, description=description or "",
     )
-    Channel.objects.create(
+    channel = Channel.objects.create(
         company=company, project=project, name="general",
         slug="general", description="General discussion",
+    )
+    # Step 6 (change 13.3): every project is born with its reserved
+    # "configure" topic — the provisioning persona's room, visible only to
+    # the four admin-tier roles (fence in authn/permissions/row_rules.py).
+    ChatTopic.objects.create(
+        company=company, project=project, channel=channel,
+        title="configure", slug="configure", is_configure=True,
     )
 
     # Legacy membership record -- kept alongside the new RoleAssignment below

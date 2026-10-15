@@ -30,6 +30,16 @@ class Project(TenantOperationModel):
     )
     brief_updated_at = models.DateTimeField(null=True, blank=True)
 
+    # Step 3 (handoff change 10): the project's embedder spec
+    # {provider: fastembed|openai_compatible|hash, model_id, api_base?,
+    # api_key?}. Null = the system default (local fastembed). Changing it
+    # rebuilds the project's vectors — see the reindex flow.
+    embedder = models.JSONField(null=True, blank=True)
+    # "" | "building" | "failed" — while "building", persona triggers in
+    # this project are refused with a worded message (the index is being
+    # rebuilt; the old one stays active underneath, so a crash is safe).
+    reindex_status = models.CharField(max_length=10, blank=True, default="")
+
     members = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         through="ProjectMember",
@@ -86,7 +96,7 @@ class ChatTopic(ProjectOperationModel):
     A single conversation thread within a Channel.
 
     This is the unit chat actually happens in -- ChatMessage, ChatSession,
-    ChatReadMarker, and context sources (ContextSource/KnowledgeBase) all
+    ChatReadMarker, and context sources (ContextSource) all
     attach to a ChatTopic, not to the Channel or Project directly.
     """
     channel = models.ForeignKey(
@@ -100,6 +110,13 @@ class ChatTopic(ProjectOperationModel):
         max_length=120,
         help_text="URL-safe identifier, unique per channel. Auto-generated from title.",
     )
+
+    # Step 6 (docs/NUCLEUS-REVAMP.md, change 13.3): the project's reserved
+    # "configure" topic — where the provisioning persona lives. Visible to
+    # exactly the four admin-tier roles (the project.update holders); the
+    # fence is enforced in authn/permissions/row_rules.py, so every road
+    # (lists, messages, search, the gateway) honours it from one place.
+    is_configure = models.BooleanField(default=False, db_index=True)
 
     class Meta(ProjectOperationModel.Meta):
         db_table = "workspace_chat_topic"
@@ -115,69 +132,6 @@ class ChatTopic(ProjectOperationModel):
 
     def __str__(self):
         return f"{self.channel.name} / {self.title}"
-
-class KnowledgeBase(TenantBaseModel):
-    """
-    Company-owned knowledge base.
-
-    One knowledge base can be attached to projects, channels,
-    and chat topics.
-    """
-
-    name = models.CharField(max_length=255)
-    description = models.TextField(null=True, blank=True)
-
-    projects = models.ManyToManyField(
-        "nucleus.Project",
-        related_name="knowledge_bases",
-        blank=True,
-    )
-
-    # channels = models.ManyToManyField(
-    #     "nucleus.Channel",
-    #     related_name="knowledge_bases",
-    #     blank=True,
-    # )
-
-    chat_topics = models.ManyToManyField(
-        "nucleus.ChatTopic",
-        related_name="knowledge_bases",
-        blank=True,
-    )
-
-    class Meta:
-        db_table = "intelligence_knowledge_base"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["company", "name"],
-                name="uniq_knowledge_base_name_per_company",
-            )
-        ]
-        indexes = [
-            models.Index(fields=["company", "is_active"]),
-        ]
-
-    def __str__(self):
-        return self.name
-    
-class KnowledgeFile(BaseModel):
-    knowledge_base = models.ForeignKey(
-        "nucleus.KnowledgeBase",
-        on_delete=models.CASCADE,
-        related_name="files",
-    )
-
-    file = models.FileField(upload_to="knowledge_files/%Y/%m/%d/")
-    original_filename = models.CharField(max_length=255)
-    mime_type = models.CharField(max_length=100, blank=True)
-    file_size = models.BigIntegerField(default=0)
-
-    chroma_collection = models.CharField(max_length=255, null=True, blank=True)
-    embedding_status = models.CharField(max_length=30, default="pending")
-
-    class Meta:
-        db_table = "intelligence_knowledge_file"
-
 class Deliverable(ProjectBaseModel):
     """
     Something a persona produced that the team decided to keep (W10): a chart, a
@@ -230,6 +184,9 @@ class ChatMessage(ProjectBaseModel):
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
+        # Step 2: parked mid-run, waiting on a person (approval or question);
+        # resumed through chat/relay.py with the stored PausedRun state.
+        PAUSED = "paused", "Paused"
 
     class MessageType(models.TextChoices):
         TEXT = "text", "Text"
@@ -358,35 +315,6 @@ class ChatReadMarker(BaseModel):
         indexes = [
             models.Index(fields=["user", "topic"]),
         ]
-
-class ChatReaction(BaseModel):
-    message = models.ForeignKey(
-        "nucleus.ChatMessage",
-        on_delete=models.CASCADE,
-        related_name="reactions",
-    )
-
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="chat_reactions",
-    )
-
-    emoji = models.CharField(max_length=20)
-
-    class Meta:
-        db_table = "workspace_chat_reaction"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["message", "user", "emoji"],
-                name="uniq_message_user_emoji_reaction",
-            )
-        ]
-        indexes = [
-            models.Index(fields=["message", "emoji"]),
-            models.Index(fields=["user"]),
-        ]
-
 class ChatSession(BaseModel):
     """
     Per-user, per-topic AI session.
@@ -435,39 +363,4 @@ class ChatSession(BaseModel):
     def __str__(self):
         return f"Session({self.user}, {self.topic})"
 
-class ChatAttachment(BaseModel):
-    class AttachmentType(models.TextChoices):
-        IMAGE = "image", "Image"
-        PDF = "pdf", "PDF"
-        DOCUMENT = "document", "Document"
-        AUDIO = "audio", "Audio"
-        VIDEO = "video", "Video"
-        CSV = "csv", "CSV"
-        JSON = "json", "JSON"
-        OTHER = "other", "Other"
-
-    message = models.ForeignKey(
-        "nucleus.ChatMessage",
-        on_delete=models.CASCADE,
-        related_name="attachments",
-    )
-
-    attachment_type = models.CharField(
-        max_length=20,
-        choices=AttachmentType.choices,
-        default=AttachmentType.OTHER,
-    )
-
-    file = models.FileField(upload_to="chat_attachments/%Y/%m/%d/")
-    original_filename = models.CharField(max_length=255)
-    mime_type = models.CharField(max_length=100, blank=True)
-    file_size = models.BigIntegerField(default=0)
-
-    metadata = models.JSONField(default=dict, blank=True)
-
-    class Meta:
-        db_table = "workspace_chat_attachment"
-        indexes = [
-            models.Index(fields=["message"]),
-            models.Index(fields=["attachment_type"]),
-        ]
+# Step 0 (NUCLEUS-REVAMP.md, 2026-10-14): KnowledgeBase, KnowledgeFile, ChatReaction and ChatAttachment removed -- zero code references outside their definitions (migration 0029 drops the tables).

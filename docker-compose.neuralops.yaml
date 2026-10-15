@@ -335,6 +335,10 @@ services:
       # no separate port in use).
       - NEURALOPS_SERVER_URL=https://node-3.tail9ed39a.ts.net
       - NEURALOPS_VERSION=dev
+      # Step 4 posture: DEBUG now defaults OFF in settings.py. Dev says so
+      # explicitly — this also unlocks the dev-only SECRET_KEY fallback
+      # (production gets SECRET_KEY from secrets.env via init-secrets).
+      - DEBUG=true
     networks:
       - neuralops-network
     depends_on:
@@ -364,6 +368,7 @@ services:
       - REDIS_URL=redis://redis-dev:6379/0
       - NEXUS_AI_URL=http://nexus-ai-dev:8000
       - CENTRIFUGO_API_URL=http://centrifugo-dev:8000/api
+      - DEBUG=true   # Step 4 posture — see nucleus-dev's comment
     networks:
       - neuralops-network
     depends_on:
@@ -389,6 +394,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - REDIS_URL=redis://redis-dev:6379/0
+      - DEBUG=true   # Step 4 posture — see nucleus-dev's comment
     networks:
       - neuralops-network
     depends_on:

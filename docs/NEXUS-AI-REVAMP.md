@@ -50,7 +50,7 @@ Sections 7–9 are written **per item, when that item is expanded** — the new 
 | 5 | Model asks the user questions — built-in `ask_user` tool, pause and resume | **Partly built** — a prompt convention only; tool settled 2026-10-10, see §1.3 | nexus-ai |
 | 6 | New topic button; summarize when prompt gets long | **Remaining** | both |
 | 7 | Self-hosted / custom endpoints | **Built** — `api_base` → `base_url` | both |
-| 8 | Logfire inside nexus-ai only | Not audited | nexus-ai |
+| 8 | Telemetry | **Resolved** 2026-10-14 — Layer 5 decision 6: no tracing; one-value (total tokens) phone-home, nucleus-side, always on | nucleus |
 | 9 | Persona call rights | **Built** — `persona.mention` + `persona.approve_run` | nucleus |
 | 10 | Per-user rate limits on persona calls | **Remaining** — one precedent, hooks only | nucleus |
 | 11 | Per-model rate limits | **Remaining** — `WrapperModel` is the seam | nexus-ai |
@@ -59,8 +59,8 @@ Sections 7–9 are written **per item, when that item is expanded** — the new 
 | 14 | Fixed budget per project | **Remaining** — blocked: no cost data anywhere | nucleus |
 | 15 | Prompt / model caching | Not audited — constraints settled, see §4 | nexus-ai |
 | 16 | Tool loop and context limits | **Settled** — tiers right, budget wrong | nexus-ai |
-| 17 | Connectors | Not audited | both |
-| 18 | Claude Agent SDK runtime | Not audited | nexus-ai |
+| 17 | Connectors | **Settled** 2026-10-14 — Layer 5 decision 3: bundled MCPs + the NeuralOps MCP gateway; MCP/nucleus track, zero engine code | both |
+| 18 | Claude Agent SDK runtime | **Deferred** 2026-10-14 — Layer 5 decision 1; the AISystem seam is built and tested | nexus-ai |
 | 19 | Tool activity visibility | **Built** — `tool_activity` / `_end` | both |
 | 20 | Swarm — automatic persona handoff | **Dropped** — replaced by sub-agents | — |
 | 21 | Usage recording | **Partly built** — 3 of 9 fields recorded | both |
@@ -81,14 +81,14 @@ Sections 7–9 are written **per item, when that item is expanded** — the new 
 | 36 | Object storage for attachments | **Remaining** | both |
 | 37 | Run cancellation | **Built** — but registered too late, see §4 | both |
 | 38 | Concurrent runs in one topic | **Settled** | both |
-| 39 | Provisioning MCP — agentic project setup | **Proposed** | both |
+| 39 | Provisioning MCP — agentic project setup | **Settled** 2026-10-14 — Layer 5 decision 4: a bundled connector, fenced to the "configure" topic (4 roles); own project on the MCP track | both |
 | 40 | Credential verification — Test button, fingerprinted | **Partly built** — only persistence missing | both |
 | 41 | Terminal pane (`/terminal/ws`) | **Dropped** — removed from nexus-ai, see §1.1 | — |
 | 42 | Browser pane (`/browser/ws`) | **Dropped** — removed from nexus-ai, see §1.1 | — |
 | 43 | Message search for people (`/search/messages/`) | **Moved to nucleus** — plain DB search, see §1.1 | nucleus |
 | 44 | Chat-message embeddings for the persona | **Remaining** — Layer 3, see §1.1 | nexus-ai |
-| 45 | Persona chain under a supervisor persona (team workflow) | **Proposed** 2026-10-10 — Layer 6, see §1.3 | both |
-| 46 | Delegation as tools: `escalate` (to the persona's deeper model) and `call_persona` (to another persona), with a `Handover` package | **Settled** 2026-10-10 (design) — see §1.3 | nexus-ai |
+| 45 | Persona chain under a supervisor persona (team workflow) | **Settled** 2026-10-14 — Layer 6 decisions 1–2: nucleus orchestrates, workflow MCP drives; engine hooks built (turn_rules, call_persona) | both |
+| 46 | Delegation as tools: `escalate` (to the persona's deeper model) and `call_persona` (to another persona), with a `Handover` package | **Built** — escalate 2026-10-13 (Layer 2), call_persona 2026-10-14 (Layer 6, trial I) | nexus-ai |
 | 47 | Topic usage in the status bar: total tokens in and out per topic, live | **Settled** 2026-10-10 — Layer 0, see §1.3 | both |
 
 **Real remaining work:** 1, 6, 10, 11, 13, 14, 16, 26, 32, 33, 34, 36, 39 — plus item 40's persistence, item 5's everything-but-the-convention, and Appendix A's defects.
@@ -1013,6 +1013,271 @@ the nucleus project (handoff change 12); the nucleus half of everything
 above is handoff change 11 in `docs/NUCLEUS-HANDOFF.md`. Verified by the
 owner 2026-10-14: 99 passed, 0 skipped, against the dev pgvector stack.
 
+#### Layer 5 — decisions before design (settled 2026-10-14)
+
+1. **Item 18 (Claude Agent SDK runtime) is DEFERRED** (owner, 2026-10-14).
+   Deferring costs nothing: the seam is already built and tested —
+   `AISystemFactory.create(kind)` + the `AISystem` interface, and T16 keeps
+   pydantic-ai quarantined in `ai_engine/pydantic_ai_system/` so a second
+   system can arrive beside it later without touching the rest. Revisit after
+   switch-over.
+2. **Item 9 (persona call rights): zero engine work.** Already **Built** in
+   nucleus (`persona.mention` + `persona.approve_run`), enforced PRE-trigger;
+   a job that reaches nexus-ai is by definition allowed. Nothing to build or
+   test engine-side.
+3. **Item 17 (connectors) SETTLED — two simple halves, zero engine code.**
+   Owner's rule: "don't make things too difficult — I just wanted our app API
+   to behave like an MCP as well, which can be accessed internally and
+   externally."
+   Three tiers, ranked by the owner (2026-10-14):
+   **Tier 1 — the NeuralOps MCP GATEWAY is the FIRST-CLASS CITIZEN**: one MCP
+   server exposing nucleus's EXISTING APIs, available BY DEFAULT — internally
+   (personas use the product itself as a tool) and externally (any
+   MCP-speaking client: Claude Desktop/Code, Cursor): ask_persona (→ the
+   normal trigger road), search_memory (→ the embed/search endpoints),
+   list_projects / list_topics, post_message. Auth is a PER-USER token
+   created in the UI; every call acts AS THE CALLER through
+   `PermissionChecker` — the caller sees exactly what they see in the web UI;
+   no shared master key, ever. A thin front-door over existing endpoints — no
+   new business logic.
+   **Tier 2 — the other bundled MCPs are ONE CLICK away**: MCP servers that
+   ship in the product's own code (item 35's mechanism; 0.8.0's `is_internal`
+   flag) — the data MCP (34+36), the code-graph MCP (32), the provisioning
+   MCP (39). They appear on every new project, OFF until the admin's one
+   click turns them on.
+   **Tier 3 — internal native tools are ON BY DEFAULT**: the native
+   capabilities (filesystem, web search, shell, …) stay capabilities, not
+   MCPs, available as today.
+   All of it lives on the MCP/nucleus track (handoff change 13). Engine
+   impact: none — personas already dial MCPs (Layer 1), including these.
+4. **Item 39 (provisioning MCP) — one of the bundled connectors, with a
+   fence** (owner, 2026-10-14): it is available ONLY in a reserved
+   per-project topic named **"configure"**, accessible to exactly four roles
+   — Project Admin, Project Owner, Company Admin, Company Owner. §4.5's
+   design stands (acts as the caller, no self-elevation, secrets never in
+   chat); its old blocker is GONE — item 5's real question cards were built
+   in Layer 4, so the interview flow exists. Built as its own project on the
+   MCP track, like the data and code-graph MCPs (decision 12's pattern).
+5. **Connector deployment (settled 2026-10-14): both approaches, split by
+   weight — and location-flexible.** Rule: *owns data or heavy libraries →
+   its own container; just calls nucleus → rides one shared thin service.*
+   HEAVY connectors — the data MCP (+ MinIO) and the code-graph MCP
+   (+ FalkorDB) — are pre-defined services in `docker-compose.neuralops.yaml`
+   (behind a compose profile); THIN connectors — the gateway and the
+   provisioning MCP — share one lightweight "neuralops-mcp" service. NOTHING
+   downloads or installs at click time: the admin's one click only flips
+   availability in nucleus (self-hosted installs may be offline, and runtime
+   docker control would hand nucleus the docker socket — refused). Because
+   personas reach every MCP by URL, a heavy connector's container can run
+   BESIDE THE STACK (default, the compose service's URL) or REMOTELY on
+   rented compute — Amazon, RunPod — as the owner requires: same container
+   image, the admin repoints the server URL in nucleus. This generalizes
+   §4.4's "two tiers behind one interface" to all heavy connectors. Open:
+   auth between the stack and a remote connector (per-server secret, like
+   every stored MCP server's auth today).
+6. **Item 8 (telemetry) RESOLVED (owner, 2026-10-14): no tracing — only the
+   token phone-home, and it lives in nucleus.** The owner wants exactly ONE
+   value reported: **total tokens**, sent home identified by the install
+   (`NEURALOPS_INSTALL_TOKEN` names who owns the server), running from app
+   start, NOT switchable by the customer. This supersedes Appendix B's
+   earlier "disableable by one env var" note. Full request traces NEVER
+   leave the customer's server — no OTel/logfire wiring ships in the rebuild
+   (plain logs stay; tracing can return later as an opt-in if debugging
+   demands it). Engineering note recorded with the ruling: the sender must
+   FAIL SILENTLY when offline, so air-gapped installs work unharmed. Where it
+   lives: NUCLEUS — the install token is there and nucleus already aggregates
+   every usage record (change 1), so the phone-home is one sum + POST **at
+   application open and close** (owner's cadence); handoff change 13.6. The
+   full, detailed usage values stay recorded LOCALLY for the customer — that
+   is item 21, already built — so users watch their own budget on their own
+   box, and only the single total ever leaves. **Engine work: ZERO.**
+
+**With decision 6, LAYER 5 IS CLOSED ON NEXUS-AI (2026-10-14): every Layer 5
+item resolved to deferral (18), nucleus (8, 9), or the MCP track (17, 39) —
+no engine code, no new tests; the suite stays at 99.**
+
+#### Layer 6 — decisions before design (settled 2026-10-14)
+
+1. **Item 45 (persona chains): NUCLEUS ORCHESTRATES; every stage is an
+   ordinary trigger.** The §1.3 design (fixed stages, supervisor as
+   gatekeeper, documents between stages, bounded review loops, checkpoints,
+   writes ask, cost capped) stands — the settled question was WHERE it runs.
+   Owner's pick: each worker stage AND each supervisor review is an ordinary
+   `POST /api/v1/trigger/` run; nucleus holds the chain state and checkpoints
+   and fires the next stage on each verdict. Rationale: everything already
+   built then applies PER STAGE for free — item 2 pauses, ask_user, nudges,
+   the memory pass, usage records, queue-per-topic — and a crash restarts
+   from the checkpoint. Rejected: running the whole chain inside one engine
+   run (a worker's pause has no stored shape inside another run's state; one
+   chat reply cannot carry an hours-long job).
+2. **The chain is driven through a bundled WORKFLOW MCP** (a Tier-2 connector,
+   decision pattern of 39): tools ≈ `define_chain(stages, personas,
+   criteria)`, `start_stage(n, handover)` (returns immediately — nucleus
+   fires the stage; the supervisor's run ends and nucleus re-triggers it with
+   "stage n done, review"), `approve_stage(n)`, `send_back(n, notes)` (bounded
+   2–3 per stage, then ask the user), `get_stage_output(n)`. Acts as the
+   caller; own project on the MCP track. An off-the-shelf "serial tasks" MCP
+   was considered and rejected: it can store a step list but cannot RUN a
+   persona with its own permissions, pauses and billing — only nucleus can.
+3. **Runbooks RESOLVED — verified first** (legacy
+   `apps/managers/runbooks.py`, read 2026-10-14, 26 lines): legacy W6 is
+   ALREADY nucleus-sequenced — nucleus puts the previous reply on the job as
+   `TriggerJob.step_context`, and the engine's whole job is
+   `apply_step_context()`: append "Previous step's output — this step builds
+   on it:" + the text, clipped to `RUNBOOK_STEP_CONTEXT_MAX`, to the persona
+   prompt. Decision: (a) a runbook in the rebuild = A SAVED CHAIN DEFINITION
+   (team + stages + criteria + per-stage model seats) — nucleus data,
+   rerunnable, the workflow MCP's `define_chain` output; (b) the engine PORTS
+   the step_context block (one prompt section, clip kept) so the 0.8.0 wire
+   contract keeps working — Layer 6 engine piece 1.
+4. **Preflight RESOLVED — verified first** (legacy
+   `apps/managers/preflight.py`, read 2026-10-14, 37 lines): nucleus flags
+   `preflight=True` when the persona is gated and no plan approved; the
+   ENGINE owns the acts-at-all judgement (`acts_with_tools`: any mcp_servers,
+   or shell/filesystem capability) and `plan_turn()`: a preflight turn that
+   would act runs ONE TURN WITH NO TOOLS resolved as the `preflight` output
+   type (already shipped in Layer 4's ten); `approved_plan` rides ahead of
+   the persona prompt under "Approved plan — carry out these steps and
+   nothing beyond them:" with tools restored. Decision: PORT both transforms
+   — Layer 6 engine piece 2. The trigger fields already travel (T14).
+5. **Item 46's `call_persona`: the engine's one-shot delegation tool —
+   VERIFY-FIRST (trial I).** Scope: a persona (typically the supervisor)
+   runs ANOTHER persona on a sub-task with a `Handover`; it ALWAYS RETURNS
+   (never hands over the stream); the inner run gets NO ask/approval pauses
+   — an inner ask-tool is refused exactly like an unattended run, and the
+   result says so, so the outer persona (or the chain) decides; depth limit
+   1 (a called persona cannot call further); inner usage recorded under the
+   CALLEE's persona/model ids on the same message. Trial I must verify at
+   pinned 2.55.0: an agent run INSIDE a tool function, usage accumulation
+   into the outer run (the documented `usage=ctx.usage` pattern), and
+   streaming constraints. Layer 6 engine piece 3 — built only after the
+   trial passes.
+6. **Model strategy (owner + assistant, 2026-10-14): both options are pure
+   configuration; the shipped default is opinionated.** Personas already
+   carry per-seat models (item 13), so "many personas → one model" and
+   "many personas → many models" both work with zero new design. Default
+   chain template: every worker on the project's main model, the SUPERVISOR
+   on the deep seat (the reviewer should be the smartest in the room),
+   utility seats cheap. The product's moat is not model mixing — it is
+   documents-as-contract between stages + review gates + project memory +
+   per-role billing.
+
+Trial I — RESULT 3/3 PASSED (2026-10-14, pinned 2.55.0; throwaway script):
+the call_persona road. (I1) an EXECUTING async tool in a
+`FunctionToolset([...])` passed via `toolsets=` runs inside
+`run_stream_events` and its return value reaches the model as the tool
+result. (I2) INSIDE that tool, a second agent runs its own full stream loop
+to completion — no event-loop deadlock; FunctionToolCallEvent/ResultEvent
+appear for the outer tool as usual. (I3) the inner run's usage is its own
+(1 request) and the outer run's does not absorb it (2 requests) — so billing
+the inner run through its own respond() records is exactly right. Design
+consequence: call_persona nests THE ENGINE (a fresh AISystemFactory graph
+per inner run), not pydantic-ai agents — the `usage=ctx.usage` pattern was
+not needed.
+
+#### Items 45 + 46 + W6 + preflight — Layer 6: delegation and the turn rules (built 2026-10-14)
+
+1. **Problem.** Chains need three engine hooks: a supervisor must be able to
+   run a worker persona on one sub-task (46); a runbook step must see the
+   previous step's output (W6); a gated persona must propose before acting
+   (preflight). The chain itself is nucleus's (decision 1).
+2. **Decision.** Layer 6 decisions 1–6 above. Build-time calls: the inner
+   call_persona run is THE ENGINE CALLING ITSELF — a fresh factory graph and
+   an ordinary respond() per inner job (trial I's consequence) — so pauses,
+   retrieval, usage and the memory pass all apply to the callee for free;
+   inner events are drained silently (item 19's tool_call_start/end is the
+   outer trail); inner msg/job ids are `{outer}:cp{n}` — traceable, never
+   colliding (vector row ids included); the plan block is PROTECTED
+   (priority 91) while step_context is droppable (86); both ride as volatile
+   sections — the cache rule beats legacy's splice order, headings verbatim.
+3. **Mechanism.** *turn_rules.py*: `acts_with_tools(catalog)` (any MCP entry
+   or shell/filesystem native), `step_context_section` (STEP_HEADING + head
+   of the text, clipped at RUNBOOK_STEP_CONTEXT_MAX=12000 with CLIP_NOTE),
+   `approved_plan_section` (PLAN_HEADING). respond(): `preflight_turn =
+   preflight AND no approved_plan AND acts_with_tools` → catalog/loaded
+   emptied (no capability tools, no catalog section; ask_user stays — the
+   Layer 4 invariant holds) and the resolver is bypassed: the turn IS the
+   preflight type (its contract rides; TYPES_WITHOUT_CHOICE keeps the choice
+   exception off). *call_persona.py*: `call_persona_toolset(job, settings)`
+   — one FunctionToolset per reply, closure-counted `delegation_max_calls`
+   (3), `delegation_timeout_seconds` (600) via asyncio.timeout; args are the
+   Handover (task, summary, references, constraints, expected_output),
+   rendered small; inner TriggerJob: same company/project/topic/user,
+   interactive=False, delegation_depth=1; errors/timeouts/empties return as
+   WORDED TOOL RESULTS, never exceptions — a broken callee is the caller's
+   information. Attached in respond() only when `persona.delegation_enabled
+   AND delegation_depth == 0 AND not preflight_turn`; rides generate()'s
+   toolsets beside ask_user. The gate ignores it by design (unknown
+   capability_id → auto, loaded).
+4. **At 0.8.0.** runbooks.py (26 lines) and preflight.py (37 lines) quoted in
+   decisions 3–4 — both ported with contracts kept; call_persona had no
+   legacy (swarm was the dropped non-answer, item 20).
+5. **Open.** (a) Handover.references are plain strings v1 — the chain's
+   stage files; a typed reference (message id vs file) can come later.
+   (b) delegation across PROJECTS is refused by construction (ids pinned to
+   the outer job) — revisit only with a real case. (c) The callee's
+   context_window guard for a huge Handover rides item 16 as usual.
+6. **Acceptance** (tests/test_turn_rules.py, test_delegation.py; T14's claim
+   updated — three of the five "unplaced" fields are now LIVE). step_context
+   reaches the prompt clipped to its head with the legacy heading; a
+   preflight turn strips every capability tool (ask_user only), carries the
+   preflight contract, answers as output_type=preflight; approved_plan
+   restores the tools and rides under the legacy plan heading; a toolless
+   persona passes through untouched. call_persona runs the CALLEE's own
+   prompt on the rendered Handover, returns its reply as the tool result,
+   bills the inner run under the callee's persona id on `{msg}:cp0`; the
+   callee gets NO tools at depth 1 (no call_persona, no ask_user); personas
+   without the flag never see the tool.
+7. **Classes and methods.** `ai_engine/core/turn_rules.py` (acts_with_tools,
+   step_context_section, approved_plan_section, STEP_HEADING, CLIP_NOTE,
+   PLAN_HEADING); `pydantic_ai_system/tools/call_persona.py`
+   (call_persona_toolset, DELEGATION_TOOLSET_ID, _handover_message);
+   contracts: `TriggerJob.delegation_depth` (int, 0);
+   `PersonaSpec.delegation_enabled` (bool, False — parsed from
+   PersonaInternal); settings: `runbook_step_context_max
+   (RUNBOOK_STEP_CONTEXT_MAX, 12000)`, `delegation_max_calls
+   (DELEGATION_MAX_CALLS, 3)`, `delegation_timeout_seconds
+   (DELEGATION_TIMEOUT_SECONDS, 600)`; ReplyGenerator.generate gains
+   `delegate=`.
+8. **API.** TriggerJob gains `delegation_depth` (additive; nucleus never
+   sends it — only the engine's inner jobs carry 1). PersonaInternal gains
+   `delegation_enabled` (handoff change 14). Usage records may carry
+   message_id `{msg_id}:cp{n}` with the CALLEE's persona/model ids. No new
+   endpoints.
+9. **Sequence.** Delegation: outer run → call_persona(args) → fresh engine
+   graph → inner trigger (unattended, depth 1) → inner done → content =
+   tool result → outer continues → outer done; inner usage posted by the
+   inner run itself. Preflight: trigger{preflight} → acts? → toolless
+   preflight turn → plan to the user → trigger{approved_plan} → plan block
+   + tools → acting run. Runbook step: nucleus sends step_context → block
+   in prompt → reply → nucleus carries it to the next step.
+
+#### Requirement → test traceability (Layer 6, added 2026-10-14; built, suite now 106 tests, supersedes the 99-test count)
+
+| Requirement | Test |
+|---|---|
+| step_context block, legacy heading, clipped to its head (W6) | test_turn_rules.py::test_w1 |
+| Preflight turn: no capability tools, preflight contract + type (decision 4) | test_p1 |
+| approved_plan: tools restored, protected plan block, no contract | test_p2 |
+| Preflight on a persona that cannot act passes through (legacy branch 3) | test_p3 |
+| call_persona: callee runs as itself, reply = tool result, billed under callee on {msg}:cp0 (decision 5, trial I) | test_delegation.py::test_d1 |
+| Depth limit + unattended inner run: no tools at depth 1 | test_d2 |
+| Delegation is opt-in: no flag, no tool | test_d3 |
+| The loaded 0.8.0 payload still replies clean (claim updated: 3 fields now live) | test_acceptance.py::test_t14 |
+
+Known gaps carried: the chain itself (orchestration, workflow MCP, runbook
+storage, default template) is nucleus/MCP-track work — handoff change 14;
+delegation needs nucleus's `delegation_enabled` flag before any persona can
+use it in production.
+
+**With this entry, LAYER 6 IS CLOSED ON NEXUS-AI (2026-10-14) — and with it
+the layered build of the engine: Layers 0–6 all closed, suite at 106.
+VERIFIED BY THE OWNER 2026-10-14: 106 passed, 0 skipped, in nexus-ai-debug
+against the dev pgvector stack. Remaining on nexus-ai: item 28 (vision,
+deferred Layer 3 engine item), the stdio-MCP gap (Layer 1),
+requirements.lock regeneration, and the switch-over. Everything else lives
+in the nucleus project and the MCP track.**
+
 #### Layer 0 — one plain reply, step by step
 
 1. nucleus saves the message, creates the empty reply (PENDING) and calls `POST /api/v1/trigger/` with a `TriggerJob`.
@@ -1583,7 +1848,7 @@ Named here so they are not quietly inherited as constants:
 
   **Two additions from §3:** the row also carries the `RunPlan` — `evicted` especially, which is what makes "why did it forget that" answerable. And the **router's own usage** is recorded against the same message (item 13), or per-request routing cost stays invisible.
 
-  **Central phone-home telemetry is a separate, deliberately tiny thing:** instance count keyed by the existing `NEURALOPS_INSTALL_TOKEN`, and total tokens — nothing else, documented and disableable by one env var.
+  **Central phone-home telemetry is a separate, deliberately tiny thing:** instance count keyed by the existing `NEURALOPS_INSTALL_TOKEN`, and total tokens — nothing else. *(Superseded 2026-10-14, Layer 5 decision 6: always on, not customer-disableable, fails silently offline, nucleus-side.)*
 
 - **22 — Sandboxing.** Stays as-is: project folder bind-mounted, filesystem and shell allow-lists. No container-per-run, no microVM.
 

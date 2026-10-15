@@ -32,6 +32,13 @@ django-celery-beat
 # File Handling
 pillow
 
+# File viewer (Step 5, docs/NUCLEUS-REVAMP.md §3) — markdown rendering and
+# code highlighting for view-as-HTML. OPTIONAL at runtime: workspace/files.py
+# degrades to escaped plain text when these aren't installed, so an image
+# built before this line still works.
+markdown
+Pygments
+
 # Environment & Config
 python-dotenv
 

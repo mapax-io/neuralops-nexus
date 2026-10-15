@@ -39,11 +39,7 @@ from .workspace import (
     ChatMessage,
     Deliverable,
     ChatReadMarker,
-    ChatReaction,
     ChatSession,
-    ChatAttachment,
-    KnowledgeBase,
-    KnowledgeFile,
 )
 
 from .context import (
@@ -61,18 +57,20 @@ from .extended import (
     Invitation,
     ProjectMember,
     TopicParticipant,
-    Upload,
-    UploadPart,
-    KnowledgeChunk,
-    EmbeddingJob,
-    VectorDocument,
-    ProjectContext,
     TopicContext,
-    AuditEvent,
-    Notification,
-    UserSession,
-    SavedSearch,
-    SearchLog,
+)
+
+from .usage import (
+    ModelPrice,
+    UsageRecord,
+)
+
+from .runtime import (
+    PausedRun,
+)
+
+from .gateway import (
+    GatewayToken,
 )
 
 # ── REMOVED EXPORTS ───────────────────────────────────────────────────────────
@@ -82,3 +80,8 @@ from .extended import (
 #   AgentRun       -> deleted, unreferenced (migration 0007)
 #   AgentApproval  -> deleted, unreferenced (migration 0006)
 #   ModelUsageLog  -> deleted, zero writers (migration 0008)
+#   KnowledgeBase, KnowledgeFile, KnowledgeChunk, EmbeddingJob, VectorDocument,
+#   Upload, UploadPart, ProjectContext, AuditEvent, Notification, UserSession,
+#   SavedSearch, SearchLog, ChatReaction, ChatAttachment
+#                  -> deleted, zero references (Step 0, migration 0029,
+#                     docs/NUCLEUS-REVAMP.md 2026-10-14)

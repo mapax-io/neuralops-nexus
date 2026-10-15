@@ -47,3 +47,9 @@ class EngineSettings:
     # tests set "hash" (no downloads).
     classifier_embedder: str = field(default_factory=lambda: _env(
         "CLASSIFIER_EMBEDDER", "fastembed:nomic-ai/nomic-embed-text-v1.5"))
+    # Layer 6 (W6 runbooks, legacy value kept): how much of the previous
+    # step's reply a runbook step is given — its head.
+    runbook_step_context_max: int = field(default_factory=lambda: int(_env("RUNBOOK_STEP_CONTEXT_MAX", "12000")))
+    # Item 46 (Layer 6): delegation bounds — calls per reply, seconds per call.
+    delegation_max_calls: int = field(default_factory=lambda: int(_env("DELEGATION_MAX_CALLS", "3")))
+    delegation_timeout_seconds: float = field(default_factory=lambda: float(_env("DELEGATION_TIMEOUT_SECONDS", "600")))

@@ -89,6 +89,13 @@ class CompanyAIConfig(BaseModel):
     # The one model the server's own small jobs run on -- recall passes,
     # runbook conditions, titles -- so a persona's model is not spent on them.
     # Nothing consumes it until those land; unset means "use the persona's".
+    # Step 3 (change 3): fills a persona's EMPTY router seat at serve time —
+    # resolved INTO PersonaInternal.router_model by internal/api.py.
+    default_router_model = models.ForeignKey(
+        "nucleus.ModelConfig", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+        help_text="Company-wide default router (screening) model for personas without their own.",
+    )
+
     utility_model = models.ForeignKey(
         "nucleus.ModelConfig", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
         help_text="Model config used for the server's utility passes; falls back to the persona's model when unset.",
@@ -198,6 +205,24 @@ class ModelConfig(TenantBaseModel):
     licence_accepted = models.BooleanField(
         default=False,
         help_text="User must accept the provider's terms of service before this model is active.",
+    )
+
+    # -- Prices (Step 1, docs/NUCLEUS-REVAMP.md) -------------------------------
+    # Admin-typed OVERRIDE, USD per MILLION tokens. Blank = use the catalog
+    # (nucleus.models.usage.ModelPrice, refreshed from an online source).
+    # Local models simply stay blank/0. All money shown to users carries the
+    # "estimated — prices not confirmed" label (owner's ruling).
+    price_input_per_million = models.DecimalField(
+        max_digits=12, decimal_places=6, null=True, blank=True,
+        help_text="Override: USD per 1M input tokens. Blank = catalog.",
+    )
+    price_cached_per_million = models.DecimalField(
+        max_digits=12, decimal_places=6, null=True, blank=True,
+        help_text="Override: USD per 1M cached (cache-read) tokens. Blank = catalog.",
+    )
+    price_output_per_million = models.DecimalField(
+        max_digits=12, decimal_places=6, null=True, blank=True,
+        help_text="Override: USD per 1M output tokens. Blank = catalog.",
     )
 
     context_window = models.PositiveIntegerField(default=8192)
@@ -434,6 +459,30 @@ class Persona(TenantBaseModel):
         ),
     )
 
+    # Model seats (Step 3 — handoff changes 3 + 14.6): the ROUTER screens
+    # every turn cheaply; the DEEP seat takes the hard ones. A persona with
+    # no router seat uses STANDARD in the router's place only when a deep
+    # seat exists (the engine implements the fall-through); a company
+    # default (CompanyAIConfig.default_router_model) fills an empty router
+    # seat at serve time (internal/api.py).
+    router_model = models.ForeignKey(
+        ModelConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="router_personas",
+        help_text="The cheap screening seat. Blank = the company default router, else the engine's fall-through rule.",
+    )
+
+    deep_model = models.ForeignKey(
+        ModelConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="deep_personas",
+        help_text="The escalation seat for hard turns. Blank = no escalation.",
+    )
+
     # Models to answer with when `model` cannot (its key revoked, no credit,
     # rate-limited, the provider down), in order -- the through rows carry the
     # position. The worker tries them one by one before giving up (W7).
@@ -474,6 +523,22 @@ class Persona(TenantBaseModel):
     # Nucleus stores and validates the shape (intelligence/services.py);
     # the worker owns the defaults for anything unset and applies them.
     tool_levels = models.JSONField(default=dict, blank=True)
+
+    # Step 3 (handoff change 7): which tools the persona may mount, and who
+    # may decide its held tool calls. The engine reads tool_access; nucleus
+    # enforces approval_scope at the decide endpoints.
+    tool_access = models.CharField(
+        max_length=10, default="all",
+        choices=[("all", "All"), ("selected", "Selected")],
+    )
+    approval_scope = models.CharField(
+        max_length=15, default="topic",
+        choices=[("topic", "Anyone in the topic"), ("requester_only", "Only the requester")],
+    )
+
+    # Step 3 (change 14.6): the supervisor checkbox — when true, the engine
+    # gives this persona call_persona (one-shot delegation, depth 1).
+    delegation_enabled = models.BooleanField(default=False)
 
     # Recall (W5): whether this persona reads what the team has recorded
     # and records what it learns. Off keeps the project's Recall out of its
@@ -747,6 +812,20 @@ class MCPServer(TenantBaseModel):
         default=False,
         help_text="Opt-in: embed MCP tool results to ChromaDB. "
                   "Only meaningful when is_first_party=True.",
+    )
+
+    # Step 6 (handoff change 6): the server's STORED tool list —
+    # [{name, description, read_only}] — fetched through the engine when the
+    # server is attached/saved and from the "Refresh tools" button (no
+    # background syncing, owner's ruling 7). Ships to the engine on
+    # MCPServerInternal.tools so the catalog has one line per tool and the
+    # approval policy knows reads from writes BEFORE dialing. read_only
+    # comes only from the server's own readOnlyHint; null = treated as a
+    # write (asks first). The engine tolerates drift — stale ids drop.
+    tools = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Stored tool list [{name, description, read_only}] — see the Refresh tools button.",
     )
 
     # REMOVED:

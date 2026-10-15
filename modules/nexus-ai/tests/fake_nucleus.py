@@ -35,10 +35,11 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
                  tool_levels: dict | None = None, mcp_servers: list | None = None,
                  router_model: dict | None = None, deep_model: dict | None = None,
                  fallback_models: list | None = None, max_steps: int = 8,
-                 utility_model: dict | None = None) -> dict:
+                 utility_model: dict | None = None, persona_id: str = "p1",
+                 delegation_enabled: bool = False) -> dict:
     """A PersonaInternal-shaped dict."""
     return {
-        "id": "p1",
+        "id": persona_id,
         "name": "NeuralBot",
         "prompt": {"system_prompt": system_prompt, "output_type": "text", "context_scope": None},
         "model": model,
@@ -56,6 +57,8 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
         # item 13 (nucleus change 3): the optional seats
         "router_model": router_model,
         "deep_model": deep_model,
+        # item 46 (Layer 6, handoff change 14): the supervisor checkbox
+        "delegation_enabled": delegation_enabled,
     }
 
 
@@ -68,6 +71,7 @@ class FakeNucleus:
         self.history_params: list[dict] = []
         self.pause_posts: list[dict] = []     # item 2: every pause POST (msg_id added)
         self.nudges: dict[str, list[str]] = {}  # W8: msg_id → waiting texts (taken once)
+        self.personas: dict[str, dict] = {}   # item 46: extra personas by id (callees)
 
     def reset(self) -> None:
         self.persona = {}
@@ -77,8 +81,14 @@ class FakeNucleus:
         self.history_params.clear()
         self.pause_posts.clear()
         self.nudges = {}
+        self.personas = {}
 
     async def get_persona(self, request: Request) -> JSONResponse:
+        # item 46: a callee persona is served by its id; the default persona
+        # answers everything else (most tests configure exactly one).
+        persona_id = request.path_params.get("persona_id", "")
+        if persona_id in self.personas:
+            return JSONResponse(self.personas[persona_id])
         if not self.persona:
             return JSONResponse({"detail": "Persona not found."}, status_code=404)
         return JSONResponse(self.persona)

@@ -258,6 +258,107 @@ The engine side is already built and tested — nothing more is planned there.
    watching); the memory pass still runs (it keys off tools-ran + an active
    index, not interactivity).
 
+## Change 13 — Layer 5: connectors, the MCP gateway, provisioning (items 17/39/9, parked 2026-10-14)
+
+Owner's rule for all of it: keep it simple — "our app API behaves like an MCP
+as well, accessed internally and externally." Zero engine work in any of this.
+
+1. **The NeuralOps MCP gateway is the FIRST-CLASS CITIZEN** (owner's ranking;
+   own project on the MCP track): one MCP server over nucleus's EXISTING
+   APIs, available BY DEFAULT, internally (personas use the product itself as
+   a tool) and externally (Claude Desktop/Code, Cursor, …) — ask_persona
+   (→ the normal trigger road), search_memory (→ embed/search),
+   list_projects, list_topics, post_message. Auth: a PER-USER token minted in
+   the UI (create/revoke page); every call runs as the caller through
+   `PermissionChecker`; no shared master key. Thin front-door only — if a
+   tool needs new business logic, it is out of scope.
+2. **The other bundled connectors are ONE CLICK away** (item 35's
+   `is_internal`): the data MCP (34+36), code-graph MCP (32) and provisioning
+   MCP (39) ship in the product's code and appear on every new project, OFF
+   until the admin's one click. Internal NATIVE tools (filesystem, web
+   search, shell, …) stay capabilities, on by default as today. Nucleus's
+   job: the one-click per-project UI and attaching the chosen servers to
+   personas like any other MCP server row.
+3. **Provisioning MCP fence** (item 39): a reserved per-project topic named
+   "configure", auto-created with the project, visible to exactly four roles
+   — Project Admin, Project Owner, Company Admin, Company Owner. The
+   provisioning MCP is attached only there. §4.5 of the revamp doc holds the
+   full design (acts-as-caller, no self-elevation, secrets stay null, audit
+   question). Item 5's question cards (change 11.4) are its interview UI.
+4. **Item 9 (persona call rights)**: already built (`persona.mention`,
+   `persona.approve_run`), enforced pre-trigger — nothing new; just keep
+   enforcing before firing the trigger, including for gateway calls.
+
+5. **Deployment (owner, 2026-10-14): both approaches, split by weight.**
+   Heavy connectors (data MCP + MinIO; code-graph MCP + FalkorDB) are their
+   OWN compose services, pre-defined in `docker-compose.neuralops.yaml`
+   behind a profile; thin connectors (gateway, provisioning) share ONE
+   lightweight "neuralops-mcp" service. Nothing downloads at click time —
+   the one click only flips availability. A heavy connector can also run
+   REMOTELY (Amazon, RunPod): same container image, the admin repoints that
+   server's URL in nucleus — plan a per-server secret for stack↔remote auth.
+
+6. **Item 8 — the phone-home (owner, 2026-10-14): ONE value, always on,
+   nucleus-side.** Reports **total tokens**, identified by
+   `NEURALOPS_INSTALL_TOKEN` (that is how the vendor knows who owns the
+   server). Cadence (owner): **when the application opens and when it closes**
+   — a POST on startup and one on shutdown, that's all; NOT
+   customer-switchable. Nucleus already holds every usage record (change 1),
+   so it is a sum + one HTTPS POST to the vendor endpoint. MUST fail silently
+   when offline (air-gapped installs stay unharmed). No tracing ships
+   anywhere: full request traces never leave the customer's server. And to be
+   explicit (owner): ALL detailed usage values stay recorded LOCALLY on the
+   customer's install — change 1's full records are exactly how users keep an
+   eye on their own budget; only the single total leaves.
+
+Open within change 13: whether company-level setup (create projects, company
+model configs) gets its own "configure" place or rides any project's configure
+topic; token scopes for the gateway (full user vs read-only); the exact
+stack↔remote connector auth shape; the vendor endpoint URL for the
+phone-home (13.6; cadence settled: app open + close).
+
+## Change 14 — Layer 6: persona chains, the workflow MCP, runbooks (items 45/46, parked 2026-10-14)
+
+Engine side built and VERIFIED BY THE OWNER 2026-10-14 (suite 106 passed, 0
+skipped, dev pgvector stack) — with this, the nexus-ai layered build (0–6)
+is complete; everything below is the nucleus half.
+
+1. **Nucleus orchestrates the chain** (Layer 6 decision 1): chain state +
+   checkpoints live in nucleus; every worker stage and every supervisor
+   review is an ORDINARY trigger; on each verdict nucleus fires the next
+   stage (or the bounded redo, max 2–3, then ask the user). Each finished
+   stage posts into the topic. A crash re-fires from the checkpoint.
+2. **The workflow MCP** (own project, bundled Tier-2 connector): tools
+   `define_chain / start_stage / approve_stage / send_back /
+   get_stage_output`, all writing chain state to nucleus as the caller.
+   `start_stage` returns immediately; when the stage's run finishes, nucleus
+   re-triggers the supervisor with "stage n done — review" (step_context or
+   the message carries the stage's handover).
+3. **Runbooks = saved chain definitions** (verified against legacy
+   runbooks.py: W6 was already nucleus-sequenced via
+   `TriggerJob.step_context`): store team + stages + criteria + per-stage
+   model seats; keep SENDING step_context exactly as 0.8.0 did — the engine
+   ports its prompt block (clip kept).
+4. **Preflight** (verified against legacy preflight.py): nucleus's half is
+   unchanged from 0.8.0 — send `preflight=true` while a gated persona has no
+   approved plan, store the plan the user approves, send it back as
+   `approved_plan`. The engine ports plan_turn (no-tools preflight turn →
+   output type "preflight"; approved_plan block ahead of the prompt).
+5. **Default chain template** (decision 6): workers on the project's main
+   model, supervisor on the DEEP seat, utility cheap — ship it as the
+   starting runbook.
+6. **`delegation_enabled` on PersonaInternal** (engine built 2026-10-14): a
+   boolean — the supervisor checkbox. When true, the engine gives that
+   persona the `call_persona` tool (one-shot delegation to another persona of
+   the project, depth 1, unattended inner run, max 3 calls / 600s each).
+   Until nucleus sends the flag, no persona gets the tool — safe default.
+7. **Delegation billing**: expect usage records with message_id
+   `{msg_id}:cp{n}` carrying the CALLEE's persona and model ids — the inner
+   run of a call_persona. Sum them into the message's cost; show them under
+   the callee persona in per-persona spend. The preflight/approved_plan/
+   step_context trigger fields are now LIVE engine-side (turn_rules) with
+   their 0.8.0 shapes unchanged — keep sending them exactly as before.
+
 ## Open questions parked here
 
 - Drift-sync shape for stored MCP tool lists (change 6).

@@ -63,6 +63,14 @@ case "$MODE" in
     # in infra.env -- they're plain identifiers, not secrets, safe to
     # leave as shared defaults or change by hand.
     #
+    # SECRET_KEY joined the list with Step 4 (docs/NUCLEUS-REVAMP.md):
+    # Django used to run on one hardcoded, published SECRET_KEY. It now
+    # signs the local (offline) sign-in tokens too, so it must be
+    # per-deployment -- and nucleus REFUSES to boot without one when DEBUG
+    # is off. Existing deployments don't re-run this (that would replace
+    # the live POSTGRES_PASSWORD etc.); they append one line instead:
+    #   SECRET_KEY=<long random string>
+    #
     # SUPABASE_URL/SUPABASE_ANON_KEY are NOT generated here -- those point
     # at one real shared Supabase project and are meant to be identical
     # across every deployment, not per-install secrets.
@@ -79,6 +87,7 @@ print(f'INTERNAL_API_KEY={secrets.token_urlsafe(32)}')
 print(f'CENTRIFUGO_API_KEY={secrets.token_urlsafe(32)}')
 print(f'CENTRIFUGO_HMAC_SECRET={secrets.token_urlsafe(32)}')
 print(f'POSTGRES_PASSWORD={secrets.token_urlsafe(24)}')
+print(f'SECRET_KEY={secrets.token_urlsafe(48)}')
 "
     ;;
   *)

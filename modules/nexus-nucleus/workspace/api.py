@@ -6,7 +6,7 @@ Two routers:
 """
 from typing import List, Optional
 
-from ninja import Router, Query
+from ninja import Router, Query, Schema
 from ninja.errors import HttpError
 
 from authn.auth import SupabaseBearer
@@ -122,6 +122,63 @@ def update_project(request, project_id: str, payload: ProjectUpdateRequest):
     return _project_out(project, with_brief=True)
 
 
+# ── Embedder (Step 3, handoff change 10) ──────────────────────────────
+
+EMBEDDER_PROVIDERS = ("fastembed", "openai_compatible", "hash")
+
+
+class EmbedderIn(Schema):
+    # a bare `payload: dict` reads as a QUERY param in ninja — the body needs
+    # a Schema. {embedder: null} = back to the system default.
+    embedder: Optional[dict] = None
+
+
+@router.get("/{project_id}/embedder/", response=dict)
+def get_project_embedder(request, project_id: str):
+    """The project's embedder spec (null = the system default, local fastembed)
+    and whether its memory is rebuilding right now."""
+    company, user = _resolve(request)
+    project = svc.get_project(company, user, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    return {"embedder": project.embedder, "reindex_status": project.reindex_status}
+
+
+@router.put("/{project_id}/embedder/", response=dict)
+def set_project_embedder(request, project_id: str, payload: EmbedderIn):
+    """
+    Change the project's embedding model (company owner/admin only — decision
+    8). Saving it LOCKS the project (persona triggers are refused) and starts
+    the rebuild: every vector is re-embedded with the new model; the old index
+    stays active underneath, so a crash is safe and re-saving retries.
+    Body: {"embedder": {provider, model_id, api_base?, api_key?} | null}
+    (null = back to the system default).
+    """
+    company, user = _resolve(request)
+    project = svc.get_project_object(company, project_id)
+    if not project:
+        raise HttpError(404, "Project not found.")
+    if not PermissionChecker.can(user, "project.embedder", obj=project):
+        raise HttpError(403, "Only a company owner or admin can change a project's embedding model.")
+    if project.reindex_status == "building":
+        raise HttpError(409, "This project's memory is already rebuilding; wait for it to finish.")
+
+    spec = payload.embedder
+    if spec is not None:
+        if not isinstance(spec, dict) or spec.get("provider") not in EMBEDDER_PROVIDERS:
+            raise HttpError(400, f"embedder.provider must be one of {', '.join(EMBEDDER_PROVIDERS)}.")
+        if not (spec.get("model_id") or "").strip():
+            raise HttpError(400, "embedder.model_id is required.")
+
+    project.embedder = spec
+    project.reindex_status = "building"
+    project.save(update_fields=["embedder", "reindex_status"])
+
+    from intelligence.tasks import reindex_project
+    reindex_project.delay(str(project.id))
+    return {"embedder": project.embedder, "reindex_status": "building"}
+
+
 @router.delete("/{project_id}/")
 def archive_project(request, project_id: str):
     company, user = _resolve(request)
@@ -137,6 +194,51 @@ def archive_project(request, project_id: str):
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
+
+# ── File viewer (Step 5, docs/NUCLEUS-REVAMP.md §3) ──
+# Browse, download, view-as-HTML over the project's folder — the same folder
+# the personas' filesystem tools write into. Reading needs the project (the
+# same project.view road every other read uses); paths are walled inside the
+# project folder in workspace/files.py.
+
+from django.http import FileResponse, HttpResponse
+
+from workspace import files as file_viewer
+
+
+@router.get("/{project_id}/files/", response=dict)
+def list_project_files(request, project_id: str, path: str = Query(default="")):
+    """The folder's entries (folders first), relative to the project folder."""
+    company, user, project = _resolve_project(request, project_id)
+    try:
+        return file_viewer.list_folder(project, path)
+    except file_viewer.FileViewerError as exc:
+        raise HttpError(exc.status, str(exc))
+
+
+@router.get("/{project_id}/files/content/")
+def get_project_file(request, project_id: str, path: str = Query(...), as_: str = Query(default="", alias="as")):
+    """
+    The file itself. Plain call = a download (streamed, any size).
+    `?as=html` = a self-contained view page (markdown rendered, code
+    highlighted, images shown) — size-capped, and served with CSP `sandbox`
+    so nothing a file carries can run in the viewer's browser.
+    """
+    company, user, project = _resolve_project(request, project_id)
+    try:
+        if as_ == "html":
+            response = HttpResponse(file_viewer.render_html(project, path))
+            response["Content-Security-Policy"] = "sandbox"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+        file_path, content_type = file_viewer.open_for_download(project, path)
+        return FileResponse(
+            open(file_path, "rb"), as_attachment=True,
+            filename=file_path.name, content_type=content_type,
+        )
+    except file_viewer.FileViewerError as exc:
+        raise HttpError(exc.status, str(exc))
+
 
 @router.post("/{project_id}/terminal/session/", response=TerminalSessionOut)
 def open_terminal_session(request, project_id: str):

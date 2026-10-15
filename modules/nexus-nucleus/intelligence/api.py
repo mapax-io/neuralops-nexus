@@ -110,6 +110,41 @@ def _model_config_ref(config) -> ModelConfigRef:
     )
 
 
+# ── Stored tool lists (Step 6, handoff change 6) ───────────────────────
+
+def _bearer_for_dial(server) -> str | None:
+    """The same rule the engine applies at trigger time (toolset_builder):
+    oauth2 servers send the user access token, static ones client_secret."""
+    secrets = server.get_secrets()
+    if server.auth_type == "oauth2":
+        return secrets.get((server.oauth_config or {}).get("token_env_var", "OAUTH_ACCESS_TOKEN"))
+    return secrets.get("client_secret")
+
+
+def _refresh_server_tools(server) -> tuple[bool, str]:
+    """
+    Dial the server through the engine and store its tool list on the row
+    (fetched at attach/save + the Refresh button — no background syncing,
+    owner's ruling 7). (True, "") on success; (False, reason) on a failed
+    dial. Internal rows and non-HTTP transports keep an empty list — that
+    is not an error (stdio tool lists arrive when stdio dialing lands).
+    """
+    from chat.nexus_ai import NexusAIClient
+
+    if server.is_internal or server.transport not in ("http", "sse") or not server.url:
+        return True, ""
+    ok, result = NexusAIClient().list_mcp_tools(server.url, _bearer_for_dial(server))
+    if not ok:
+        return False, str(result)
+    server.tools = [
+        {"name": t.get("name", ""), "description": t.get("one_line", ""),
+         "read_only": t.get("read_only")}
+        for t in result if t.get("name")
+    ]
+    server.save(update_fields=["tools"])
+    return True, ""
+
+
 def _mcp_out(server) -> MCPServerOut:
     return MCPServerOut(
         id=str(server.id),
@@ -136,6 +171,7 @@ def _mcp_out(server) -> MCPServerOut:
         auth_type=server.auth_type,
         oauth_connected=_oauth_connected(server),
         oauth_config=server.oauth_config,
+        tools=server.tools or [],
     )
 
 
@@ -346,6 +382,12 @@ def create_mcp_server_standalone(request, payload: MCPServerIn):
         server = svc.create_mcp_server_standalone(company, payload.dict())
     except ValueError as e:
         raise HttpError(400, str(e))
+    # Step 6 (change 6): fetch the tool list at attach time, best-effort — a
+    # dead/slow server never fails the create; the Refresh button retries.
+    ok, reason = _refresh_server_tools(server)
+    if not ok:
+        import logging
+        logging.getLogger(__name__).info("[mcp] tool list not fetched for %s: %s", server.name, reason)
     return _mcp_out(server)
 
 
@@ -361,6 +403,9 @@ def patch_mcp_server_standalone(request, server_id: str, payload: MCPServerPatch
         server = svc.update_mcp_server_standalone(company, server_id, payload.dict(exclude_none=True))
     except ValueError as e:
         raise HttpError(400, str(e))
+    # Step 6 (change 6): a save may have changed the URL or credentials —
+    # refresh the stored list, best-effort.
+    _refresh_server_tools(server)
     return _mcp_out(server)
 
 
@@ -384,6 +429,25 @@ def delete_mcp_server_standalone(request, server_id: str):
 # transferable. Unlike ModelConfig, which is genuinely shared across projects.
 
 
+@router.post("/mcp-servers/{server_id}/tools/refresh/", response={200: dict})
+def refresh_mcp_server_tools(request, server_id: str):
+    """
+    Step 6 (change 6): the "Refresh tools" button — re-dial the server through
+    the engine and store its current tool list. 502 carries the dial's own
+    reason, to show verbatim next to the button.
+    """
+    company = _company(request)
+    server = svc.get_mcp_server_standalone(company, server_id)
+    if not server:
+        raise HttpError(404, "MCP server not found.")
+    if not PermissionChecker.can(request.auth, "mcp_server.update", obj=server):
+        raise HttpError(403, "You don't have permission to edit this MCP server.")
+    ok, reason = _refresh_server_tools(server)
+    if not ok:
+        raise HttpError(502, reason)
+    return {"tools": server.tools or []}
+
+
 # ── MCPServer OAuth2 ───────────────────────────────────────────────────────────
 
 @router.get("/mcp-servers/{server_id}/oauth/authorize/", response=MCPOAuthAuthorizeOut)
@@ -399,6 +463,13 @@ def mcp_oauth_authorize(request, server_id: str, frontend_origin: str):
         raise HttpError(403, "You don't have permission to connect this MCP server.")
     if server.auth_type != MCPServer.AuthType.OAUTH2:
         raise HttpError(400, "This MCP server is not configured for OAuth2.")
+    # Step 6 Part C: the dynamic-registration road. When nothing is pasted,
+    # discover the server's OAuth metadata and register this install as a
+    # public client, right now, on the Connect click. Pasted/preset configs
+    # (client_id + endpoints already present) pass straight through.
+    ok, reason = oauth_client.ensure_client(server)
+    if not ok:
+        raise HttpError(502, reason)
     return {"authorize_url": oauth_client.build_authorize_url(server, frontend_origin)}
 
 

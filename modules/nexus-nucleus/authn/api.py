@@ -9,15 +9,17 @@ from ninja.files import UploadedFile
 from ninja.errors import HttpError
 
 from .schema import (
-    AuthVerifyResponse, MyPermissionsOut, RolesOut, SetRoleRightsIn,
-    SetRoleRightsOut, SignInRequest, SignInResponse,
+    AuthVerifyResponse, LocalUserOut, MyPermissionsOut, RolesOut,
+    SetRoleRightsIn, SetRoleRightsOut, SignInRequest, SignInResponse,
 )
 from .services import (
-    AvatarError, RoleEditError, SignInError, auth_verify, clear_profile_photo,
-    list_roles, my_permissions, set_role_rights, set_profile_photo,
-    signin_with_supabase_token,
+    AvatarError, LocalSignInError, RoleEditError, SetupError, SignInError,
+    auth_verify, claim_install, clear_profile_photo, list_roles, local_signin,
+    my_permissions, server_needs_owner, set_local_password, set_role_rights,
+    set_profile_photo, signin_with_supabase_token,
 )
-from .supabase import SupabaseTokenError
+from .portal import PortalError, poll_device_code, request_device_code
+from .supabase import SupabaseTokenError, verify_supabase_token
 from .versions import read_module_versions
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
@@ -279,3 +281,199 @@ def upload_avatar(request, file: UploadedFile = File(...)):
 def delete_avatar(request):
     """Drop a custom photo and fall back to a server-assigned default."""
     return {"avatar": clear_profile_photo(request.auth)}
+
+
+# =============================================================================
+# Step 4 (docs/NUCLEUS-REVAMP.md) — first-run setup + local (offline) sign-in
+# =============================================================================
+
+from asgiref.sync import async_to_sync
+
+from chat.stop_signals import signal_store
+
+
+class SetupStatusOut(Schema):
+    needs_owner: bool
+    local_login_enabled: bool
+    portal_url: str
+
+
+class SetupStartOut(Schema):
+    code: str          # what the install shows; the person types it at the portal
+    request_id: str    # what the app passes back to /setup/poll/
+    portal_url: str
+    expires_in: int    # seconds the code stays valid
+
+
+class SetupPollIn(Schema):
+    request_id: str
+    workspace_name: Optional[str] = None
+
+
+class SetupPollOut(Schema):
+    status: str                          # "pending" | "claimed"
+    email: Optional[str] = None
+    workspace: Optional[str] = None
+    access_token: Optional[str] = None   # the Supabase token — the app's session
+
+
+class LocalSignInIn(Schema):
+    email: str
+    password: str
+
+
+class LocalSignInOut(Schema):
+    access_token: str
+    token_type: str
+    expires_hours: int
+    user: LocalUserOut
+
+
+class SetPasswordIn(Schema):
+    password: str
+
+
+class ResetPasswordIn(Schema):
+    user_id: str
+    password: str
+
+
+class OkOut(Schema):
+    ok: bool
+
+
+# A modest brake on password guessing: N tries per window, per address+email,
+# counted in the same store the stop signals use (Redis across workers; the
+# memory store in tests). Not a fortress — just enough that guessing is slow.
+SIGNIN_ATTEMPT_LIMIT = 10
+SIGNIN_ATTEMPT_WINDOW_SECONDS = 300
+
+
+def _too_many_attempts(request, email: str) -> bool:
+    address = request.META.get("REMOTE_ADDR", "") or "unknown"
+    key = f"nx:signin:{address}:{(email or '').strip().lower()}"
+    count = async_to_sync(signal_store().incr)(key, SIGNIN_ATTEMPT_WINDOW_SECONDS)
+    return count > SIGNIN_ATTEMPT_LIMIT
+
+
+# ── First-run setup: the install claims its owner ────────────────────────
+
+@router.get("/setup/status/", response=SetupStatusOut, auth=None)
+def setup_status(request):
+    """Public: is this a fresh, unclaimed install? The app shows the setup screen on true."""
+    return {
+        "needs_owner": server_needs_owner(),
+        "local_login_enabled": bool(getattr(settings, "LOCAL_LOGIN_ENABLED", True)),
+        "portal_url": settings.NEURALOPS_PORTAL_URL,
+    }
+
+
+@router.post("/setup/start/", response=SetupStartOut, auth=None)
+def setup_start(request):
+    """
+    Public, but only answers while the server has no owner. Asks the portal
+    for a short code; the person signs in at portal_url and types the code
+    there; the installer/app then polls /setup/poll/ until it is claimed.
+    """
+    if not server_needs_owner():
+        raise HttpError(409, "This server already has an owner.")
+    try:
+        out = request_device_code()
+    except PortalError as exc:
+        raise HttpError(
+            502,
+            f"{exc} You can still claim this server from its terminal: "
+            "python manage.py create_owner",
+        )
+    return {**out, "portal_url": settings.NEURALOPS_PORTAL_URL}
+
+
+@router.post("/setup/poll/", response=SetupPollOut, auth=None)
+def setup_poll(request, payload: SetupPollIn):
+    """
+    One poll of the portal. "pending" while nobody typed the code; once the
+    portal hands back a token, the token is VERIFIED (same check as every
+    sign-in) and that person becomes the owner — first verified claim wins.
+    """
+    if not server_needs_owner():
+        raise HttpError(409, "This server already has an owner.")
+    try:
+        result = poll_device_code(payload.request_id)
+    except PortalError as exc:
+        raise HttpError(502, str(exc))
+    if result["status"] != "claimed":
+        return {"status": "pending"}
+    try:
+        claims = verify_supabase_token(result["access_token"])
+    except SupabaseTokenError as exc:
+        raise HttpError(401, f"The portal returned a token this server can't verify: {exc}")
+    try:
+        user, company = claim_install(claims, payload.workspace_name)
+    except SetupError as exc:
+        raise HttpError(409, str(exc))
+    return {
+        "status": "claimed",
+        "email": user.email,
+        "workspace": company.name,
+        # The same Supabase token the person signed in with at the portal —
+        # handed back so the app keeps it as its session, exactly as if they
+        # had gone through /auth/signin.
+        "access_token": result["access_token"],
+    }
+
+
+# ── Local (offline) sign-in ──────────────────────────────────────────
+
+@router.post("/local/signin/", response=LocalSignInOut, auth=None)
+def local_signin_view(request, payload: LocalSignInIn):
+    """Email + local password → a local token (HS256, this server's SECRET_KEY)."""
+    if not getattr(settings, "LOCAL_LOGIN_ENABLED", True):
+        raise HttpError(403, "Offline sign-in is turned off on this server (LOCAL_LOGIN_ENABLED).")
+    if _too_many_attempts(request, payload.email):
+        raise HttpError(429, "Too many sign-in attempts. Wait a few minutes and try again.")
+    try:
+        return local_signin(payload.email, payload.password)
+    except LocalSignInError as exc:
+        raise HttpError(401, str(exc))
+
+
+@router.post("/local/set-password/", response=OkOut, auth=SupabaseBearer())
+def set_local_password_view(request, payload: SetPasswordIn):
+    """Any signed-in person sets their OWN offline password (profile screen)."""
+    try:
+        set_local_password(request.auth, payload.password)
+    except LocalSignInError as exc:
+        raise HttpError(400, str(exc))
+    return {"ok": True}
+
+
+@router.post("/local/reset-password/", response=OkOut, auth=SupabaseBearer())
+def reset_local_password_view(request, payload: ResetPasswordIn):
+    """Set someone ELSE's offline password — gated on company.local_password."""
+    from django.contrib.auth import get_user_model
+    from nucleus.models import Company
+
+    company = Company.objects.filter(is_active=True).first()
+    if not company:
+        raise HttpError(503, "Server not initialised.")
+    try:
+        allowed = PermissionChecker.can(request.auth, "company.local_password", company=company)
+    except ValueError:
+        raise HttpError(
+            503,
+            "This server hasn't registered the company.local_password right yet. "
+            "Run 'python manage.py seed_permissions'.",
+        )
+    if not allowed:
+        raise HttpError(403, "Only an owner or admin can reset someone's offline password.")
+
+    target = get_user_model().objects.filter(
+        id=payload.user_id, is_active=True, user_type="human",
+    ).first()
+    if not target:
+        raise HttpError(404, "No such user on this server.")
+    try:
+        set_local_password(target, payload.password)
+    except LocalSignInError as exc:
+        raise HttpError(400, str(exc))
+    return {"ok": True}

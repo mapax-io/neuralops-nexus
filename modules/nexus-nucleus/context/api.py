@@ -59,23 +59,9 @@ def _out(source) -> ContextSourceOut:
 
 # ── Directives ───────────────────────────────────────────────────────────────
 
-@router.get("/context-sources/directives/", response=List[dict])
-def list_directives(request):
-    """Proxy to nexus-ai — returns all registered @directives with help text."""
-    import httpx
-    from django.conf import settings
-    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
-    internal_key = getattr(settings, "INTERNAL_API_KEY", "")
-    try:
-        resp = httpx.get(
-            f"{nexus_ai_url}/api/v1/directives/",
-            headers={"X-Internal-Key": internal_key},
-            timeout=5,
-        )
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return []
+# (The GET /context-sources/directives/ proxy is DELETED — Step 3, handoff
+# 10.3: the engine dropped GET /api/v1/directives/, so this proxy could only
+# ever answer [] after switch-over; nothing in the new frontend reads it.)
 
 
 # ── List ──────────────────────────────────────────────────────────────────────

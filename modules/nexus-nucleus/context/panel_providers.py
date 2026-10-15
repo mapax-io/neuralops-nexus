@@ -166,19 +166,10 @@ class ChatPanelProvider(ContextPanelProvider):
 
 def _delete_message_vector(message_id: str, company_id: str) -> None:
     """
-    Ask nexus-ai to delete a message's embedding vector from ChromaDB.
-    Fire-and-forget — errors are swallowed.
+    Drop a message's vector through NexusAIClient (Step 3, one door). The
+    engine also drops the reply's tool memory under the same id (change 11.6).
+    Fire-and-forget — the client never raises here.
     """
-    nexus_ai_url = getattr(settings, "NEXUS_AI_URL", "")
-    internal_key = getattr(settings, "INTERNAL_API_KEY", "")
-    if not nexus_ai_url:
-        return
-    try:
-        httpx.delete(
-            f"{nexus_ai_url}/api/v1/embed/message/{message_id}/",
-            headers={"X-Internal-Key": internal_key},
-            params={"company_id": company_id},
-            timeout=5,
-        )
-    except Exception as exc:
-        logger.debug("[panel] message vector delete failed for %s: %s", message_id, exc)
+    from chat.nexus_ai import NexusAIClient
+
+    NexusAIClient().delete_message_vector(message_id, company_id)

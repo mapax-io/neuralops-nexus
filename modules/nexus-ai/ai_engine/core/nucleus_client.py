@@ -151,6 +151,7 @@ def persona_from(data: dict, company_id: str, project_id: str) -> PersonaSpec:
         recall_enabled=bool(data.get("recall_enabled", True)),
         tool_access=data.get("tool_access") or "selected",  # nucleus change (7); absent → selected
         approval_scope=data.get("approval_scope") or "topic",  # item 2 decision 5; absent → topic
+        delegation_enabled=bool(data.get("delegation_enabled", False)),  # item 46 (Layer 6)
     )
 
 

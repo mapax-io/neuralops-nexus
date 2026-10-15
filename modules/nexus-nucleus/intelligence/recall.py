@@ -140,31 +140,25 @@ def delete_recall_vector(entry) -> None:
 
 
 def _embed_now(entry) -> None:
-    url, key = _worker()
-    if not url:
-        return
+    # Step 3: through NexusAIClient (one door), with the project's embedder
+    # spec riding the payload (handoff change 10.3).
+    from chat.nexus_ai import NexusAIClient
     try:
-        httpx.post(
-            f"{url}/api/v1/embed/recall/",
-            json={
-                "entry_id": str(entry.id), "company_id": str(entry.company_id), "project_id": str(entry.project_id),
-                "kind": entry.kind, "text": entry.text,
-                "author_name": entry.author_persona.name if entry.author_persona_id and entry.author_persona else None,
-                "topic_id": str(entry.source_topic_id) if entry.source_topic_id else None,
-                "created_at": entry.created_at.isoformat() if entry.created_at else None,
-            },
-            headers={"X-Internal-Key": key},
-            timeout=15,
-        ).raise_for_status()
+        NexusAIClient().embed_recall({
+            "entry_id": str(entry.id), "company_id": str(entry.company_id), "project_id": str(entry.project_id),
+            "kind": entry.kind, "text": entry.text,
+            "author_name": entry.author_persona.name if entry.author_persona_id and entry.author_persona else None,
+            "topic_id": str(entry.source_topic_id) if entry.source_topic_id else None,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+            "embedder": entry.project.embedder if entry.project_id and entry.project else None,
+        })
     except Exception as exc:  # noqa: BLE001 -- a missing vector is a weaker recall, not a failed write
         logger.warning("[recall] embed failed for %s: %s", entry.id, type(exc).__name__)
 
 
 def _delete_now(entry) -> None:
-    url, key = _worker()
-    if not url:
-        return
+    from chat.nexus_ai import NexusAIClient
     try:
-        httpx.delete(f"{url}/api/v1/embed/recall/{entry.id}/", params={"company_id": str(entry.company_id)}, headers={"X-Internal-Key": key}, timeout=10)
+        NexusAIClient().delete_recall_vector(str(entry.id), str(entry.company_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning("[recall] vector delete failed for %s: %s", entry.id, type(exc).__name__)

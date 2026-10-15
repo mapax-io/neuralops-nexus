@@ -91,7 +91,7 @@ class ReplyGenerator:
     async def generate(self, request: ReplyRequest, capabilities: list | None = None,
                        resume: ResumeBlock | None = None, catalog_hash: str = "",
                        allow_escalation: bool = False, handover: Escalate | None = None,
-                       allow_ask: bool = True, nudges=None):
+                       allow_ask: bool = True, nudges=None, delegate=None):
         """capabilities: harness/pydantic-ai capability objects from
         ToolsetBuilder (Layer 1); None/empty keeps the Layer 0 toolless path.
         resume: the pause state + decisions (item 2) — the run continues
@@ -100,9 +100,14 @@ class ReplyGenerator:
         handover: a previous routing run's note — appended to the instructions.
         allow_ask: item 5 — this run may ask the person a question (ask_user);
         the router's screening run passes False, and an unattended job never
-        gets the tool regardless (nobody can answer)."""
+        gets the tool regardless (nobody can answer).
+        delegate: item 46 — the call_persona toolset, when this persona may
+        run others (built by the caller; None = no delegation this run)."""
         persona = request.persona
         ask = allow_ask and request.job.interactive  # item 5
+        toolsets: list = ([ask_user_toolset()] if ask else [])  # item 5
+        if delegate is not None:
+            toolsets.append(delegate)  # item 46
         primary = persona.model_for(request.role)
         # item 12: the seat's model first, then the persona's fallbacks in order
         candidates = [primary] + [m for m in persona.models if m.role is ModelRole.FALLBACK]
@@ -158,7 +163,7 @@ class ReplyGenerator:
                 async with agent.run_stream_events(
                     prompt, message_history=history,
                     capabilities=capabilities or None,
-                    toolsets=[ask_user_toolset()] if ask else None,  # item 5
+                    toolsets=toolsets or None,  # items 5 + 46
                     deferred_tool_results=deferred,
                     usage_limits=usage_limits,
                 ) as run:

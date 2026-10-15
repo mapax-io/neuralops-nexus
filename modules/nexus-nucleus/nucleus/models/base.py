@@ -127,7 +127,7 @@ class TenantBaseModel(BaseModel):
 
     Base model for company-owned records.
 
-    Example: Project, Agent, AIModel, MCPServer, KnowledgeBase.
+    Example: Project, Persona, ModelConfig, MCPServer.
 
     """
 

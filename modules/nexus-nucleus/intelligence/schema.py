@@ -202,6 +202,10 @@ class MCPServerOut(Schema):
     # the frontend can pre-fill the edit form. Secrets/tokens live in
     # secrets_encrypted and are never returned here.
     oauth_config: Optional[dict] = None
+    # Step 6 (change 6): the stored tool list [{name, description, read_only}]
+    # — fetched at attach/save and from POST /mcp-servers/{id}/tools/refresh/.
+    # read_only null = unlabeled = treated as a write (asks first).
+    tools: list = []
 
 
 class MCPServerRef(Schema):
@@ -437,6 +441,10 @@ class MCPCatalogEntryOut(Schema):
     auth_type: str
     needs: list[str] = []      # what to have ready BEFORE adding it; never a secret
     docs: str = ""
+    # Step 6 Part C: the vendor "Connect with NeuralOps" pre-fill (the famous
+    # three only). Non-secret by construction — a public client_id, endpoints,
+    # scopes, redirect_mode. None on every other entry.
+    oauth_preset: Optional[dict] = None
 
 
 class PersonaCatalogEntryOut(Schema):

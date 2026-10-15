@@ -15,14 +15,19 @@ from django.test import TestCase
 from chat.tests import MentionRightFixture
 
 from intelligence import oauth_client
-from nucleus.models import Company, MCPServer
+from nucleus.models import Company, MCPServer, Project
 
 
 class ClientOAuthTests(TestCase):
     def setUp(self):
         self.company = Company.objects.create(name="Test Co", slug="test-co")
+        # MCP servers are project-owned (NOT NULL since migration 0010) — this
+        # fixture predated that and only broke when the full suite first ran
+        # end to end (Step 2: the test-import circle used to block discovery).
+        self.project = Project.objects.create(company=self.company, name="P", slug="p")
         self.server = MCPServer.objects.create(
             company=self.company,
+            project=self.project,
             name="Fake Provider",
             transport=MCPServer.Transport.HTTP,
             url="http://fake-provider.example/mcp",   # satisfies the http transport CheckConstraint
@@ -99,7 +104,7 @@ class ClientOAuthTests(TestCase):
 
     def test_refresh_if_needed_true_for_non_oauth2_server(self):
         static_server = MCPServer.objects.create(
-            company=self.company, name="Static", transport=MCPServer.Transport.HTTP,
+            company=self.company, project=self.project, name="Static", transport=MCPServer.Transport.HTTP,
             url="http://x.example/mcp", auth_type=MCPServer.AuthType.STATIC_SECRETS,
         )
         with patch("intelligence.oauth_client.OAuth2Client.refresh_token") as mock_refresh:

@@ -671,12 +671,18 @@ class HookFireTests(HookFixture):
 
     def test_a_hook_is_rate_limited_per_hook_and_says_when_to_retry(self):
         _, token = self.hook_with_token()
-        for i in range(hook_svc.FIRES_PER_MINUTE):
-            self.assertEqual(self.fire(token)[0].status_code, 200, f"fire {i + 1}")
-        r, trigger, _ = self.fire(token)
-        self.assertEqual(r.status_code, 429)
-        trigger.assert_not_awaited()
-        self.assertEqual(r.headers.get("Retry-After"), "60")
-        # Another hook has its own budget.
-        _, other = self.hook_with_token()
-        self.assertEqual(self.fire(other)[0].status_code, 200)
+        # Freeze the clock: the budget is counted per minute WINDOW (now // 60s),
+        # and a loop of 30 real-time fires can straddle a boundary — the counts
+        # then split across two windows and the 31st fire wrongly passes
+        # (seen flaky on the first full-suite run, 2026-10-14).
+        from django.utils import timezone as dj_tz
+        with patch("scheduling.hooks.timezone.now", return_value=dj_tz.now()):
+            for i in range(hook_svc.FIRES_PER_MINUTE):
+                self.assertEqual(self.fire(token)[0].status_code, 200, f"fire {i + 1}")
+            r, trigger, _ = self.fire(token)
+            self.assertEqual(r.status_code, 429)
+            trigger.assert_not_awaited()
+            self.assertEqual(r.headers.get("Retry-After"), "60")
+            # Another hook has its own budget.
+            _, other = self.hook_with_token()
+            self.assertEqual(self.fire(other)[0].status_code, 200)

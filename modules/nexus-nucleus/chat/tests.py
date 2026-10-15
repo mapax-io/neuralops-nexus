@@ -71,7 +71,7 @@ from django.test import Client  # noqa: E402
 from authn.permissions.checker import PermissionChecker  # noqa: E402
 from authn.permissions.models import Role, RoleAssignment  # noqa: E402
 from nucleus.models import ChatMessage, CompanyAccess, ModelConfig, Persona  # noqa: E402
-from workspace.tests import InviteGrantsFixture  # noqa: E402
+from workspace.fixtures import InviteGrantsFixture  # noqa: E402  (Step 2: the chat↔workspace test cycle is broken)
 
 User = get_user_model()
 
@@ -106,15 +106,15 @@ class MentionRightFixture(InviteGrantsFixture):
         self.assign(user, "Viewer")
 
     def send(self, user, content: str):
-        """POST a message as `user` with every fire-and-forget side effect mocked; returns (response, trigger, swarm, publish)."""
+        """POST a message as `user` with every fire-and-forget side effect mocked; returns (response, trigger, publish).
+        (The swarm road is gone — Step 2 ruling 1.)"""
         path = f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t1.id}/messages/"
         with patch("authn.auth.verify_supabase_token", return_value={"email": user.email}), \
              patch("chat.api.chat_svc.trigger_ai_response_async", new_callable=AsyncMock) as trigger, \
-             patch("chat.api.chat_svc.trigger_ai_swarm_response_async", new_callable=AsyncMock) as swarm, \
              patch("chat.api.chat_svc.publish_async", new_callable=AsyncMock) as publish, \
              patch("chat.api.chat_svc.embed_message_async", new_callable=AsyncMock):
             r = Client().post(path, data={"content": content}, content_type="application/json", HTTP_AUTHORIZATION="Bearer t")
-        return r, trigger, swarm, publish
+        return r, trigger, publish
 
     def call(self, method, path, user, body=None):
         """One authenticated HTTP call as `user`; the Supabase check is patched away."""
@@ -130,7 +130,7 @@ class MentionRightTests(MentionRightFixture):
     """The right exists and the app hides the picker on it; the server must refuse too."""
 
     def test_a_member_mention_triggers_and_reports_no_refusal(self):
-        r, trigger, swarm, publish = self.send(self.sara, "@Sara hello")
+        r, trigger, publish = self.send(self.sara, "@Sara hello")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["refusals"], [])
         self.assertEqual(trigger.call_count, 1)
@@ -138,7 +138,7 @@ class MentionRightTests(MentionRightFixture):
         self.assertEqual(self.refused_events(publish), [])
 
     def test_a_viewer_mention_posts_the_message_but_never_triggers(self):
-        r, trigger, swarm, publish = self.send(self.vera, "@Sara hello")
+        r, trigger, publish = self.send(self.vera, "@Sara hello")
         self.assertEqual(r.status_code, 200, r.content)
         body = r.json()
         self.assertEqual(body["refusals"], [{
@@ -147,7 +147,6 @@ class MentionRightTests(MentionRightFixture):
         }])
         self.assertTrue(ChatMessage.objects.filter(id=body["message"]["id"], sender=self.vera).exists())
         trigger.assert_not_called()
-        swarm.assert_not_called()
         events = self.refused_events(publish)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["id"], body["message"]["id"])
@@ -155,35 +154,38 @@ class MentionRightTests(MentionRightFixture):
         self.assertEqual(events[0]["refusals"], body["refusals"])
 
     def test_a_viewer_cannot_open_a_session_by_mentioning(self):
-        r, trigger, swarm, publish = self.send(self.vera, "@Sara @session let's talk")
+        r, trigger, publish = self.send(self.vera, "@Sara @session let's talk")
         self.assertEqual([x["name"] for x in r.json()["refusals"]], ["Sara"])
         trigger.assert_not_called()
         self.assertFalse(ChatMessage.objects.filter(topic=self.t1, message_type="system", content__icontains="Session with").exists())
 
-    def test_a_viewer_swarm_never_starts(self):
-        r, trigger, swarm, publish = self.send(self.vera, "@Sara @Bob compare notes /swarm")
+    def test_a_viewer_multi_mention_never_triggers(self):
+        r, trigger, publish = self.send(self.vera, "@Sara @Bob compare notes")
         self.assertEqual(sorted(x["name"] for x in r.json()["refusals"]), ["Bob", "Sara"])
-        swarm.assert_not_called()
         trigger.assert_not_called()
 
-    def test_a_member_swarm_still_starts(self):
-        r, trigger, swarm, publish = self.send(self.sara, "@Sara @Bob compare notes /swarm")
+    def test_two_mentions_trigger_two_single_replies(self):
+        # Step 2: the swarm road is deleted — several mentions are several
+        # ordinary replies, run in order by the relay's queue-per-topic.
+        r, trigger, publish = self.send(self.sara, "@Sara @Bob compare notes")
         self.assertEqual(r.json()["refusals"], [])
-        self.assertEqual(swarm.call_count, 1)
+        self.assertEqual(trigger.call_count, 2)
+        called = {c.kwargs["persona"].id for c in trigger.call_args_list}
+        self.assertEqual(called, {self.persona_sara.id, self.persona_bob.id})
 
     def test_a_session_auto_trigger_is_refused_once_the_right_is_gone(self):
-        r, trigger, _, _ = self.send(self.sara, "@Sara @session hi there")
+        r, trigger, _ = self.send(self.sara, "@Sara @session hi there")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(trigger.call_count, 1)
         self.demote_to_viewer(self.sara)
-        r, trigger, _, publish = self.send(self.sara, "and another thing")
+        r, trigger, publish = self.send(self.sara, "and another thing")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual([x["name"] for x in r.json()["refusals"]], ["Sara"])
         trigger.assert_not_called()
         self.assertEqual(len(self.refused_events(publish)), 1)
 
     def test_a_plain_message_carries_no_refusals(self):
-        r, trigger, _, publish = self.send(self.vera, "just reading along")
+        r, trigger, publish = self.send(self.vera, "just reading along")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["refusals"], [])
         trigger.assert_not_called()
@@ -432,16 +434,16 @@ class ExplainAiErrorTests(SimpleTestCase):
 
 
 # ── the relay, driven by a fake worker ───────────────────────────────────────
-# What nucleus does with a worker's SSE stream: save the finished reply with
-# its type, keep a stopped partial, fail a broken run with a reason. The swarm
-# path had no test at all -- it once raised on its first line.
+# What nucleus does with the engine's SSE stream: save the finished reply with
+# its type, keep a stopped partial, fail a broken run with a reason, park a
+# paused one and resume it. (The swarm path is deleted — Step 2 ruling 1.)
 import json as _json  # noqa: E402
 
 from asgiref.sync import sync_to_async  # noqa: E402
 from django.test import override_settings  # noqa: E402
 
 from chat.reasons import WORKER_ENDED_EARLY_REASON  # noqa: E402
-from chat.services import _serialise, trigger_ai_response_async, trigger_ai_swarm_response_async  # noqa: E402
+from chat.services import _serialise, trigger_ai_response_async  # noqa: E402
 
 
 def sse(*events: dict) -> list[str]:
@@ -477,7 +479,8 @@ class FakeResponse:
 
 
 class FakeClient:
-    response: FakeResponse
+    response: FakeResponse = None  # the stream every send gets…
+    responses: list = []           # …or a queue, consumed oldest-first, for tests with several runs
     posted: list = []  # every job nucleus sent, oldest first
 
     def __init__(self, *args, **kwargs):
@@ -494,6 +497,8 @@ class FakeClient:
         return (method, url)
 
     async def send(self, request, stream=True):
+        if FakeClient.responses:
+            return FakeClient.responses.pop(0)
         return FakeClient.response
 
 
@@ -508,16 +513,24 @@ class RelayFixture(MentionRightFixture):
             self.published.append(data)
 
         for target, value in (
-            ("chat.services.httpx.AsyncClient", FakeClient),
-            ("chat.services.publish_async", publish),
-            ("chat.services.embed_message_async", AsyncMock()),
+            # The engine connection lives in the client now (Step 2 split).
+            ("chat.nexus_ai.httpx.AsyncClient", FakeClient),
+            ("chat.nexus_ai.NexusAIClient.embed_message", AsyncMock()),
+            # Each module binds publish_async at import; patch where it is used.
+            ("chat.relay.publish_async", publish),
+            ("chat.messages.publish_async", publish),
+            ("chat.approvals.publish_async", publish),
         ):
             patcher = patch(target, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        patcher = patch("chat.services.stop_signals", return_value=self.signals)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for target in ("chat.relay.stop_signals", "chat.messages.stop_signals"):
+            patcher = patch(target, return_value=self.signals)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        FakeClient.posted = []
+        FakeClient.responses = []
+        FakeClient.response = None
 
     def events(self, kind: str) -> list[dict]:
         return [e for e in self.published if e.get("type") == kind]
@@ -532,16 +545,11 @@ class RelayFixture(MentionRightFixture):
             user_message="chart please", user_message_id="u1", topic_id=str(self.t1.id),
         )
 
-    async def run_swarm(self, response: FakeResponse):
-        FakeClient.response = response
-        await trigger_ai_swarm_response_async(
-            company=self.company, project=self.p1, topic=self.t1, personas=[self.persona_sara, self.persona_bob],
-            user_message="chart please", user_message_id="u1", topic_id=str(self.t1.id),
-        )
-
     async def stop_the_pending_reply_soon(self, after=0.05):
         await asyncio.sleep(after)
-        pending = await sync_to_async(lambda: ChatMessage.objects.filter(topic=self.t1, status="pending").order_by("-sequence").first())()
+        # The new relay moves PENDING → STREAMING as soon as the stream opens.
+        pending = await sync_to_async(lambda: ChatMessage.objects.filter(
+            topic=self.t1, status__in=["pending", "streaming"]).order_by("-sequence").first())()
         await self.signals.request_stop(str(pending.id))
         return pending
 
@@ -610,40 +618,59 @@ class RelayTests(RelayFixture):
         self.assertEqual(row.status, "failed")
         self.assertIn("500", row.metadata["error_detail"])
 
-    async def test_a_swarm_relays_a_delegate_as_its_own_message(self):
-        await self.run_swarm(FakeResponse(sse(
-            {"type": "message_delta", "delta": "over to Bob"},
-            {"type": "message_done", "content": "over to Bob", "output_type": "text", "render_as": "text"},
-            {"type": "message_start", "id": "sub-1", "persona_id": str(self.persona_bob.id)},
-            {"type": "message_delta", "delta": "Bob here"},
-            {"type": "message_done", "content": "Bob here", "output_type": "text", "render_as": "text"},
-        )))
+    async def test_two_triggers_on_one_topic_run_in_order(self):
+        """Step 2 done-when: the queue per topic — the second reply's stream
+        does not start until the first one's finished, so their events never
+        interleave on the wire."""
+        FakeClient.responses = [
+            FakeResponse(sse(
+                {"type": "message_delta", "delta": "A1"},
+                {"type": "message_done", "content": "ONE", "output_type": "text", "render_as": "text"},
+            )),
+            FakeResponse(sse(
+                {"type": "message_delta", "delta": "B1"},
+                {"type": "message_done", "content": "TWO", "output_type": "text", "render_as": "text"},
+            )),
+        ]
+        kwargs = dict(company=self.company, project=self.p1, topic=self.t1, persona=self.persona_sara,
+                      user_message_id="u1", topic_id=str(self.t1.id))
+        await asyncio.gather(
+            trigger_ai_response_async(user_message="first", **kwargs),
+            trigger_ai_response_async(user_message="second", **kwargs),
+        )
+        kinds = [(e["type"], e.get("delta") or e.get("content")) for e in self.published
+                 if e["type"] in ("message_delta", "message_done")]
+        first_done = kinds.index(("message_done", "ONE"))
+        second_delta = kinds.index(("message_delta", "B1"))
+        self.assertLess(first_done, second_delta, kinds)
         rows = await sync_to_async(self.reply_rows)()
-        self.assertEqual([(r.content, r.status, r.sender_id) for r in rows], [
-            ("over to Bob", "completed", self.persona_sara.identity_user_id),
-            ("Bob here", "completed", self.persona_bob.identity_user_id),
-        ])
-        # the delegate's start event is republished under the DB message id
-        starts = self.events("message_start")
-        self.assertEqual(starts[1]["id"], str(rows[1].id))
-        self.assertEqual(len(self.events("message_done")), 2)
+        self.assertEqual({r.content for r in rows}, {"ONE", "TWO"})
 
-    async def test_a_swarm_stop_ends_the_delegate_that_is_streaming(self):
-        stopper = asyncio.ensure_future(self.stop_the_pending_reply_soon(after=0.1))
-        await self.run_swarm(FakeResponse(sse(
-            {"type": "message_delta", "delta": "over to Bob"},
-            {"type": "message_done", "content": "over to Bob", "output_type": "text", "render_as": "text"},
-            {"type": "message_start", "id": "sub-1", "persona_id": str(self.persona_bob.id)},
-            {"type": "message_delta", "delta": "Bob was saying"},
-        ), hang=True))
-        pending = await stopper
-        rows = await sync_to_async(self.reply_rows)()
-        root, sub = rows
-        self.assertEqual(str(sub.id), str(pending.id))
-        self.assertEqual((root.status, root.metadata.get("stopped")), ("completed", None))
-        self.assertEqual((sub.status, sub.content, sub.metadata.get("stopped")), ("completed", "Bob was saying", True))
-        done = [e for e in self.events("message_done") if e["id"] == str(sub.id)][0]
-        self.assertTrue(done["stopped"])
+    async def test_the_new_done_extras_land_on_the_row_and_the_wire(self):
+        """Step 2: loaded_tools / used_tools / retrieved_sources /
+        embed_description from the engine's message_done are stored, and
+        recalled is their count (the chip's number)."""
+        refs = [{"id": "r1", "kind": "recall", "label": "schema decision", "score": 0.91, "topic_id": None},
+                {"id": "r2", "kind": "message", "label": "earlier reply", "score": 0.84, "topic_id": str(self.t1.id)}]
+        await self.run_single(FakeResponse(sse(
+            {"type": "context_retrieved", "retrieved": refs, "count": 2},
+            {"type": "deep_escalation", "escalated_to": "Deep (o4)"},
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text",
+             "loaded_tools": ["web_search", "ask_user"], "used_tools": ["web_search"],
+             "retrieved_sources": refs, "embed_description": None},
+        )))
+        row = (await sync_to_async(self.reply_rows)())[0]
+        self.assertEqual(row.metadata["used_tools"], ["web_search"])
+        self.assertEqual(row.metadata["loaded_tools"], ["web_search", "ask_user"])
+        self.assertEqual([r["id"] for r in row.metadata["retrieved_sources"]], ["r1", "r2"])
+        self.assertEqual(row.metadata["recalled"], 2)
+        self.assertEqual(self.events("context_retrieved")[0]["count"], 2)
+        self.assertEqual(self.events("deep_escalation")[0]["escalated_to"], "Deep (o4)")
+        done = self.events("message_done")[0]
+        self.assertEqual((done["used_tools"], done["recalled"]), (["web_search"], 2))
+        out = await sync_to_async(lambda: _serialise(ChatMessage.objects.select_related("sender").get(id=row.id)))()
+        self.assertEqual(out["used_tools"], ["web_search"])
+        self.assertEqual([r["id"] for r in out["retrieved_sources"]], ["r1", "r2"])
 
 
 # ── reserved wire fields for the team AI operations work ─────────────────────
@@ -713,9 +740,12 @@ class RelayUsageTests(RelayFixture):
         self.assertNotIn("answered_by_model", row.metadata)
         self.assertIsNone(self.events("message_done")[-1]["answered_by_model"])
 
-    async def test_what_the_reply_recorded_is_kept_and_republished(self):
+    async def test_what_the_reply_retrieved_is_counted_and_republished(self):
+        # Step 2: the engine reports retrieved_sources; recalled is their count.
+        refs = [{"id": "r1", "kind": "recall", "label": "x", "score": 0.9, "topic_id": None},
+                {"id": "r2", "kind": "message", "label": "y", "score": 0.8, "topic_id": None}]
         await self.run_single(FakeResponse(sse(
-            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text", "recalled": 2},
+            {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text", "retrieved_sources": refs},
         )))
         row = (await sync_to_async(self.reply_rows)())[0]
         self.assertEqual(row.metadata["recalled"], 2)
@@ -792,20 +822,6 @@ class RelayActivityTrailTests(RelayFixture):
         row = (await sync_to_async(self.reply_rows)())[0]
         self.assertEqual(row.status, "failed")
         self.assertEqual([t["tool"] for t in row.metadata["activity_trail"]], ["web_search"])
-
-    async def test_a_swarm_delegate_gets_its_own_trail(self):
-        await self.run_swarm(FakeResponse(sse(
-            *tool_pair("web_search"),
-            {"type": "message_done", "content": "over to Bob", "output_type": "text", "render_as": "text"},
-            {"type": "message_start", "id": "sub-1", "persona_id": str(self.persona_bob.id)},
-            *tool_pair("shell"),
-            {"type": "message_done", "content": "Bob here", "output_type": "text", "render_as": "text"},
-        )))
-        root, sub = await sync_to_async(self.reply_rows)()
-        self.assertEqual([t["tool"] for t in root.metadata["activity_trail"]], ["web_search"])
-        self.assertEqual([t["tool"] for t in sub.metadata["activity_trail"]], ["shell"])
-        ends = self.events("tool_activity_end")
-        self.assertEqual([(e["id"] == str(sub.id), e["tool"]) for e in ends], [(False, "web_search"), (True, "shell")])
 
 
 PLAN = {"summary": "Read the CSV and write the report.", "steps": [{"title": "Read sales.csv", "tools": ["filesystem"], "writes": False}, {"title": "Write report.md", "tools": ["filesystem"], "writes": True}], "risks": ["Overwrites report.md"]}
@@ -987,83 +1003,176 @@ class ToolApprovalRelayTests(RelayFixture):
         self.assertEqual(row.metadata["render_as"], "text")
 
 
-class ToolApprovalDecisionTests(RelayFixture):
-    """Allow, deny, or allow always -- under persona.approve_run; always also needs persona.update."""
+class PausedRunFixture(RelayFixture):
+    """A run the engine paused: the pause POST landed first (here written
+    directly, as the internal endpoint would), then message_paused ended the
+    stream. Step 2's pause-and-resume tests build on this."""
 
-    def setUp(self):
-        super().setUp()
-        FakeClient.posted = []
+    def park_sync(self, msg_id: str, pending: list):
+        from nucleus.models import PausedRun
+        PausedRun.objects.update_or_create(message_id=msg_id, defaults={
+            "topic_id": str(self.t1.id), "persona_id": str(self.persona_sara.id),
+            "state": "STATE-JSON", "pending": pending, "role": "STANDARD", "decisions": {},
+        })
 
-    async def pending_row(self):
-        from chat.services import record_approval_request
-        FakeClient.response = FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"}))
-        await self.run_single(FakeClient.response)
-        row = (await sync_to_async(self.reply_rows)())[0]
-        await sync_to_async(record_approval_request)(str(row.id), APPROVAL)
-        return row
+    async def run_paused(self, mid_events: list[dict], pending: list):
+        async def park():  # the engine POSTs the pause BEFORE message_paused rides
+            row = await sync_to_async(lambda: ChatMessage.objects.filter(
+                topic=self.t1, metadata__has_key="persona_id").order_by("-sequence").first())()
+            await sync_to_async(self.park_sync)(str(row.id), pending)
+        await self.run_single(FakeResponse(sse(
+            {"type": "message_delta", "delta": "about to act "},
+            *mid_events,
+            {"type": "message_paused", "id": "m"},
+        ), before=park))
+        return (await sync_to_async(self.reply_rows)())[-1]
+
+    async def wait_for_status(self, row_id, status, timeout=5.0):
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            s = await sync_to_async(lambda: ChatMessage.objects.get(id=row_id).status)()
+            if s == status:
+                return
+            await asyncio.sleep(0.05)
+        self.fail(f"message {row_id} never reached {status}")
 
     async def decide(self, row, user, decision, always=False, call_id="c1"):
         from chat.services import decide_tool_approval
         return await decide_tool_approval(topic=self.t1, message_id=str(row.id), call_id=call_id, user=user, decision=decision, always=always)
 
-    async def state(self, row, call_id="c1"):
-        from chat.services import approval_state
-        return await approval_state(str(row.id), call_id)
 
-    async def test_pending_then_allowed_by_a_member_and_the_worker_sees_it(self):
-        row = await self.pending_row()
-        self.assertEqual(await self.state(row), {"status": "pending", "always": False})
-        outcome = await self.decide(row, self.sara, "allow")
-        self.assertEqual((outcome["status"], outcome["approval"]["decided_by_name"]), ("allowed", "sara"))
-        self.assertEqual(await self.state(row), {"status": "allowed", "always": False})
-        self.assertEqual(len(self.events("tool_approval_decided")), 1)
+APPROVAL_PENDING = [dict(APPROVAL, kind="approval")]
+QUESTION = {"call_id": "q1", "question": "Overwrite report.md?", "options": ["Yes", "No"]}
+DONE_SSE = [{"type": "message_delta", "delta": "pushed. "},
+            {"type": "message_done", "content": "All written.", "output_type": "text", "render_as": "text"}]
+
+
+class PausedRelayTests(PausedRunFixture):
+    """message_paused parks the reply with its job; PAUSED is not an orphan."""
+
+    async def test_a_pause_parks_the_reply_and_hands_the_job_to_the_state(self):
+        from nucleus.models import PausedRun
+        row = await self.run_paused([{"type": "approval_requested", "id": "m", "approval": APPROVAL}], APPROVAL_PENDING)
+        self.assertEqual(row.status, "paused")
+        self.assertEqual(row.content, "about to act ")  # what streamed is kept
+        self.assertEqual(row.metadata["approvals"][0]["status"], "pending")
+        run = await sync_to_async(lambda: PausedRun.objects.get(message_id=str(row.id)))()
+        self.assertEqual(run.job, FakeClient.posted[-1])  # the resume re-sends THIS
+        self.assertEqual(self.events("message_paused"), [{"type": "message_paused", "id": str(row.id)}])
+        self.assertEqual(len(self.events("tool_approval")), 1)
+
+    async def test_a_paused_reply_is_not_reaped_as_an_orphan(self):
+        from datetime import timedelta as _td
+        from django.utils import timezone as _tz
+        from chat.services import reap_orphaned_replies
+        row = await self.run_paused([{"type": "approval_requested", "id": "m", "approval": APPROVAL}], APPROVAL_PENDING)
+        await sync_to_async(lambda: ChatMessage.objects.filter(id=row.id).update(created_at=_tz.now() - _td(seconds=600)))()
+        failed = await sync_to_async(reap_orphaned_replies)(str(self.t1.id))
+        self.assertEqual(failed, [])  # parked on purpose, however long the person takes
         await sync_to_async(row.refresh_from_db)()
-        self.assertEqual(row.metadata["approvals"][0]["status"], "allowed")
+        self.assertEqual(row.status, "paused")
 
-    async def test_denied_and_the_worker_sees_it(self):
-        row = await self.pending_row()
-        await self.decide(row, self.owner, "deny")
-        self.assertEqual((await self.state(row))["status"], "denied")
+    async def test_a_question_is_recorded_and_published(self):
+        row = await self.run_paused([{"type": "question_asked", "id": "m", "question": QUESTION}],
+                                    [dict(QUESTION, kind="question")])
+        self.assertEqual(row.metadata["questions"][0]["question"], "Overwrite report.md?")
+        published = self.events("question_asked")
+        self.assertEqual(published[0]["question"]["options"], ["Yes", "No"])
+
+
+class ToolApprovalDecisionTests(PausedRunFixture):
+    """Allow, deny, or allow always on a PAUSED run — under persona.approve_run;
+    always also needs persona.update. When every pending call is decided, the
+    run RESUMES with the decisions (Step 2 pause-and-resume)."""
+
+    async def paused_row(self):
+        return await self.run_paused([{"type": "approval_requested", "id": "m", "approval": APPROVAL}], APPROVAL_PENDING)
+
+    async def test_allow_by_a_member_resumes_the_run_with_the_decision(self):
+        from nucleus.models import PausedRun
+        row = await self.paused_row()
+        FakeClient.responses = [FakeResponse(sse(*DONE_SSE))]
+        outcome = await self.decide(row, self.sara, "allow")
+        self.assertEqual((outcome["status"], outcome["resumed"]), ("allowed", True))
+        self.assertEqual(len(self.events("tool_approval_decided")), 1)
+        await self.wait_for_status(row.id, "completed")
+        resumed_job = FakeClient.posted[-1]
+        self.assertEqual(resumed_job["msg_id"], str(row.id))  # same reply, continued
+        self.assertEqual(resumed_job["resume"]["state"], "STATE-JSON")
+        self.assertEqual(resumed_job["resume"]["role"], "STANDARD")
+        self.assertEqual(resumed_job["resume"]["approvals"]["c1"]["decision"], "allow")
+        self.assertEqual(resumed_job["message"], "chart please")  # the original job, re-sent
+        await sync_to_async(row.refresh_from_db)()
+        self.assertEqual((row.status, row.content), ("completed", "All written."))
+        self.assertEqual(row.metadata["approvals"][0]["status"], "allowed")
+        exists = await sync_to_async(lambda: PausedRun.objects.filter(message_id=str(row.id)).exists())()
+        self.assertFalse(exists)  # the parked state is consumed
+
+    async def test_deny_also_resumes_and_the_engine_words_the_refusal(self):
+        row = await self.paused_row()
+        FakeClient.responses = [FakeResponse(sse(*DONE_SSE))]
+        outcome = await self.decide(row, self.owner, "deny")
+        self.assertEqual((outcome["status"], outcome["resumed"]), ("denied", True))
+        await self.wait_for_status(row.id, "completed")
+        self.assertEqual(FakeClient.posted[-1]["resume"]["approvals"]["c1"]["decision"], "deny")
 
     async def test_always_writes_the_level_onto_the_persona_and_needs_persona_update(self):
         from chat.services import ApprovalError
-        row = await self.pending_row()
+        row = await self.paused_row()
         with self.assertRaises(ApprovalError) as ctx:
             await self.decide(row, self.sara, "allow", always=True)  # a member may allow, not change the persona
         self.assertEqual(ctx.exception.status, 403)
-        self.assertEqual((await self.state(row))["status"], "pending")
+        FakeClient.responses = [FakeResponse(sse(*DONE_SSE))]
         outcome = await self.decide(row, self.owner, "allow", always=True)
         self.assertTrue(outcome["approval"]["always"])
-        self.assertEqual(await self.state(row), {"status": "allowed", "always": True})
+        await self.wait_for_status(row.id, "completed")
         await sync_to_async(self.persona_sara.refresh_from_db)()
         self.assertEqual(self.persona_sara.tool_levels, {"shell/run_command": "auto"})
 
     async def test_a_viewer_cannot_decide_and_a_decision_is_final(self):
         from chat.services import ApprovalError
-        row = await self.pending_row()
+        row = await self.paused_row()
         with self.assertRaises(ApprovalError) as ctx:
             await self.decide(row, self.vera, "allow")
         self.assertEqual(ctx.exception.status, 403)
+        FakeClient.responses = [FakeResponse(sse(*DONE_SSE))]
         await self.decide(row, self.owner, "deny")
+        await self.wait_for_status(row.id, "completed")
         with self.assertRaises(ApprovalError) as ctx:
             await self.decide(row, self.owner, "allow")
-        self.assertEqual(ctx.exception.status, 409)
+        self.assertEqual(ctx.exception.status, 409)  # consumed — nothing is waiting
+        row2 = await self.paused_row()
         with self.assertRaises(ApprovalError) as ctx:
-            await self.decide(row, self.owner, "allow", call_id="nope")
+            await self.decide(row2, self.owner, "allow", call_id="nope")
         self.assertEqual(ctx.exception.status, 404)
         with self.assertRaises(ApprovalError) as ctx:
-            await self.decide(row, self.owner, "maybe")
+            await self.decide(row2, self.owner, "maybe")
         self.assertEqual(ctx.exception.status, 400)
 
-    async def test_a_stopped_reply_answers_the_worker_with_stopped(self):
-        row = await self.pending_row()
-        await self.signals.request_stop(str(row.id))
-        self.assertEqual((await self.state(row))["status"], "stopped")
-        self.assertEqual((await self.state(row, "unknown"))["status"], "stopped")
-
-    async def test_an_unknown_call_is_pending_until_the_relay_has_stored_it(self):
-        row = await self.pending_row()
-        self.assertEqual((await self.state(row, "not-yet"))["status"], "pending")
+    async def test_the_run_resumes_only_when_every_pending_call_is_decided(self):
+        """An approval AND a question pend together: the first decision parks,
+        the answer completes the set and fires ONE resume with both results."""
+        from chat.services import answer_question
+        row = await self.run_paused(
+            [{"type": "approval_requested", "id": "m", "approval": APPROVAL},
+             {"type": "question_asked", "id": "m", "question": QUESTION}],
+            [dict(APPROVAL, kind="approval"), dict(QUESTION, kind="question")],
+        )
+        posted_before = len(FakeClient.posted)
+        outcome = await self.decide(row, self.owner, "allow")
+        self.assertFalse(outcome["resumed"])  # the question still waits
+        self.assertEqual(len(FakeClient.posted), posted_before)
+        FakeClient.responses = [FakeResponse(sse(*DONE_SSE))]
+        outcome = await answer_question(topic=self.t1, message_id=str(row.id), call_id="q1",
+                                        user=self.sara, answer="Yes, overwrite it")
+        self.assertTrue(outcome["resumed"])
+        await self.wait_for_status(row.id, "completed")
+        resume = FakeClient.posted[-1]["resume"]
+        self.assertEqual(resume["approvals"]["c1"]["decision"], "allow")
+        self.assertEqual(resume["answers"]["q1"], "Yes, overwrite it")
+        await sync_to_async(row.refresh_from_db)()
+        self.assertEqual(row.metadata["questions"][0]["status"], "answered")
 
 
 # ── W4 Routines ───────────────────────────────────────────────────────────────
@@ -1083,13 +1192,15 @@ class RoutineDirectiveTests(SimpleTestCase):
         d = MessageDirectives("/weekly-digest @Sara")
         self.assertEqual((d.routine_name, d.message_without_routine), ("weekly-digest", "@Sara"))
 
-    def test_paths_swarm_and_mid_word_slashes_are_not_routines(self):
+    def test_paths_and_mid_word_slashes_are_not_routines(self):
         d = MessageDirectives("@Sara look at /etc/hosts and 50/50 odds")
         self.assertIsNone(d.routine_name)
         self.assertEqual(d.clean_message, "@Sara look at /etc/hosts and 50/50 odds")
+        # /swarm is no directive any more (Step 2 ruling 1) — it is now just a
+        # slash token: a routine CANDIDATE, text unless the project names one.
         d = MessageDirectives("@A @B plan the launch /swarm")
-        self.assertTrue(d.swarm)
-        self.assertIsNone(d.routine_name)
+        self.assertFalse(hasattr(d, "swarm"))
+        self.assertEqual(d.routine_name, "swarm")
         self.assertIsNone(MessageDirectives("@Sara /Weekly_Digest go").routine_name)  # not the slug alphabet
 
     def test_only_the_first_token_counts_and_the_other_directives_still_parse(self):
@@ -1109,7 +1220,7 @@ class RoutineSendTests(MentionRightFixture):
         seed_builtin_routines(self.p1)
 
     def test_a_known_routine_rides_the_trigger_and_leaves_the_message(self):
-        r, trigger, _swarm, publish = self.send(self.sara, "@Sara /weekly-digest last week")
+        r, trigger, publish = self.send(self.sara, "@Sara /weekly-digest last week")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["refusals"], [])
         kwargs = trigger.call_args.kwargs
@@ -1120,7 +1231,7 @@ class RoutineSendTests(MentionRightFixture):
     def test_a_slash_word_that_is_not_a_routine_is_left_in_the_message(self):
         # A path, a quarter, a fraction: "@Sara read the file at /tmp" used to
         # strip "/tmp" and refuse Sara outright (audit, 2026-09-21).
-        r, trigger, _swarm, publish = self.send(self.sara, "@Sara read the file at /tmp")
+        r, trigger, publish = self.send(self.sara, "@Sara read the file at /tmp")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["refusals"], [])
         kwargs = trigger.call_args.kwargs
@@ -1131,14 +1242,14 @@ class RoutineSendTests(MentionRightFixture):
     def test_a_routine_from_another_project_is_not_one_here(self):
         from intelligence.services import create_routine
         create_routine(self.company, self.p2, self.owner, {"name": "elsewhere", "title": "Elsewhere", "purpose": "", "instructions": "x"})
-        r, trigger, _swarm, _publish = self.send(self.sara, "@Sara /elsewhere go")
+        r, trigger, _publish = self.send(self.sara, "@Sara /elsewhere go")
         self.assertEqual(r.json()["refusals"], [])
         self.assertIsNone(trigger.call_args.kwargs["routine"])
         # The word stays in what Sara is asked, because here it is just a word.
         self.assertEqual(trigger.call_args.kwargs["user_message"], "@Sara /elsewhere go")
 
     def test_a_slash_token_without_a_mention_is_just_a_message(self):
-        r, trigger, _swarm, publish = self.send(self.sara, "/weekly-digest is what we call it")
+        r, trigger, publish = self.send(self.sara, "/weekly-digest is what we call it")
         self.assertEqual((r.status_code, r.json()["refusals"]), (200, []))
         trigger.assert_not_called()
         self.assertEqual(self.refused_events(publish), [])
@@ -1202,7 +1313,7 @@ class RunOwnershipTests(RelayFixture):
         self.assertIn("called the persona", r.json()["detail"])
 
     def test_a_send_names_the_sender_as_the_caller(self):
-        _r, trigger, _swarm, _publish = self.send(self.sara, "@Sara hi")
+        _r, trigger, _publish = self.send(self.sara, "@Sara hi")
         self.assertEqual(trigger.call_args.kwargs["triggered_by"].id, self.sara.id)
 
     async def test_an_approved_plan_runs_for_the_person_who_asked(self):
@@ -1306,7 +1417,8 @@ class NudgeRelayTests(RelayFixture):
         # The nudge is queued from the stream hook -- the reply row exists by then
         # and the run has not ended, which is the case under test, with no race.
         async def nudge_mid_run():
-            pending = await sync_to_async(lambda: ChatMessage.objects.filter(topic=self.t1, status="pending").first())()
+            pending = await sync_to_async(lambda: ChatMessage.objects.filter(
+                topic=self.t1, status__in=["pending", "streaming"]).first())()
             self.assertIsNotNone(pending)
             await self.signals.add_nudge(str(pending.id), {"text": "and cite it", "user_id": str(self.owner.id), "name": "Owner"})
 
@@ -1321,38 +1433,127 @@ class NudgeRelayTests(RelayFixture):
         self.assertEqual([e for e in self.published if e.get("type") == "message" and e.get("content") == "and cite it"][0]["sender_type"], "human")
 
 
-class SwarmSafetyTests(MentionRightFixture):
-    """A gate that holds alone must hold in company: a swarm run cannot ask for a plan, so it refuses one."""
-
-    def test_a_gated_persona_refuses_the_swarm_rather_than_acting_unapproved(self):
-        from nucleus.models import Persona
-        Persona.objects.filter(id=self.persona_bob.id).update(acts_after_approval=True)
-        r, trigger, swarm, publish = self.send(self.sara, "@Sara @Bob ship it /swarm")
-        self.assertEqual(r.status_code, 200, r.content)
-        swarm.assert_not_awaited()
-        trigger.assert_not_awaited()
-        refusals = r.json()["refusals"]
-        self.assertEqual({x["name"] for x in refusals}, {"Sara", "Bob"})
-        self.assertEqual({x["code"] for x in refusals}, {"gated_in_swarm"})
-        self.assertIn("@Bob", refusals[0]["message"])
-        self.assertIn("on their own", refusals[0]["message"])
-        # The sender is told in the topic as well as in the response.
-        self.assertTrue(self.refused_events(publish))
-
-    def test_ungated_personas_still_swarm(self):
-        r, trigger, swarm, _ = self.send(self.sara, "@Sara @Bob ship it /swarm")
-        self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(swarm.await_count, 1)
-        self.assertEqual(r.json()["refusals"], [])
+class GatePreservationTests(MentionRightFixture):
+    """The preflight gate holds for every mention shape. (The swarm road that
+    used to bypass it is deleted — Step 2 ruling 1 — so a multi-mention is now
+    several ordinary runs, each carrying its own gate.)"""
 
     def test_a_gated_persona_mentioned_alone_still_proposes(self):
         from nucleus.models import Persona
         Persona.objects.filter(id=self.persona_bob.id).update(acts_after_approval=True)
-        r, trigger, swarm, _ = self.send(self.sara, "@Bob ship it")
+        r, trigger, _ = self.send(self.sara, "@Bob ship it")
         self.assertEqual(r.status_code, 200, r.content)
-        swarm.assert_not_awaited()
         self.assertEqual(trigger.await_count, 1)
         self.assertEqual(r.json()["refusals"], [])
+
+    def test_a_gated_persona_in_a_multi_mention_runs_with_its_gate_intact(self):
+        from nucleus.models import Persona
+        Persona.objects.filter(id=self.persona_bob.id).update(acts_after_approval=True)
+        r, trigger, _ = self.send(self.sara, "@Sara @Bob ship it")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()["refusals"], [])
+        self.assertEqual(trigger.await_count, 2)  # two singles — the relay gates each
+
+
+# ── Step 3 ───────────────────────────────────────────────────────────────────────
+
+class QuestionAnswerEndpointTests(PausedRunFixture):
+    """Item 5's HTTP half (Step 3): the question card POSTs the answer here."""
+
+    def answer_path(self, row, call_id="q1"):
+        return f"/api/v1/projects/{self.p1.id}/channels/{self.c1.id}/topics/{self.t1.id}/messages/{row.id}/questions/{call_id}/"
+
+    async def test_the_answer_resumes_the_run(self):
+        row = await self.run_paused([{"type": "question_asked", "id": "m", "question": QUESTION}],
+                                    [dict(QUESTION, kind="question")])
+        FakeClient.responses = [FakeResponse(sse(*DONE_SSE))]
+        r = await sync_to_async(self.call)("post", self.answer_path(row), self.sara, {"text": "Yes, overwrite it"})
+        self.assertEqual(r.status_code, 200, r.content)
+        body = r.json()
+        self.assertEqual((body["status"], body["resumed"]), ("answered", True))
+        await sync_to_async(row.refresh_from_db)()
+        self.assertEqual(row.metadata["questions"][0]["status"], "answered")
+
+    async def test_a_message_with_nothing_waiting_answers_409(self):
+        msg = await sync_to_async(create_ai_message_for_tests)(self)
+        r = await sync_to_async(self.call)("post", self.answer_path(type("R", (), {"id": msg["id"]})()), self.sara, {"text": "Yes"})
+        self.assertEqual(r.status_code, 409, r.content)
+
+
+def create_ai_message_for_tests(fixture):
+    from chat.services import create_ai_message
+    return create_ai_message(fixture.company, fixture.p1, fixture.t1, fixture.persona_sara)
+
+
+class PauseExpiryTests(MentionRightFixture):
+    """Change 9 (Step 3): a paused run older than 24h resumes with deny /
+    no-answer, so the reply completes instead of hanging forever."""
+
+    def park(self, hours_old: float, pending):
+        from datetime import timedelta
+        from django.utils import timezone
+        from chat.services import create_ai_message
+        from nucleus.models import ChatMessage, PausedRun
+        msg = create_ai_message(self.company, self.p1, self.t1, self.persona_sara)
+        ChatMessage.objects.filter(id=msg["id"]).update(status=ChatMessage.Status.PAUSED)
+        run = PausedRun.objects.create(
+            message_id=msg["id"], topic_id=str(self.t1.id), persona_id=str(self.persona_sara.id),
+            state="STATE-JSON", pending=pending, role="STANDARD", job={"msg_id": msg["id"]},
+        )
+        PausedRun.objects.filter(id=run.id).update(created_at=timezone.now() - timedelta(hours=hours_old))
+        run.refresh_from_db()
+        return run
+
+    def test_an_old_pause_gets_deny_and_no_answer_and_resumes(self):
+        from unittest.mock import AsyncMock
+        from chat.tasks import EXPIRED_APPROVAL_REASON, EXPIRED_QUESTION_ANSWER, expire_paused_runs
+        old = self.park(25, [{"call_id": "c1", "tool": "run_command", "kind": "approval"},
+                             {"call_id": "q1", "question": "Overwrite?", "kind": "question"}])
+        young = self.park(1, [{"call_id": "c9", "tool": "run_command", "kind": "approval"}])
+        with patch("chat.relay.resume_paused_run", new_callable=AsyncMock) as resume:
+            out = expire_paused_runs()
+        self.assertEqual(out, "expired 1, resumed 1")
+        resume.assert_awaited_once_with(old.message_id)
+        old.refresh_from_db()
+        self.assertEqual(old.decisions["c1"]["decision"], "deny")
+        self.assertEqual(old.decisions["c1"]["reason"], EXPIRED_APPROVAL_REASON)
+        self.assertEqual(old.decisions["q1"]["answer"], EXPIRED_QUESTION_ANSWER)
+        young.refresh_from_db()
+        self.assertEqual(young.decisions, {})  # not its time yet
+
+    def test_a_decision_someone_already_made_is_kept(self):
+        from unittest.mock import AsyncMock
+        from chat.tasks import expire_paused_runs
+        old = self.park(25, [{"call_id": "c1", "tool": "run_command", "kind": "approval"},
+                             {"call_id": "c2", "tool": "write_file", "kind": "approval"}])
+        from nucleus.models import PausedRun
+        PausedRun.objects.filter(id=old.id).update(decisions={"c1": {"kind": "approval", "decision": "allow"}})
+        with patch("chat.relay.resume_paused_run", new_callable=AsyncMock):
+            expire_paused_runs()
+        old.refresh_from_db()
+        self.assertEqual(old.decisions["c1"]["decision"], "allow")  # the person's call stands
+        self.assertEqual(old.decisions["c2"]["decision"], "deny")
+
+
+class Step3EmbedPayloadTests(RelayFixture):
+    """Change 10.3 + change 8: the message embed carries used_tools and the
+    project's embedder spec."""
+
+    async def test_the_embed_payload_carries_used_tools_and_the_embedder(self):
+        from nucleus.models import Project
+        spec = {"provider": "fastembed", "model_id": "custom-model"}
+        await sync_to_async(lambda: Project.objects.filter(id=self.p1.id).update(embedder=spec))()
+        await sync_to_async(self.p1.refresh_from_db)()
+        with patch("chat.nexus_ai.NexusAIClient.embed_message", new_callable=AsyncMock) as embed:
+            await self.run_single(FakeResponse(sse(
+                {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text",
+                 "used_tools": ["web_search"]},
+            )))
+            await asyncio.sleep(0.1)  # the embed rides a fire-and-forget task
+        payload = embed.call_args.args[0]
+        self.assertEqual(payload["used_tools"], ["web_search"])
+        self.assertEqual(payload["embedder"], spec)
+        self.assertEqual(payload["content"], "hi")
 
 
 class MessageSearchTests(MentionRightFixture):

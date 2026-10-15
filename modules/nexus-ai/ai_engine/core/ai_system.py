@@ -37,8 +37,14 @@ from ai_engine.context.context_builder import ContextBuilder
 from ai_engine.context.history_policy import HistoryPolicy
 from ai_engine.core.config import EngineSettings
 from ai_engine.core.nucleus_client import NucleusClient
+from ai_engine.core.turn_rules import (
+    acts_with_tools,
+    approved_plan_section,
+    step_context_section,
+)
 from ai_engine.output_types import finalise_reply, resolve_output_spec
 from ai_engine.output_types.prompting import output_instruction_block
+from ai_engine.output_types.registry import OutputTypeRegistry
 from ai_engine.core.specs import (
     LoadedSet,
     ModelRole,
@@ -54,6 +60,7 @@ from ai_engine.pydantic_ai_system.agent_builder import AgentBuilder
 from ai_engine.pydantic_ai_system.message_converter import MessageConverter
 from ai_engine.pydantic_ai_system.model_factory import ModelFactory
 from ai_engine.pydantic_ai_system.reply_generator import ReplyGenerator
+from ai_engine.pydantic_ai_system.tools.call_persona import call_persona_toolset
 from ai_engine.pydantic_ai_system.tools.nudge_gate import NudgeGate
 from ai_engine.pydantic_ai_system.tools.registry import ToolRegistry
 from ai_engine.pydantic_ai_system.tools.toolset_builder import ToolsetBuilder
@@ -141,6 +148,22 @@ class PydanticAISystem:
             loaded = self._registry.tools_for(persona, job)
             clearances = frozenset(job.topic_tool_clearances or ())
 
+            # ── Layer 6 (preflight, legacy plan_turn ported): a gated
+            # persona's turn that WOULD act proposes first — one turn with no
+            # capability tools, answered as the preflight output type. The
+            # engine owns the acts-at-all judgement; nucleus only flags.
+            preflight_turn = (bool(job.preflight) and not job.approved_plan
+                              and acts_with_tools(catalog))
+            if preflight_turn:
+                catalog = []
+                loaded = LoadedSet(tool_ids=(), catalog_hash=loaded.catalog_hash)
+
+            # Item 46 (Layer 6): delegation — only at depth 0, never on a
+            # plan-only preflight turn (a proposal must not act or delegate).
+            delegate = (call_persona_toolset(job, self._settings)
+                        if persona.delegation_enabled and job.delegation_depth == 0
+                        and not preflight_turn else None)
+
             # W8: only a run someone can steer polls for nudges; the gate only
             # fires after tool calls, so it rides with the capabilities.
             nudge_gate = (NudgeGate(job.msg_id,
@@ -167,11 +190,25 @@ class PydanticAISystem:
 
             plan = self._layout.build(persona, bundle, job.message, catalog=catalog)
 
+            # ── Layer 6 (W6 + preflight): the approved plan rides PROTECTED;
+            # a runbook step's previous output rides clipped (turn_rules).
+            extra_sections = tuple(section for section in (
+                approved_plan_section(job.approved_plan),
+                step_context_section(job.step_context,
+                                     self._settings.runbook_step_context_max),
+            ) if section is not None)
+            if extra_sections:
+                plan = dc_replace(plan, instructions=plan.instructions + extra_sections)
+
             # ── item 23 (Layer 4): what the reply should LOOK like ──────────
             # explicit non-auto from the trigger wins; else the classifier;
             # else text. The chosen type's contract rides as its own section.
-            resolved_type, resolved_spec = await resolve_output_spec(
-                job.output_type, job.message, bundle.history)
+            # A preflight turn is ALWAYS the preflight type (Layer 6).
+            if preflight_turn:
+                resolved_type, resolved_spec = "preflight", OutputTypeRegistry.get("preflight")
+            else:
+                resolved_type, resolved_spec = await resolve_output_spec(
+                    job.output_type, job.message, bundle.history)
             block = output_instruction_block(
                 resolved_spec.system_instruction if resolved_spec else None)
             if block:
@@ -264,7 +301,7 @@ class PydanticAISystem:
                 async for event in self._generator.generate(
                     request, capabilities=build_caps(loaded, reply_role),
                     catalog_hash=loaded.catalog_hash, allow_escalation=True,
-                    nudges=nudge_gate,
+                    nudges=nudge_gate, delegate=delegate,
                 ):
                     yield event
                 escalate = self._generator.escalation()
@@ -290,7 +327,7 @@ class PydanticAISystem:
                 async for event in self._generator.generate(
                     request, capabilities=build_caps(loaded, reply_role),
                     catalog_hash=loaded.catalog_hash, handover=escalate,
-                    nudges=nudge_gate,
+                    nudges=nudge_gate, delegate=delegate,
                 ):
                     yield event
             elif not reply_done:
@@ -301,7 +338,7 @@ class PydanticAISystem:
                 async for event in self._generator.generate(
                     request, capabilities=build_caps(loaded, reply_role),
                     resume=job.resume, catalog_hash=loaded.catalog_hash,
-                    nudges=nudge_gate,
+                    nudges=nudge_gate, delegate=delegate,
                 ):
                     yield event
         except asyncio.CancelledError:

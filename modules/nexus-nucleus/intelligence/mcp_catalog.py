@@ -14,6 +14,18 @@ it does not quietly rot.
 # id: stable, referenced by the app. url: what goes in the create dialog, with
 # {placeholders} the person must replace. needs: what they should have ready
 # BEFORE clicking add -- a token, a workspace name -- never the secret itself.
+#
+# oauth_preset (Step 6 Part C, ruling 8 -- the famous three ONLY: GitHub,
+# Google Drive, Atlassian): the oauth_config the app pre-fills when the person
+# picks "Connect with NeuralOps" instead of pasting their own app. Endpoints
+# and scopes are the provider's public, stable values; client_id is the shared
+# vendor "NeuralOps" app's PUBLIC identifier, filled in once those apps are
+# registered with each provider (portal-side work, tracked in the doc) -- an
+# empty client_id means the app offers only paste-your-own for now. The
+# client SECRET never appears here and never ships in the image: redirect_mode
+# "portal_relay" sends the provider's bounce through the portal, which is
+# where any secret-requiring exchange would live. These are CONTENT, like the
+# rest of the catalog -- copied into the server row's oauth_config at create.
 MCP_CATALOG = [
     {
         "id": "github",
@@ -27,6 +39,19 @@ MCP_CATALOG = [
         "auth_type": "static_secrets",
         "needs": ["A GitHub personal access token with the scopes you want the persona to have"],
         "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+        # GitHub's token exchange DEMANDS the client secret even for PKCE
+        # clients, so this preset only becomes connectable with the
+        # relay-exchange variant (specced in NUCLEUS-REVAMP, built when the
+        # vendor app is registered). Kept here so the shape ships once.
+        "oauth_preset": {
+            "client_id": "",
+            "authorize_endpoint": "https://github.com/login/oauth/authorize",
+            "token_endpoint": "https://github.com/login/oauth/access_token",
+            "scopes": ["repo", "read:org"],
+            "authorize_params": {},
+            "redirect_mode": "portal_relay",
+            "token_env_var": "GITHUB_TOKEN",
+        },
     },
     {
         "id": "atlassian",
@@ -40,6 +65,16 @@ MCP_CATALOG = [
         "auth_type": "oauth2",
         "needs": ["An Atlassian account with access to the site you want to reach"],
         "docs": "https://support.atlassian.com/atlassian-rovo-mcp-server/",
+        "oauth_preset": {
+            "client_id": "",
+            "authorize_endpoint": "https://auth.atlassian.com/authorize",
+            "token_endpoint": "https://auth.atlassian.com/oauth/token",
+            # offline_access is what makes Atlassian hand back a refresh_token.
+            "scopes": ["read:jira-work", "write:jira-work", "read:confluence-content.all", "offline_access"],
+            "authorize_params": {"audience": "api.atlassian.com", "prompt": "consent"},
+            "redirect_mode": "portal_relay",
+            "token_env_var": "ATLASSIAN_TOKEN",
+        },
     },
     {
         "id": "postgres",
@@ -105,6 +140,17 @@ MCP_CATALOG = [
         "auth_type": "oauth2",
         "needs": ["A Google Cloud project with the Drive API on, and its OAuth client"],
         "docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive",
+        "oauth_preset": {
+            "client_id": "",
+            "authorize_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_endpoint": "https://oauth2.googleapis.com/token",
+            "scopes": ["https://www.googleapis.com/auth/drive.readonly"],
+            # access_type=offline + prompt=consent is what makes Google hand
+            # back a refresh_token (it omits one otherwise).
+            "authorize_params": {"access_type": "offline", "prompt": "consent"},
+            "redirect_mode": "portal_relay",
+            "token_env_var": "GDRIVE_TOKEN",
+        },
     },
     {
         "id": "git",

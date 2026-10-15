@@ -9,6 +9,7 @@ chat history.
 """
 
 import os
+from datetime import datetime
 from pydantic import Field
 from ninja import Router, Schema
 from ninja.errors import HttpError
@@ -87,6 +88,10 @@ class MCPServerInternal(Schema):
     # env instead, so this is only consumed on the non-stdio path).
     auth_type: str = "static_secrets"
     token_env_var: str = "OAUTH_ACCESS_TOKEN"
+    # Step 6 (change 6): the STORED tool list [{name, description, read_only}]
+    # — the engine builds its catalog from it (one line per tool, reads known
+    # before dialing) and tolerates drift against the live server.
+    tools: list = Field(default_factory=list)
 
 
 class PromptInternal(Schema):
@@ -156,6 +161,15 @@ class PersonaInternal(Schema):
     prompt: PromptInternal
     model: ModelInternal
     advisor_model: Optional[ModelInternal] = None
+    # Step 3 (changes 3 + 14.6): the model seats and the supervisor checkbox.
+    # router_model arrives RESOLVED — the persona's own seat, else the
+    # company default (CompanyAIConfig.default_router_model).
+    router_model: Optional[ModelInternal] = None
+    deep_model: Optional[ModelInternal] = None
+    delegation_enabled: bool = False
+    # Step 3 (change 7): tool mounting + who decides held calls.
+    tool_access: str = "all"
+    approval_scope: str = "topic"
     mcp_servers: list[MCPServerInternal] = Field(default_factory=list)
     capabilities: list[CapabilityInternal] = Field(default_factory=list)
     temperature: float
@@ -231,6 +245,8 @@ class HistoryMessageInternal(Schema):
     output_type: str = "text"
     stopped: bool = False   # the reader ended it; content is a partial
     sequence: int
+    # Step 3 (change 2): the engine drops non-COMPLETED rows from prompts.
+    status: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -281,6 +297,7 @@ def _mcp_internal(server, needs_reauth: bool) -> MCPServerInternal:
         needs_reauth=needs_reauth,
         auth_type=server.auth_type,
         token_env_var=(server.oauth_config or {}).get("token_env_var", "OAUTH_ACCESS_TOKEN"),
+        tools=server.tools or [],
     )
 
 
@@ -306,7 +323,7 @@ def get_persona_internal(request, persona_id: str):
 
     persona = (
         Persona.objects.filter(id=persona_id, is_active=True)
-        .select_related("prompt", "model", "advisor_model", "project")
+        .select_related("prompt", "model", "advisor_model", "router_model", "deep_model", "project")
         .prefetch_related("mcp_servers")
         .first()
     )
@@ -334,6 +351,24 @@ def get_persona_internal(request, persona_id: str):
     advisor = persona.advisor_model
     if advisor is not None and not advisor.is_active:
         advisor = None
+
+    # Step 3 (change 3): the seats degrade like the advisor — a deleted model
+    # empties the seat rather than failing the persona. An empty router seat
+    # is filled by the company default; the engine's fall-through covers the
+    # rest (no router + a deep seat → STANDARD screens).
+    router = persona.router_model
+    if router is not None and not router.is_active:
+        router = None
+    if router is None:
+        try:
+            company_default = persona.company.ai_config.default_router_model
+        except Exception:  # noqa: BLE001 — no ai_config row yet
+            company_default = None
+        if company_default is not None and company_default.is_active:
+            router = company_default
+    deep = persona.deep_model
+    if deep is not None and not deep.is_active:
+        deep = None
 
     # Per-server, in a loop -- this is the code path that was capped at one
     # entry by AIAgent.mcp_server being a single FK. refresh_if_needed()
@@ -363,6 +398,11 @@ def get_persona_internal(request, persona_id: str):
         ),
         model=_model_internal(persona.model),
         advisor_model=_model_internal(advisor) if advisor else None,
+        router_model=_model_internal(router) if router else None,
+        deep_model=_model_internal(deep) if deep else None,
+        delegation_enabled=persona.delegation_enabled,
+        tool_access=persona.tool_access or "all",
+        approval_scope=persona.approval_scope or "topic",
         mcp_servers=mcp_servers,
         capabilities=capabilities,
         temperature=persona.temperature,
@@ -390,14 +430,55 @@ def get_routine_internal(request, routine_id: str):
     )
 
 
-@router.get("/messages/{message_id}/approvals/{call_id}/")
-async def get_approval_state_internal(request, message_id: str, call_id: str):
+# (The old GET /messages/{id}/approvals/{call_id}/ poll is gone — Step 2:
+# the new engine PAUSES instead of polling; see the pause endpoint below.)
+
+
+class PausePendingIn(Schema):
+    """One call waiting on a person — the engine's PendingApproval shape."""
+    call_id: str
+    tool: str = ""
+    capability_id: str = ""
+    args_preview: str = ""
+    kind: str = "approval"  # "approval" | "question" (item 5)
+
+
+class PauseStateIn(Schema):
+    """The engine's pause POST (item 2) — ai_engine/core/nucleus_client.py:save_pause."""
+    job_id: str = ""
+    topic_id: str = ""
+    persona_id: str = ""
+    state: str
+    catalog_hash: str = ""
+    pending: list[PausePendingIn] = Field(default_factory=list)
+    role: str = "STANDARD"
+
+
+@router.post("/messages/{message_id}/pause/", response={201: dict})
+def save_pause_state(request, message_id: str, payload: PauseStateIn):
     """
-    What a held tool call has become -- polled by nexus-ai (apps/managers/
-    approvals.py) while the call waits: pending | allowed | denied | stopped.
+    Step 2: the engine parks a run here BEFORE its stream ends with
+    message_paused, so a decision can never race an unsaved state. One pause
+    per reply — a second POST replaces the first (same run, later point).
+    The relay adds the original trigger job to the row when message_paused
+    arrives; decisions land in chat/approvals.py; the resume consumes it.
     """
-    from chat.services import approval_state
-    return await approval_state(message_id, call_id)
+    from nucleus.models import PausedRun
+
+    PausedRun.objects.update_or_create(
+        message_id=message_id,
+        defaults={
+            "job_id": payload.job_id,
+            "topic_id": payload.topic_id,
+            "persona_id": payload.persona_id,
+            "state": payload.state,
+            "catalog_hash": payload.catalog_hash,
+            "pending": [p.dict() for p in payload.pending],
+            "role": payload.role or "STANDARD",
+            "decisions": {},
+        },
+    )
+    return 201, {"ok": True, "pending": len(payload.pending)}
 
 
 @router.get("/messages/{message_id}/nudges/")
@@ -509,6 +590,7 @@ def get_topic_history_internal(
             output_type=metadata.get("output_type", "text"),
             stopped=bool(metadata.get("stopped")),
             sequence=m.sequence,
+            status=m.status,
         ))
     return result
 
@@ -568,3 +650,96 @@ def write_recall(request, payload: RecallWriteIn):
     except ValueError as e:
         raise HttpError(400, str(e))
     return 201, {"created": len(result["created"]), "skipped": result["skipped"]}
+
+
+# ── Usage — the money tables (Step 1, docs/NUCLEUS-REVAMP.md; handoff change 1).
+# The engine POSTs one batch per reply ending — done, pause, cancel, error —
+# and bills the memory pass and delegation (message_id "<msg>:cp0") the same
+# way. Field names mirror the engine's UsageRecord dataclass exactly.
+
+class UsageRecordIn(Schema):
+    company_id: str = ""
+    project_id: str = ""
+    topic_id: str = ""
+    persona_id: str = ""
+    user_id: str = ""
+    message_id: str
+    job_id: str = ""
+    kind: str = "chat_reply"
+    model_config_id: str = ""
+    provider: str = ""
+    model_id: str = ""
+    role: str = ""
+    provider_response_id: Optional[str] = None
+    source: Optional[str] = None
+    input_tokens: int = 0
+    uncached_input_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    finish_reason: Optional[str] = None
+    estimated: bool = False
+    called_at: datetime
+    # the engine sends these as null — prices live HERE (O1); accepted so the
+    # payload validates, then ignored in favour of intelligence/pricing.py
+    cost: Optional[str] = None
+    prices_used: Optional[dict] = None
+
+
+class UsageBatchIn(Schema):
+    records: list[UsageRecordIn] = Field(default_factory=list)
+
+
+def publish_topic_usage_totals(topic_id: str) -> None:
+    """Item 47: the topic's running totals, pushed live after every insert.
+    Money is an ESTIMATE by design — the payload says so. Publish failure is
+    the relay's problem, never billing's (publish() already swallows)."""
+    from django.db.models import Count, Q, Sum
+
+    from chat.services import publish, topic_channel
+    from nucleus.models import UsageRecord
+
+    # aggregate aliases must NOT reuse column names (cost=Sum("cost") makes
+    # the Q(cost__isnull=...) filter resolve to the aggregate — FieldError)
+    totals = UsageRecord.objects.filter(topic_id=topic_id).aggregate(
+        total_in=Sum("input_tokens"),
+        total_out=Sum("output_tokens"),
+        total_cost=Sum("cost"),
+        unpriced=Count("id", filter=Q(cost__isnull=True)),
+    )
+    publish(topic_channel(topic_id), {
+        "type": "usage_totals",
+        "topic_id": topic_id,
+        "input_tokens": int(totals["total_in"] or 0),
+        "output_tokens": int(totals["total_out"] or 0),
+        "cost": str(totals["total_cost"]) if totals["total_cost"] is not None else None,
+        "unpriced_rows": int(totals["unpriced"] or 0),
+        "price_estimated": True,  # owner's ruling: never presented as confirmed
+    })
+
+
+@router.post("/usage/", response={201: dict})
+def record_usage(request, payload: UsageBatchIn):
+    """The engine's usage batch → one UsageRecord row per model call, cost
+    computed at insert (override → catalog → none) and frozen. Then the
+    affected topics' totals go out live (item 47)."""
+    from intelligence.pricing import price_record
+    from nucleus.models import UsageRecord
+
+    rows = []
+    topics = set()
+    for record in payload.records:
+        data = record.dict()
+        data.pop("cost", None)
+        data.pop("prices_used", None)
+        money = price_record(data)
+        rows.append(UsageRecord(**data, **money))
+        if record.topic_id:
+            topics.add(record.topic_id)
+    if rows:
+        UsageRecord.objects.bulk_create(rows)
+    for topic_id in topics:
+        publish_topic_usage_totals(topic_id)
+    return 201, {"ok": True, "saved": len(rows)}

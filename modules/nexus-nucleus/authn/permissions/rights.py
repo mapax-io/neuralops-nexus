@@ -37,6 +37,20 @@ REGISTRY = [
     # check in the app; nothing anywhere asks "are you the owner".
     ("role.update", ObjectType.COMPANY, ScopeType.COMPANY,
      "Change which rights a role grants. Takes effect for every holder at once."),
+    # Step 4 (docs/NUCLEUS-REVAMP.md): only RESETTING someone else's offline
+    # password needs a right. Setting your OWN is open to every signed-in
+    # person from their profile, no right involved.
+    ("company.local_password", ObjectType.COMPANY, ScopeType.COMPANY,
+     "Reset another member's offline (local) sign-in password. Everyone can "
+     "set their own in their profile without any right."),
+    # Step 6 (owner's ruling): gateway tokens are minted by FOUR roles only —
+    # company owner/admin (company-scope assignment) and project owner/admin
+    # (reach this via a PROJECT-scoped assignment, same mechanics as
+    # persona.create). The token always acts AS its person, never more.
+    ("gateway.token", ObjectType.COMPANY, ScopeType.PROJECT,
+     "Create MCP gateway tokens (use this server as a tool from Claude "
+     "Desktop, Cursor, …). Company-level holders manage every token; "
+     "project-level holders create their own."),
 
     # ── Project ─────────────────────────────────────────────────────────────
     # create/list are COMPANY-scope: there's no existing project to "reach up"
@@ -53,6 +67,13 @@ REGISTRY = [
      "Edit a project's details -- its brief (the instructions every persona "
      "in the project follows) and description. Admin-tier, like the other "
      "project-wide definitions."),
+    # Step 3 (handoff change 10, decision 8): COMPANY scope on purpose --
+    # changing a project's embedder rebuilds its vectors and locks the
+    # project meanwhile, so only a company-level Owner/Admin may do it;
+    # a project-level admin role never reaches a COMPANY-scoped right.
+    ("project.embedder", ObjectType.PROJECT, ScopeType.COMPANY,
+     "Change a project's embedding model (rebuilds the project's memory; "
+     "the project is locked while it rebuilds). Company owner/admin only."),
     ("model_config.attach", ObjectType.PROJECT, ScopeType.PROJECT,
      "Attach an already-existing model config to a project (does not create "
      "the config or touch its API key -- that's model_config.create, "
@@ -187,6 +208,14 @@ REGISTRY = [
      "Edit and delete what personas have recorded in the project's Recall."),
     ("deliverable.manage", ObjectType.DELIVERABLE, ScopeType.PROJECT,
      "Keep a rich output as a project deliverable, and delete deliverables."),
+
+    # ── Usage / money (Step 1, docs/NUCLEUS-REVAMP.md; estimates only) ──────
+    # Topic totals need no right of their own — anyone who can see the topic
+    # sees its totals. These two gate the ROLLUPS.
+    ("usage.view_project", ObjectType.PROJECT, ScopeType.PROJECT,
+     "See a project's token/cost totals, broken down per persona."),
+    ("usage.view_company", ObjectType.COMPANY, ScopeType.COMPANY,
+     "See company-wide token/cost totals across every project."),
 ]
 
 
@@ -207,8 +236,10 @@ DEFAULT_ROLE_RIGHTS = {
     "Owner": [code for code, *_ in REGISTRY],  # everything, no exceptions
 
     "Admin": [
-        "company.invite_member", "company.remove_member",
+        "company.invite_member", "company.remove_member", "company.local_password",
+        "gateway.token",
         "project.create", "project.list", "project.view", "project.archive", "project.update", "project.terminal", "project.browser",
+        "project.embedder",
         "channel.create", "channel.list", "channel.update", "channel.archive",
         "topic.create", "topic.list", "topic.update", "topic.mark_read", "topic.archive",
         "session.create", "session.close",
@@ -220,6 +251,7 @@ DEFAULT_ROLE_RIGHTS = {
         "schedule.create", "schedule.manage",
         "persona.approve_run", "routine.manage", "runbook.manage", "runbook.run",
         "hook.manage", "recall.manage", "deliverable.manage",
+        "usage.view_project", "usage.view_company",
         # project.archive/channel.archive/topic.archive are now included --
         # this reverses the old project.delete-was-Owner-only policy. Archiving
         # is reversible (soft-delete + unused Model.restore()) so it's no
