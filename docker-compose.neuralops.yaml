@@ -321,10 +321,8 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - REDIS_URL=redis://redis-dev:6379/0
-      # STEP 8 SWITCH-OVER (docs/NUCLEUS-REVAMP.md): dev now talks to the
-      # REBUILT engine (nexus-ai-new). The legacy nexus-ai-dev service stays
-      # up as a fallback during verification and is removed once Step 8 is
-      # verified. Rolling back is this one line.
+      # STEP 8 SWITCH-OVER (docs/NUCLEUS-REVAMP.md): dev talks to the
+      # REBUILT engine. The legacy service is gone from this branch.
       - NEXUS_AI_URL=http://nexus-ai-new:8000
       - CENTRIFUGO_API_URL=http://centrifugo-dev:8000/api
       # Hardcoded, NOT ${NEURALOPS_SERVER_URL} -- that variable comes from
@@ -405,54 +403,19 @@ services:
       - postgres-dev
       - redis-dev
 
-  nexus-ai-dev:
-    build:
-      context: .
-      dockerfile: neuralops/Dockerfile
-    image: neuralops:dev-local
-    profiles: ["dev"]
-    container_name: neuralops-nexus-ai-dev
-    command: ["nexus-ai-env", "python3", "-m", "uvicorn", "apps.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-    # command: ["nexus-ai-env", "tail", "-f", "/dev/null"]
-    ports:
-      - "${DEV_NEXUS_AI_HOST_PORT:-8021}:8000"
-    # host.docker.internal -- stdio MCP servers spawned as subprocesses of
-    # THIS container may target the host machine itself -- same reasoning
-    # as the existing nexus-ai-dev service in docker-compose.yaml.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      # modules/nexus-ai was renamed to modules/nexus-ai-legacy when the
-      # rebuild started (docs/NEXUS-AI-REVAMP.md §1.3). This service keeps
-      # running the LEGACY code — it is what nucleus-dev talks to until
-      # switch-over. The rebuilt module runs as nexus-ai-new below.
-      - ./modules/nexus-ai-legacy:/nexus/ai
-      - neuralops_fastembed_cache_dev:/home/nexus/.cache/fastembed
-      # Bind mount, not a named volume -- see nucleus-dev's comment above.
-      - ./projects:/nexus/projects
-      - /data/mcp-keys:/nexus/keys:ro
-    env_file:
-      - ./neuralops/secrets.env
-    environment:
-      - CHROMA_HOST=chromadb-dev
-      - CHROMA_PORT=8000
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-fastembed}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
-      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
-      - NEXUS_NUCLEUS_URL=http://nucleus-dev:8000
-    networks:
-      - neuralops-network
-    depends_on:
-      - chromadb-dev
-      - nucleus-dev
-
-  # The REBUILT nexus-ai (docs/NEXUS-AI-REVAMP.md §1.3): built from
-  # modules/nexus-ai with its own pinned dependencies — NOT the shared
-  # neuralops image. nucleus-dev still talks to nexus-ai-dev (legacy);
-  # to test this one, point nucleus-dev's NEXUS_AI_URL at
-  # http://nexus-ai-new:8000. Switch-over per §1.3 is that one line.
-  # No host port on purpose — §1.3: no request from outside is accepted;
-  # the internal key (from secrets.env) is the second lock.
+  # STEP 8 SWITCH-OVER (docs/NUCLEUS-REVAMP.md, branch step8-switchover):
+  # the legacy nexus-ai-dev service and chromadb-dev are REMOVED — dev runs
+  # the rebuilt engine only, and its vectors live in postgres (pgvector).
+  # modules/nexus-ai-legacy is deleted from the branch with `git rm` (git
+  # history keeps it). The production profile's nexus-ai/chromadb rows are
+  # rebuilt in Step 8's distribution half, when the unified image itself
+  # changes.
+  #
+  # The REBUILT nexus-ai (docs/_archive/NEXUS-AI-REVAMP.md §1.3): built from
+  # modules/nexus-ai with its own pinned dependencies (Python 3.13) — NOT
+  # the shared neuralops image. No host port on purpose — no request from
+  # outside is accepted; the internal key (from secrets.env) is the second
+  # lock.
   nexus-ai-new:
     build:
       context: ./modules/nexus-ai
@@ -591,17 +554,6 @@ services:
     networks:
       - neuralops-network
 
-  chromadb-dev:
-    image: chromadb/chroma:latest
-    profiles: ["dev"]
-    container_name: neuralops-chromadb-dev
-    environment:
-      - IS_PERSISTENT=TRUE
-    volumes:
-      - neuralops_chroma_data_dev:/chroma/chroma
-    networks:
-      - neuralops-network
-
   nginx-dev:
     image: nginx:alpine
     profiles: ["dev"]
@@ -667,8 +619,6 @@ volumes:
   neuralops_fastembed_cache:
   neuralops_postgres_data_dev:
   neuralops_redis_data_dev:
-  neuralops_chroma_data_dev:
-  neuralops_fastembed_cache_dev:
   neuralops_fastembed_cache_new:
   neuralops_projects_dev:
   neuralops_web_app_node_modules:
