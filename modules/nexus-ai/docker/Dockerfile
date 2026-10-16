@@ -13,13 +13,25 @@ RUN useradd -m -u ${UID} nexus
 WORKDIR /nexus/ai
 
 # The lock file is the full `pip freeze` of the pinned set — reproducible builds.
+# It includes torch==<ver>+cpu (the CPU-only build, ~200 MB instead of ~6 GB of
+# CUDA wheels), which only exists on PyTorch's own index — hence the extra-index-url.
+# To regenerate the lock, see docs/CHANGE-PROMPT.md (install CPU torch first,
+# then -r requirements.txt, then pip freeze).
 COPY requirements.txt requirements.lock ./
-RUN pip install --no-cache-dir -r requirements.lock
+RUN pip install --no-cache-dir -r requirements.lock \
+    --extra-index-url https://download.pytorch.org/whl/cpu
 
 COPY . .
 
 ENV PYDANTIC_AI_NO_BANNER=1 \
     PYTHONUNBUFFERED=1
+
+# /home/nexus/.cache is a named-volume mount target in compose (the
+# fastembed/huggingface model cache). A named volume only inherits the
+# image's ownership if the directory already exists in the image — without
+# this line Docker creates the mount point root-owned and the first model
+# download fails with "Permission denied" (same lesson as the unified image).
+RUN mkdir -p /home/nexus/.cache && chown -R nexus:nexus /home/nexus/.cache
 
 USER nexus
 EXPOSE 8000

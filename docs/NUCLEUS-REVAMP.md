@@ -760,7 +760,48 @@ engine-side items recorded at Step 6's close.
 Point the stack at the new engine module, retire the legacy one, ship the
 unified image.
 
----
+**Step 8 rulings (owner, 2026-10-15):** all switch-over work on branch
+`step8-switchover`, merged to dev only after verification; the legacy module
+is removed FIRST, not kept as a fallback ("we will test, check and then
+remove everything"); ONE vector database (`nexus_vectors`), shared by the
+app and the tests — a separate test DB waits until there is real data to
+protect (owner has none today).
+
+**Built, Step 8a — dev switch-over (2026-10-15):**
+
+| Piece | File | Notes |
+|---|---|---|
+| Dev points at the new engine | `docker-compose.neuralops.yaml` | nucleus-dev + nucleus-celery-dev get `NEXUS_AI_URL=http://nexus-ai-new:8000`; the legacy `nexus-ai-dev` service and `chromadb-dev` are DELETED from the file; `nexus-ai-new` gains the projects bind mount, its own fastembed cache volume, and `NEXUS_VECTOR_DB_URL` pointing at `nexus_vectors` on postgres-dev (pgvector, the same postgres as the app data) |
+| Legacy module gone | `modules/nexus-ai-legacy/` | `git rm -r` — nothing references it |
+| Unified image slimmed | `neuralops/Dockerfile` | Stage 2 (the legacy engine's venv) + its COPY + the playwright block removed — they referenced the legacy layout and broke the build; the engine now ships only from its own image (`modules/nexus-ai/docker/Dockerfile`) |
+| Engine image completed | `modules/nexus-ai/requirements.txt` + `requirements.lock` + `docker/Dockerfile` | The lock is regenerated from requirements.txt in a throwaway python:3.13-slim container (CPU torch first, from PyTorch's own index; the lock carries `torch==2.14.1+cpu`, so the Dockerfile installs with `--extra-index-url https://download.pytorch.org/whl/cpu`); `pydantic-ai-slim` gains the `duckduckgo` extra (ddgs — the local web-search tool; see errors below); the Dockerfile pre-creates `/home/nexus/.cache` nexus-owned so the mounted cache volume is writable |
+
+**Errors found and fixed on the way (each one a lesson):**
+1. **The old lock was stale** — frozen before the vector layer existed, so
+   the image had no sqlalchemy/txtai/fastembed/pgvector and the engine
+   crashed at import. Lesson: the lock must be REGENERATED whenever
+   requirements.txt changes, never hand-edited.
+2. **ddgs is not optional** — the regenerated lock lost it (it is the
+   `duckduckgo` extra of pydantic-ai-slim, pulled in the old debug container
+   by hand) and exactly 3 tool/router tests failed. Now named in
+   requirements.txt so no regeneration can lose it again.
+3. **Root-owned mounts** — the named cache volume and files written by
+   root-run containers (tests/REPORT.md) blocked the non-root engine user;
+   fixed in the image (pre-created, chowned) and on the host
+   (`chown -R 1000:1000 modules/nexus-ai`).
+4. **Compose must be run with its three `--env-file` flags** (infra/app/
+   secrets) — without them the ${POSTGRES_*} interpolations go blank and
+   compose tries to recreate the world. The file documents its own correct
+   invocation; use it verbatim.
+
+**Step 8a VERIFIED — CLOSED (owner, 2026-10-15):** engine suite
+**110 passed, 0 skipped** inside `neuralops-nexus-ai-new` — the 20 vector
+tests that were skips in the debug container now run for real against
+pgvector (reindex build-flip-drop included); nucleus regression
+**457 tests, OK** (624s) with the legacy engine and chromadb gone.
+Remaining in Step 8: live smoke with one real model key, then the
+distribution half (production profile: chromadb out, engine image in,
+.pyc-only unified image, nucleus pins frozen).
 
 ## 5. DISTRIBUTION (owner, 2026-10-14) — one app image, compiled files only
 

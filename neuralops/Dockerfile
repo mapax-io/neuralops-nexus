@@ -38,19 +38,14 @@ COPY modules/nexus-nucleus/docker/dev/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Stage 2: nexus-ai deps ───────────────────────────────────────────────────
-FROM python:3.11-slim AS nexus-ai-builder
-WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-  bash \
-  git \
-  curl \
-  build-essential libpq-dev && \
-  rm -rf /var/lib/apt/lists/*
-ENV VIRTUAL_ENV=/opt/venv/nexus-ai-env
-RUN python3 -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-COPY modules/nexus-ai/docker/dev/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Stage 2 (the nexus-ai venv) is REMOVED — Step 8 switch-over: the legacy
+# engine is gone (modules/nexus-ai-legacy deleted on the step8-switchover
+# branch), and the REBUILT engine runs from its OWN image
+# (modules/nexus-ai/docker/Dockerfile, Python 3.13 + requirements.lock) as
+# the compose service nexus-ai-new. This unified image no longer carries a
+# nexus-ai venv or the playwright browser that lived inside it. Step 8's
+# distribution half decides the FINAL shipped shape (one image or two);
+# until then the production profile's nexus-ai service stays a placeholder.
 
 # ── Stage 3: centrifugo / nexus-transport binary ────────────────────────────
 # Same build this repo already uses for modules/nexus-transport/Dockerfile —
@@ -150,7 +145,6 @@ ENV SUPABASE_URL="https://xgfsxikypxjhqlutiepw.supabase.co" \
   NEURALOPS_VERSION="0.8.0"
 
 COPY --from=nucleus-builder /opt/venv/nucleus-env /opt/venv/nucleus-env
-COPY --from=nexus-ai-builder /opt/venv/nexus-ai-env /opt/venv/nexus-ai-env
 COPY --from=transport-builder /app/nexus-transport /usr/local/bin/nexus-transport
 # NOTE: no /nexus/transport-version file -- modules/nexus-transport has no
 # VERSION file at its root (checked, doesn't exist), unlike what the old
@@ -165,14 +159,8 @@ RUN chmod +x /usr/local/bin/nexus-transport
 # wants a real browser beside the chat — tabs, logins, JavaScript; an iframe
 # cannot show google.com at all. Skip it with --build-arg BROWSER=0 and the
 # worker reports the pane as unavailable instead of failing at it.
-ARG BROWSER=1
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
-RUN if [ "$BROWSER" = "1" ]; then \
-      /opt/venv/nexus-ai-env/bin/python -m playwright install --with-deps chromium && \
-      chmod -R a+rX /opt/playwright; \
-    else \
-      echo "built without the live browser"; \
-    fi
+# (playwright/Chromium block REMOVED with the venv it lived in — the live
+# browser returns with the rebuilt engine's image in the distribution half.)
 
 
 # App code — baked in here (this is what makes the `production` compose
@@ -181,6 +169,9 @@ RUN if [ "$BROWSER" = "1" ]; then \
 # same paths at container start, shadowing this copy with live host source —
 # same image either way, dev just overlays it.
 COPY modules/nexus-nucleus/ /nexus/nucleus/
+# The rebuilt engine's SOURCE is still copied (dev bind-mounts over it;
+# nexus-ai-new runs it from its own image) — kept so /nexus/ai exists and
+# the distribution half has one obvious place to pick it up.
 COPY modules/nexus-ai/ /nexus/ai/
 
 # Shared project folders — filesystem MCP is pointed at a per-project

@@ -182,7 +182,7 @@ Run the test suites the same way:
 ```bash
 docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev \
   /opt/venv/nucleus-env/bin/python manage.py test -v 1 --noinput
-docker exec -w /nexus/ai <nexus-ai-dev-container> python -m pytest -q
+docker exec -w /nexus/ai neuralops-nexus-ai-new python -m pytest -q
 ```
 
 To reach a dev server from the hosted frontend without opening router ports,

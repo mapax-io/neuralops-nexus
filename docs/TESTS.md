@@ -1,11 +1,13 @@
 # NeuralOps Nexus — the test catalog
 
-**Document version: 1.0 (2026-10-15).** Baselines: **nucleus 457 tests OK**,
-**engine 90 passed / 20 skipped** (debug container; the skips are the
-vector-db tests, run on the vector-enabled setup).
+**Document version: 1.1 (2026-10-15).** Baselines: **nucleus 457 tests OK**,
+**engine 110 passed / 0 skipped** (in `neuralops-nexus-ai-new`, since
+Step 8a — the vector-db tests run for real against pgvector; a skip is now a
+regression).
 
 | Version | Date | What changed |
 |---|---|---|
+| 1.1 | 2026-10-15 | Step 8a: engine baseline 90+20skip → **110/0** — the 20 vector tests run against `nexus_vectors` (pgvector); engine container renamed to `neuralops-nexus-ai-new` |
 | 1.0 | 2026-10-15 | First catalog, at the close of Step 7 |
 
 **The rules of this file:**
@@ -21,7 +23,7 @@ vector-db tests, run on the vector-enabled setup).
 
 ```
 docker exec -w /nexus/nucleus neuralops-nucleus-dev sh -c "grep -rn 'class .*Tests\|def test_' --include='tests*.py' ." 
-docker exec -w /nexus/ai nexus-ai-debug sh -c "grep -rn 'def test_' tests/"
+docker exec -w /nexus/ai neuralops-nexus-ai-new sh -c "grep -rn 'def test_' tests/"
 ```
 
 **How to run** — see CHANGE-PROMPT.md §3 (always `--noinput` for nucleus).

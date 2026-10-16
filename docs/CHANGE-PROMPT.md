@@ -1,11 +1,12 @@
 # NeuralOps Nexus — the change prompt
 
-**Document version: 1.0 (2026-10-15, at the close of Step 7).**
+**Document version: 1.5 (2026-10-15, at the close of Step 8a — dev switch-over).**
 This file is VERSIONED: every session that changes the system must also
 update this file (status, counts, new pieces) and add a row here.
 
 | Version | Date | What changed |
 |---|---|---|
+| 1.5 | 2026-10-15 | Step 8a CLOSED — dev runs the NEW engine only: legacy module + chromadb deleted, vectors in `nexus_vectors` (pgvector on postgres-dev), engine image self-contained (lock regenerated; `duckduckgo` extra added — ddgs is the web-search tool, losable only by regenerating the lock without it); engine suite 110 passed 0 skipped in `neuralops-nexus-ai-new`, nucleus 457 OK |
 | 1.4 | 2026-10-15 | Added `docs/FRONTEND-CHANGE-PROMPT.md` (v0.1 — the frontend's own brief; its §6 fills once the react repo is cloned locally) |
 | 1.3 | 2026-10-15 | Doc cleanup (owner): the live set is now SIX files (below); every pre-revamp/consumed doc moved to `docs/_archive/` (history, not instructions — owner may delete) |
 | 1.2 | 2026-10-15 | Added `docs/API.md` (every endpoint, internal and external, Postman-ready) to the doc set |
@@ -37,8 +38,12 @@ the node3-neuralops-forked file tools):
   scheduling, billing/usage, phone-home.
 - **`modules/nexus-ai`** — the REBUILT engine (FastAPI + pydantic-ai): takes a
   TriggerJob, builds the prompt and toolsets, runs the model, streams events
-  back. It replaces a legacy engine ("0.8.0", in `nexus-ai-legacy`) that
-  production still points at until Step 8's switch-over.
+  back. The legacy engine ("0.8.0", `nexus-ai-legacy`) is GONE — deleted at
+  Step 8a along with chromadb; dev runs the new engine only (container
+  `neuralops-nexus-ai-new`, image `nexus-ai:new-dev`, built from
+  `modules/nexus-ai/docker/Dockerfile`). Vectors live in the `nexus_vectors`
+  database on the same postgres (pgvector). The production profile is redone
+  in Step 8's distribution half.
 
 The frontend is a separate app; its contract lives in
 **`docs/FRONTEND-REVAMP.md`** — contract changes land in that document BEFORE
@@ -248,9 +253,18 @@ Dev stack is docker compose; the containers the owner actually has:
 | Container | What |
 |---|---|
 | `neuralops-nucleus-dev` | Django backend (venv at `/opt/venv/nucleus-env`, code at `/nexus/nucleus`) |
-| `nexus-ai-debug` | the REBUILT engine (image nexus-ai-test:1.0, bind-mounted live source at `/nexus/ai`) — NOT "neuralops-nexus-ai-new", that container does not exist |
-| postgres (dev) | plain postgres today; production switch-over plans `pgvector/pgvector:0.8.7-pg17` |
+| `neuralops-nexus-ai-new` | the REBUILT engine (image `nexus-ai:new-dev` from `modules/nexus-ai/docker/Dockerfile`, bind-mounted live source at `/nexus/ai`) — since Step 8a this is the ONLY engine; the old hand-made `nexus-ai-debug` is retired |
+| `neuralops-postgres-dev` | `pgvector/pgvector:0.8.7-pg17` — app data in `neuralops`, vectors in `nexus_vectors` (one postgres, two databases) |
 | redis, centrifugo (`centrifugo-dev`), celery worker + beat | the usual |
+
+Compose is ALWAYS run with its three env files (the file's own documented
+invocation — without them the ${POSTGRES_*} interpolations go blank):
+
+```
+docker compose -f docker-compose.neuralops.yaml \
+  --env-file neuralops/infra.env --env-file neuralops/app.env \
+  --env-file neuralops/secrets.env --profile dev up -d --build
+```
 
 **Nucleus commands (run from anywhere on node3, root ok):**
 
@@ -265,18 +279,19 @@ docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev
 docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py test -v 1 --noinput > test-output.txt 2>&1; tail -5 test-output.txt
 ```
 
-**Engine suite:**
+**Engine suite** (pytest is NOT in the image — install once per fresh
+container, then run; the test run also wipes the `vx_*` schemas in
+`nexus_vectors`, fine while there is no real data):
 
 ```
-docker exec -w /nexus/ai nexus-ai-debug python -m pytest -q 2>&1 | tail -5
+docker exec -w /nexus/ai neuralops-nexus-ai-new sh -c "pip install --user -q -r requirements-dev.txt && python -m pytest -q 2>&1 | tail -5"
 ```
 
-Current green baselines (2026-10-15): **nucleus 457 tests OK**, rights
-registry **49**, migrations through **0036**; **engine 90 passed, 20
-skipped** in nexus-ai-debug (the 20 are vector-db tests — the test postgres is
-unreachable from that container, they skip by design; they and the two search
-tests run in the owner's vector-enabled setup — exercise there before
-switch-over). Any change must end at ≥ these numbers, all green.
+Current green baselines (2026-10-15, after Step 8a): **nucleus 457 tests
+OK**, rights registry **49**, migrations through **0036**; **engine 110
+passed, 0 skipped** in `neuralops-nexus-ai-new` — the vector tests run for
+real against pgvector now. Any change must end at ≥ these numbers, all
+green, and a skip is a regression.
 
 ---
 
@@ -580,8 +595,11 @@ EXACTLY as 0.8.0's so nucleus keeps working.
    list).
 4. **Don't guess APIs — probe.** The mcp 2.x import spelling was wrong twice
    until probed live in the container.
-5. **The engine container is `nexus-ai-debug`.** Vector tests skip there by
-   design.
+5. **The engine container is `neuralops-nexus-ai-new`** (since Step 8a; the
+   old hand-made `nexus-ai-debug` is retired). Vector tests RUN there —
+   `NEXUS_VECTOR_DB_URL` points at `nexus_vectors`; 0 skips is the baseline.
+   The tests WIPE `vx_*` schemas in that DB each run — fine while there is no
+   real data; give tests their own DB once there is.
 6. **Celery runbook/chain runs are claim-guarded** (exactly one UPDATE moves
    the status); every exit of _drive must end the run row or it spins
    "running" forever; a long run must never hold a beat-fired slot (hand off
@@ -611,9 +629,22 @@ EXACTLY as 0.8.0's so nucleus keeps working.
 13. **Step 0's kill list is law:** fifteen zero-reference tables, the swarm
     road, chat's old self-calling tasks and the terminal/browser panes were
     deleted WITH recorded proof — don't reintroduce them. `.step0-removed/`
-    holds the retired files until the owner deletes it. ChromaDB services +
-    CHROMA_* env serve only the LEGACY engine and are removed at Step 8's
-    switch-over.
+    holds the retired files until the owner deletes it. ChromaDB and the
+    legacy engine left the dev profile at Step 8a; production's copies go in
+    the distribution half.
+14. **The engine lock file is REGENERATED, never hand-edited** — in a
+    throwaway python:3.13-slim container: CPU torch first
+    (`pip install torch --index-url https://download.pytorch.org/whl/cpu`),
+    then `-r requirements.txt`, then `pip freeze > requirements.lock`. The
+    lock carries `torch==…+cpu`, so the engine Dockerfile installs with
+    `--extra-index-url https://download.pytorch.org/whl/cpu`. Two Step 8a
+    scars: a stale lock shipped an image with no vector packages (crash at
+    import), and a regeneration without the `duckduckgo` extra lost ddgs (the
+    web-search tool) and failed exactly 3 tests — both are now named in
+    requirements.txt. Named volumes mount root-owned unless the image
+    pre-creates the directory (the Dockerfile now chowns /home/nexus/.cache);
+    compose must run with its three --env-file flags, as documented in its
+    own header.
 
 ---
 
@@ -622,17 +653,21 @@ EXACTLY as 0.8.0's so nucleus keeps working.
 **CLOSED and owner-verified:** Steps 0–7 of `docs/NUCLEUS-REVAMP.md` — Step 4
 login + posture (400 tests), Step 5 file viewer (411), Step 6 front doors:
 gateway + tokens (A, 423), configure topic + stored tool lists + phone-home
-(B, 433), OAuth roads (C, 442), Step 7 chains (457). Migrations through 0036;
-49 rights; engine 90 passed / 20 skipped (debug container).
+(B, 433), OAuth roads (C, 442), Step 7 chains (457) — and **Step 8a, the dev
+switch-over** (branch `step8-switchover`): dev runs ONLY the new engine,
+legacy module + chromadb deleted, vectors in `nexus_vectors` (pgvector).
+Migrations through 0036; 49 rights; engine **110 passed, 0 skipped** in
+`neuralops-nexus-ai-new`; nucleus 457 OK on the switched-over stack.
 
 **Remaining, in order:**
-- **Step 8** — switch-over (point the stack at the new engine, retire
-  nexus-ai-legacy; first: run the engine's vector/search tests on the
-  vector-enabled setup, add the engine's extra-headers server config so
-  personas can use the gateway's no-token internal road, swap dev postgres →
-  pgvector image) and distribution (ONE app image, nexus-ai + nucleus +
-  centrifugo by command:, compiled .pyc only, init-secrets generates
-  SECRET_KEY, owner claims via the portal code flow).
+- **Step 8 rest** — live smoke with one real (cheap) model key through
+  /add-model + Check; the engine's extra-headers server config so personas
+  can use the gateway's no-token internal road; then distribution (ONE app
+  image, nexus-ai + nucleus + centrifugo by command:, production profile
+  loses chromadb and gains the engine image, compiled .pyc only,
+  init-secrets generates SECRET_KEY, owner claims via the portal code flow,
+  nucleus pip pins frozen); owner merges `step8-switchover` → dev after
+  verification.
 - **Portal-side (specced in NUCLEUS-REVAMP, not server code):** the claim
   page, the phone-home edge function (contract in core/phone_home.py's
   docstring), the OAuth relay (v1 pure forwarder contract in the Step 6C
