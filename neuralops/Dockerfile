@@ -7,10 +7,17 @@
 # compose time via entrypoint.sh's first argument + a `command:` override —
 # see docker-compose.neuralops.yaml.
 #
-# Deliberately NOT in this image: postgres, redis, chromadb, nginx (separate
-# services using their official images — see docker-compose.neuralops.yaml),
-# pgvector (chroma only, matches current main), the rest of nexus-mcp
-# (SerpAPI/Odoo — separate docker/compose, added later).
+# Deliberately NOT in this image: postgres, redis, nginx (separate services
+# using their official images — see docker-compose.neuralops.yaml; postgres
+# is the pgvector build, carrying the vector store since Step 8a — chromadb
+# is gone), and the rest of nexus-mcp (SerpAPI/Odoo — separate
+# docker/compose, added later).
+#
+# ONE PYTHON (3.13) FOR BOTH (owner's ruling, 2026-10-15): nucleus moved
+# from its historical 3.11 to the engine's 3.13 — Django 5.2 supports
+# 3.13, and one interpreter is simpler than copying a second one into the
+# final image. The 457-test nucleus suite is the proof the move is safe.
+# All python stages stay pinned to the same Debian release (bookworm).
 #
 # nucleus and nexus-ai get their OWN separate venvs (nucleus-env /
 # nexus-ai-env) rather than one shared/merged environment — Django+pydantic 2
@@ -26,7 +33,7 @@
 # =============================================================================
 
 # ── Stage 1: nucleus deps ────────────────────────────────────────────────────
-FROM python:3.11-slim AS nucleus-builder
+FROM python:3.13-slim-bookworm AS nucleus-builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential libpq-dev && \
@@ -38,14 +45,23 @@ COPY modules/nexus-nucleus/docker/dev/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Stage 2: nexus-ai deps ───────────────────────────────────────────────────
-# Stage 2 (the nexus-ai venv) is REMOVED — Step 8 switch-over: the legacy
-# engine is gone (modules/nexus-ai-legacy deleted on the step8-switchover
-# branch), and the REBUILT engine runs from its OWN image
-# (modules/nexus-ai/docker/Dockerfile, Python 3.13 + requirements.lock) as
-# the compose service nexus-ai-new. This unified image no longer carries a
-# nexus-ai venv or the playwright browser that lived inside it. Step 8's
-# distribution half decides the FINAL shipped shape (one image or two);
-# until then the production profile's nexus-ai service stays a placeholder.
+# The REBUILT engine's venv, on Python 3.13 (the legacy engine and its venv
+# are gone — modules/nexus-ai-legacy was deleted at Step 8a). requirements.lock
+# is the frozen `pip freeze` of requirements.txt — regenerate it, never
+# hand-edit (docs/CHANGE-PROMPT.md lesson 14). It carries torch==…+cpu,
+# which only exists on PyTorch's own index — hence the extra-index-url.
+# pytest is baked in on purpose: the engine suite must be runnable in any
+# container of this image with no network install step; the distribution
+# half may strip it.
+FROM python:3.13-slim-bookworm AS nexus-ai-builder
+WORKDIR /build
+ENV VIRTUAL_ENV=/opt/venv/nexus-ai-env
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+COPY modules/nexus-ai/requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock \
+    --extra-index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir pytest==9.1.1 pytest-asyncio==1.4.0
 
 # ── Stage 3: centrifugo / nexus-transport binary ────────────────────────────
 # Same build this repo already uses for modules/nexus-transport/Dockerfile —
@@ -62,7 +78,7 @@ RUN go build -ldflags="-s -w -X 'github.com/centrifugal/centrifugo/v6/internal/b
   -o nexus-transport .
 
 # ── Stage 4: final image ─────────────────────────────────────────────────────
-FROM python:3.11-slim AS final
+FROM python:3.13-slim-bookworm AS final
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates libpq-dev curl nodejs npm git openssh-client && \
@@ -153,6 +169,14 @@ COPY --from=transport-builder /app/nexus-transport /usr/local/bin/nexus-transpor
 # (searched, no matches) -- safe to leave out, nothing depends on it.
 RUN chmod +x /usr/local/bin/nexus-transport
 
+# The engine's venv — same Python 3.13 as the final image's own interpreter
+# (both from python:3.13-slim-bookworm), so the venv's symlinks resolve
+# as-is and NO second interpreter needs copying.
+COPY --from=nexus-ai-builder /opt/venv/nexus-ai-env /opt/venv/nexus-ai-env
+# Build-time sanity check — a broken copy fails HERE, loudly, not at the
+# first chat message: the copied interpreter must import the heavy deps.
+RUN /opt/venv/nexus-ai-env/bin/python -c "import fastapi, sqlalchemy, pgvector, fastembed, torch; print('nexus-ai venv OK')"
+
 # ── The live browser's engine ────────────────────────────────────────────────
 # Chromium plus the system libraries it needs, ~450 MB, installed with the
 # worker's own venv (which now carries playwright). Worth it when the team
@@ -163,16 +187,14 @@ RUN chmod +x /usr/local/bin/nexus-transport
 # browser returns with the rebuilt engine's image in the distribution half.)
 
 
-# App code — baked in here (this is what makes the `production` compose
-# profile self-contained, no source tree required). The `dev` compose
-# profile bind-mounts modules/nexus-nucleus and modules/nexus-ai over these
-# same paths at container start, shadowing this copy with live host source —
-# same image either way, dev just overlays it.
-COPY modules/nexus-nucleus/ /nexus/nucleus/
-# The rebuilt engine's SOURCE is still copied (dev bind-mounts over it;
-# nexus-ai-new runs it from its own image) — kept so /nexus/ai exists and
-# the distribution half has one obvious place to pick it up.
-COPY modules/nexus-ai/ /nexus/ai/
+# NO app code in the image (owner's ruling, 2026-10-15): this is the
+# dev/testing image — compose bind-mounts modules/nexus-nucleus →
+# /nexus/nucleus and modules/nexus-ai → /nexus/ai at container start, so
+# the containers always run the LIVE source from disk and a code change
+# never needs a rebuild (only a dependency change does). The two paths are
+# pre-created below so they exist with the right owner. The shipped/
+# distribution image gets its code another way (Nuitka — decided later,
+# Step 8's distribution half).
 
 # Shared project folders — filesystem MCP is pointed at a per-project
 # subfolder here (see readme's MCP section); mounted as an external volume
@@ -186,7 +208,7 @@ COPY modules/nexus-ai/ /nexus/ai/
 # as root-owned and fastembed's HuggingFace download fails with
 # "Permission denied" the first time nexus-ai actually tries to embed
 # something -- confirmed, this is exactly the bug that was hit.
-RUN mkdir -p /nexus/projects /nexus/logs/nucleus /nexus/logs/ai /home/nexus/.cache/fastembed && \
+RUN mkdir -p /nexus/nucleus /nexus/ai /nexus/projects /nexus/logs/nucleus /nexus/logs/ai /home/nexus/.cache/fastembed && \
   chown -R nexus:nexus /nexus /home/nexus/.cache
 
 COPY neuralops/entrypoint.sh /usr/local/bin/entrypoint.sh

@@ -296,6 +296,10 @@ services:
   # ===========================================================================
 
   nucleus-dev:
+    # The ONE place the shared dev image is built (owner's call, 2026-10-15:
+    # one build, not five). Every other dev app service below just says
+    # `image: neuralops:dev-local` with no build: key — compose builds here
+    # first, then they all start from the same finished image.
     build:
       context: .
       dockerfile: neuralops/Dockerfile
@@ -349,10 +353,7 @@ services:
       - centrifugo-dev
 
   nucleus-celery-dev:
-    build:
-      context: .
-      dockerfile: neuralops/Dockerfile
-    image: neuralops:dev-local
+    image: neuralops:dev-local   # built once by nucleus-dev above
     profiles: ["dev"]
     container_name: neuralops-nucleus-celery-dev
     command: ["nucleus-env", "celery", "-A", "core", "worker", "-l", "info"]
@@ -378,10 +379,7 @@ services:
       - redis-dev
 
   nucleus-celery-beat-dev:
-    build:
-      context: .
-      dockerfile: neuralops/Dockerfile
-    image: neuralops:dev-local
+    image: neuralops:dev-local   # built once by nucleus-dev above
     profiles: ["dev"]
     container_name: neuralops-nucleus-celery-beat-dev
     command: ["nucleus-env", "celery", "-A", "core", "beat", "-l", "info"]
@@ -411,19 +409,19 @@ services:
   # rebuilt in Step 8's distribution half, when the unified image itself
   # changes.
   #
-  # The REBUILT nexus-ai (docs/_archive/NEXUS-AI-REVAMP.md §1.3): built from
-  # modules/nexus-ai with its own pinned dependencies (Python 3.13) — NOT
-  # the shared neuralops image. No host port on purpose — no request from
-  # outside is accepted; the internal key (from secrets.env) is the second
-  # lock.
+  # The REBUILT nexus-ai — runs from the SHARED unified image (owner's
+  # one-image ruling, 2026-10-15: nucleus + engine + centrifugo in ONE
+  # image; the engine's venv inside it is Python 3.13 — see
+  # neuralops/Dockerfile stage 2). The standalone image
+  # (modules/nexus-ai/docker/Dockerfile) is retired for dev. No host port
+  # on purpose — no request from outside is accepted; the internal key
+  # (from secrets.env) is the second lock.
   nexus-ai-new:
-    build:
-      context: ./modules/nexus-ai
-      dockerfile: docker/Dockerfile
-    image: nexus-ai:new-dev
+    image: neuralops:dev-local   # built once by nucleus-dev above
     profiles: ["dev"]
     container_name: neuralops-nexus-ai-new
-    command: ["uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # command: ["nexus-ai-env", "python3", "-m", "uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["nexus-ai-env", "tail", "-f", "/dev/null"]   # DEBUG: idle — start the engine by hand (VSCode); swap comments to run normally
     volumes:
       - ./modules/nexus-ai:/nexus/ai
       # The engine's fastembed/huggingface model cache (the image runs as the
@@ -451,10 +449,7 @@ services:
       - postgres-dev
 
   centrifugo-dev:
-    build:
-      context: .
-      dockerfile: neuralops/Dockerfile
-    image: neuralops:dev-local
+    image: neuralops:dev-local   # built once by nucleus-dev above
     profiles: ["dev"]
     container_name: neuralops-centrifugo-dev
     command: ["centrifugo", "nexus-transport", "--admin.enabled", "--admin.insecure", "--client.insecure", "--http_api.insecure"]

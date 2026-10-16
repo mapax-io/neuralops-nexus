@@ -8,7 +8,7 @@
 #   entrypoint.sh nucleus-env   uvicorn core.asgi:application --host 0.0.0.0 --port 8000
 #   entrypoint.sh nucleus-env   celery -A core worker -l info
 #   entrypoint.sh nucleus-env   celery -A core beat -l info
-#   entrypoint.sh nexus-ai-env  python3 -m uvicorn apps.main:app --host 0.0.0.0 --port 8000
+#   entrypoint.sh nexus-ai-env  python3 -m uvicorn fastapi_app.main:app --host 0.0.0.0 --port 8000
 #   entrypoint.sh centrifugo    nexus-transport --admin.enabled --admin.insecure --client.insecure --http_api.insecure
 #   entrypoint.sh init-secrets  (no further args -- prints KEY=VALUE lines, run once per deployment)
 set -e
