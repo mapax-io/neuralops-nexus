@@ -1,11 +1,12 @@
 # NeuralOps Nexus — the change prompt
 
-**Document version: 1.5 (2026-10-15, at the close of Step 8a — dev switch-over).**
+**Document version: 1.6 (2026-10-17).**
 This file is VERSIONED: every session that changes the system must also
 update this file (status, counts, new pieces) and add a row here.
 
 | Version | Date | What changed |
 |---|---|---|
+| 1.6 | 2026-10-17 | Real-model smoke suite added (`tests/test_real_smoke.py`, marker `live`, `--real` flag in conftest): 5 shape-asserted tests against real providers, keys from env only, evidence printed + git-ignored REPORT-live.md; the 110 fake baseline untouched |
 | 1.5 | 2026-10-15 | Step 8a CLOSED — dev runs the NEW engine only: legacy module + chromadb deleted, vectors in `nexus_vectors` (pgvector on postgres-dev), engine image self-contained (lock regenerated; `duckduckgo` extra added — ddgs is the web-search tool, losable only by regenerating the lock without it); engine suite 110 passed 0 skipped in `neuralops-nexus-ai-new`, nucleus 457 OK |
 | 1.4 | 2026-10-15 | Added `docs/FRONTEND-CHANGE-PROMPT.md` (v0.1 — the frontend's own brief; its §6 fills once the react repo is cloned locally) |
 | 1.3 | 2026-10-15 | Doc cleanup (owner): the live set is now SIX files (below); every pre-revamp/consumed doc moved to `docs/_archive/` (history, not instructions — owner may delete) |
@@ -291,7 +292,9 @@ Current green baselines (2026-10-15, after Step 8a): **nucleus 457 tests
 OK**, rights registry **49**, migrations through **0036**; **engine 110
 passed, 0 skipped** in `neuralops-nexus-ai-new` — the vector tests run for
 real against pgvector now. Any change must end at ≥ these numbers, all
-green, and a skip is a regression.
+green, and a skip of a BASELINE test is a regression. (The 5 `live`
+real-model tests showing as skipped WITHOUT `--real` is expected — see
+TESTS.md's real-model section.)
 
 ---
 

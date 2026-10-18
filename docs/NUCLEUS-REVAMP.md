@@ -803,6 +803,50 @@ Remaining in Step 8: live smoke with one real model key, then the
 distribution half (production profile: chromadb out, engine image in,
 .pyc-only unified image, nucleus pins frozen).
 
+**Real-model test suite (owner's ruling, 2026-10-17):** the fakes stay the
+baseline (110, deterministic, free, exact-word asserts against scripted
+replies); a separate LIVE suite calls real providers and checks SHAPE
+(streamed, finished, billed with real token counts) plus grounded facts a
+real tool call alone can produce. Rules: keys come from environment
+variables at run time and exist in NO file; the live tests run only with
+`--real` on the pytest command line and each skips itself without its key;
+every live test PRINTS what the model really said and the run writes
+`tests/REPORT-live.md` (git-ignored — it holds real replies). A live
+failure means provider/network/key first, engine second — it never touches
+the baseline's meaning.
+
+**Built — real-model smoke (2026-10-17):** `tests/conftest.py` gains
+`--real`, the `live` marker gate and `real_model()` (env-key reader that
+skips when unset); NEW `tests/test_real_smoke.py` with five tests: live1/2
+one real streamed reply from each of two OpenAI models (mini + full —
+owner's ruling 2026-10-17, one key covers the suite; anthropic stays
+supported in the helper for when that account has credits); live3 a real tool
+round-trip — the model reads a planted file and must name its code word
+(the one honest exact-match assert); live4 the real ask/pause road (the
+persona must ask before answering — the one test that depends on model
+obedience, noted in its docstring); live5 /models/check with a good and a
+garbage key. `.gitignore` covers REPORT-live.md. Verify: (1) plain run
+still **110 passed** (baseline untouched, live shown as skipped); (2)
+`--real` without keys → live tests skip naming the missing variable; (3)
+keys exported → `pytest tests/test_real_smoke.py --real -s` all green with
+the replies printed and REPORT-live.md written.
+
+**Real-model smoke VERIFIED (owner, 2026-10-17):** baseline run
+**110 passed, 5 skipped** (the live ones standing aside — expected);
+`--real` without keys → all 5 skip naming the variable; with keys →
+**5 passed** against the real OpenAI API (after the owner's ruling moved
+live2 to gpt-4o — one key, two models): live streamed replies from
+gpt-4o-mini AND gpt-4o; a REAL tool call grounding the planted code word
+(used_tools=['read_file']); the real ask/pause road (the model asked
+"Which environment are you referring to?" with options ['dev','prod'] and
+froze); models/check good key ok at 458ms, garbage key refused as
+model_failure. (First run's Anthropic attempt failed with the provider's
+own "credit balance is too low" — account has no credits; the clean
+surfaced error is itself the designed behavior, and anthropic support
+stays in the helper for later.) Lesson applied live: the owner's keys
+appeared in a terminal paste during verification — rotated; the
+keys-never-in-files rule stands.
+
 ## 5. DISTRIBUTION (owner, 2026-10-14) — one app image, compiled files only
 
 How the product ships once nucleus is done:

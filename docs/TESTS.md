@@ -1,12 +1,14 @@
 # NeuralOps Nexus — the test catalog
 
-**Document version: 1.1 (2026-10-15).** Baselines: **nucleus 457 tests OK**,
+**Document version: 1.2 (2026-10-17).** Baselines: **nucleus 457 tests OK**,
 **engine 110 passed / 0 skipped** (in `neuralops-nexus-ai-new`, since
-Step 8a — the vector-db tests run for real against pgvector; a skip is now a
-regression).
+Step 8a — the vector-db tests run for real against pgvector; a skip of a
+BASELINE test is a regression. The 5 `live` tests showing as skipped in a
+plain run is EXPECTED — they only run with `--real` + keys).
 
 | Version | Date | What changed |
 |---|---|---|
+| 1.2 | 2026-10-17 | Added the REAL-model smoke suite (`test_real_smoke.py`, 5 tests, marker `live`): runs only with `--real` + keys in the environment; OUT of the 110 baseline; evidence in git-ignored REPORT-live.md |
 | 1.1 | 2026-10-15 | Step 8a: engine baseline 90+20skip → **110/0** — the 20 vector tests run against `nexus_vectors` (pgvector); engine container renamed to `neuralops-nexus-ai-new` |
 | 1.0 | 2026-10-15 | First catalog, at the close of Step 7 |
 
@@ -27,6 +29,23 @@ docker exec -w /nexus/ai neuralops-nexus-ai-new sh -c "grep -rn 'def test_' test
 ```
 
 **How to run** — see CHANGE-PROMPT.md §3 (always `--noinput` for nucleus).
+
+**The real-model smoke suite (`tests/test_real_smoke.py`, marker `live`):**
+NOT part of the baseline — it calls real providers and costs real cents.
+Runs only with `--real` AND keys exported in the terminal (never in files):
+
+```
+export OPENAI_API_KEY=...   # and/or ANTHROPIC_API_KEY=...
+docker exec -w /nexus/ai -e OPENAI_API_KEY -e ANTHROPIC_API_KEY neuralops-nexus-ai-new /opt/venv/nexus-ai-env/bin/python -m pytest tests/test_real_smoke.py --real -s
+```
+
+Five tests: one real streamed reply from each of TWO OpenAI models
+(gpt-4o-mini and gpt-4o — one key covers all five; override with
+OPENAI_TEST_MODEL / OPENAI_TEST_MODEL_2); a real tool round-trip
+(grounded code word); the real ask/pause road; models/check with good and
+garbage keys. Asserts check shape, prints show the real replies, and the
+run writes `tests/REPORT-live.md` (git-ignored). A failure here points at
+provider/network/key/model-id before the engine.
 
 ---
 

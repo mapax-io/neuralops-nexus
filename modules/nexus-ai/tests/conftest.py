@@ -25,6 +25,65 @@ from fake_provider import FakeProvider, ServedApp, make_app as make_provider_app
 
 INTERNAL_KEY = "test-internal-key"
 
+
+# ── Real-model tests (owner's ruling, 2026-10-17) ───────────────────────
+# The fakes stay the baseline (110, deterministic, free). Tests marked
+# `live` call REAL providers: they run ONLY with `--real` on the command
+# line, and each one skips itself when its provider's key is not in the
+# environment. Keys come from env vars at run time — never from any file.
+#   run:  pytest tests/test_real_smoke.py --real -s
+#   keys: OPENAI_API_KEY / ANTHROPIC_API_KEY (export in your terminal)
+#   models: OPENAI_TEST_MODEL / ANTHROPIC_TEST_MODEL override the defaults.
+
+
+def pytest_addoption(parser):
+    parser.addoption("--real", action="store_true", default=False,
+                     help="also run the live tests against real model providers")
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "live: calls a real model provider; runs only with --real and a key in the environment")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--real"):
+        return
+    skip = pytest.mark.skip(reason="live test — run with --real and real keys in the environment")
+    for item in items:
+        if "live" in item.keywords:
+            item.add_marker(skip)
+
+
+def real_model(provider: str, model_id: str | None = None, **kw) -> dict:
+    """A ModelInternal-shaped dict pointing at the REAL provider. The key is
+    read from the environment HERE, at test run time — it exists nowhere on
+    disk. Skips the calling test when the key is absent. model_id overrides
+    the default (owner's ruling 2026-10-17: the suite runs on TWO OpenAI
+    models — mini and full — so one key covers everything; anthropic stays
+    supported here for when that account has credits)."""
+    env_key = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}[provider]
+    api_key = os.environ.get(env_key, "").strip()
+    if not api_key:
+        pytest.skip(f"{env_key} not set — export it to run this live test")
+    default_model = {"openai": "gpt-4o-mini", "anthropic": "claude-3-5-haiku-latest"}[provider]
+    model_id = model_id or os.environ.get(f"{provider.upper()}_TEST_MODEL", default_model)
+    base = {
+        "id": f"real-{provider}",
+        "name": f"Real {provider}",
+        "provider": provider,
+        "model_id": model_id,
+        "qualified_id": f"{provider}:{model_id}",
+        "api_base": None,          # None = the provider's own public endpoint
+        "api_key": api_key,
+        "context_window": 200_000,
+        "supports_tools": True,
+        "supports_streaming": True,
+        "supports_vision": False,
+    }
+    base.update(kw)
+    return base
+
 # ── Layer 3: the vector DB tests need a REAL pgvector postgres ─────────────
 # NEXUS_VECTOR_DB_URL points at it (nexus_vectors with CREATE EXTENSION vector).
 # Unreachable → the whole suite still runs, vector tests SKIP with the reason.

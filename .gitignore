@@ -282,8 +282,10 @@ modules/nexus-nucleus/media/*
 node-3.tail9ed39a.ts.net.crt
 node-3.tail9ed39a.ts.net.key
 modules/nexus-ai/.secrets/
-modules/nexus-ai/.secrets/
-modules/nexus-ai/.secrets/
+
+# Real-model smoke evidence (tests/test_real_smoke.py --real): contains the
+# models' actual replies -- local evidence, never repo content.
+modules/nexus-ai/tests/REPORT-live.md
 
 # --- docker-compose.neuralops.yaml production nexus-ai bind mount ---
 # Real project files/code once the stack is running -- never committed.
