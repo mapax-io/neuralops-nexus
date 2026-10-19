@@ -1,7 +1,9 @@
 # NeuralOps Frontend — Revamp
 
 **Started:** 2026-10-14. Plain language on purpose (owner's rule).
-**The app:** `modules/neuralops-react-app`.
+**The app:** the `neuralops-nexus-web-app` repo (its own repository, not a
+module of this one). Hosted frontend (Vercel → neuralopsnexus.ai) + many
+self-hosted servers; dev runs on localhost:3000.
 **The rule:** the event/status contract below is the single source of truth
 between nucleus and the frontend. Any change lands HERE first, then in code —
 the frontend never discovers a new event at runtime.
@@ -135,17 +137,23 @@ diagram, form, terminal, code, preflight, choice.
      registered), show only the ordinary roads. Never render any secret
      field from a preset — there is none.
 8. **Login changes** (Step 4 — nucleus half BUILT). Three pieces:
-   - **Setup screen (fresh install):** on connect, GET `/auth/setup/status/`
-     — `needs_owner: true` means show setup instead of login. POST
-     `/auth/setup/start/` → `{code, request_id, portal_url, expires_in}`:
-     show the CODE large, link to `portal_url` ("sign in there and type this
-     code"), then POST `/auth/setup/poll/` `{request_id, workspace_name?}`
-     every few seconds: `{status:"pending"}` → keep waiting;
-     `{status:"claimed", email, workspace, access_token}` → signed in — keep
-     `access_token` as the session, exactly like after /auth/signin. 409 on
-     start/poll = someone else claimed it meanwhile (show login); 502 = the
-     portal is unreachable — the detail text names the terminal fallback
-     (create_owner), show it verbatim.
+   - **Setup (fresh install) — RULING (owner, 2026-10-18 evening,
+     SUPERSEDES the setup-screen design above and the earlier same-day
+     one-click ruling):** the app never offers setup or a claim. Ownership
+     starts ONLY from the server's own terminal — `manage.py create_owner`
+     shows the code + portal link, the person claims at the portal page, the
+     command creates the owner. The web roads /auth/setup/start|poll/ are
+     REMOVED from nucleus (a public start/poll let anyone on the network
+     race the real owner for a fresh install). The app's whole job: when a
+     connect finds an unowned server, show the plain message "this server
+     isn't set up yet — whoever installed it needs to run the setup command
+     (create_owner) in its terminal" (already in src/app/servers/page.tsx).
+     GET /auth/setup/status/ still exists (needs_owner, local_login_enabled,
+     portal_url) if the app ever wants a finer message. The withdrawn dialog
+     lives in the app repo's _attic/ as raw material.
+     Local (offline) login UI: PARKED (owner, 2026-10-18) — Supabase login
+     stays the only road in the UI for now; the backend endpoints exist and
+     wait.
    - **Local (offline) login form:** POST `/auth/local/signin/`
      `{email, password}` → `{access_token, token_type, expires_hours, user}`.
      The token goes in the same Authorization: Bearer header as a Supabase
@@ -174,6 +182,36 @@ diagram, form, terminal, code, preflight, choice.
     `…/messages/{id}/questions/{call_id}/` with `{text}`; the reply resumes
     by itself when every pending card is decided. An expired card (24h)
     arrives as a deny / "(no answer …)" decision made by "expiry".
+
+## 2b. Built so far (frontend side)
+
+**BUILT (2026-10-18) — the /add_code claim page (the portal page moves INTO
+this app).** `src/app/add_code/page.tsx` + `src/lib/api/claim.ts`: signed in
+→ code box (auto-formats 483291 → 483-291) → claims via the portal's
+device-claim function with the person's own session; signed out → the
+LoginForm renders ON the page itself (new nextPath prop — default /servers,
+/add_code passes itself), so sign-in/sign-up happens without leaving, and
+the code box appears the moment the session exists; after a successful
+claim the page moves to /servers by itself (owner's sequencing ruling).
+create_owner's printed link points here:
+image default `https://neuralopsnexus.ai/add_code` (neuralops/Dockerfile),
+dev override `http://192.168.1.90:3000/add_code` (compose nucleus-dev's
+NEURALOPS_PORTAL_URL — rebuild not needed, restart is). The static
+`portal/claim-page/index.html` stays as the no-app fallback.
+VERIFY (owner): with the web app running — create_owner in the server's
+terminal → open the printed link → page shows the code box → type the code
+→ "Done!" → the terminal finishes with you as owner.
+
+**BUILT then WITHDRAWN (2026-10-18) — chunk 1, the in-app setup dialog.**
+Built as a setup/claim dialog on the servers screen (one-click claim with
+the signed-in account), then withdrawn the same evening by the terminal-only
+ruling (§2.8 above): an in-app claim would let anyone who can reach a fresh
+install race the real owner. What remains in the app: the "not set up"
+connect outcome shows the run-the-setup-command message. The withdrawn files
+sit in the app repo's `_attic/` with a README. Chunk 1's VERIFY is now the
+backend's (NUCLEUS-REVAMP: create_owner code flow + closed web roads + the
+app connecting the new owner straight into the workspace — that last step is
+still this app's test, and still closes end-to-end test B).
 
 ## 3. Removals
 

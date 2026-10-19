@@ -1,66 +1,65 @@
 /opt/venv/nucleus-env/lib/python3.13/site-packages/authlib/integrations/httpx_client/assertion_client.py:5: AuthlibDeprecationWarning: The httpx module is deprecated; please use httpx2 instead.
   from ._compat import httpx2
 Creating test database for alias 'default'...
-..................2026-10-19 01:25:57,178 INFO authn.services — [roles] Admin rights updated: +0 -47 (now 1)
-2026-10-19 01:25:57,182 INFO authn.services — [roles] Admin rights updated: +1 -0 (now 2)
-..2026-10-19 01:25:58,736 INFO authn.services — [roles] Viewer rights updated: +1 -7 (now 2)
-.2026-10-19 01:25:59,499 INFO authn.services — [roles] Admin rights updated: +0 -2 (now 46)
-...2026-10-19 01:26:05,217 INFO authn.services — [roles] Viewer rights updated: +1 -0 (now 9)
-.......................................................2026-10-19 01:27:47,093 INFO authn.services — [avatar] sara@acme.test set a profile photo
-.2026-10-19 01:27:47,860 INFO authn.services — [avatar] sara@acme.test set a profile photo
-2026-10-19 01:27:47,861 WARNING authn.services — [assign_avatar] pool dir missing: /tmp/nx-avatar-test-l0h03_9i/avatars/pool/human -- run `python manage.py seed_avatars` first
-.2026-10-19 01:27:48,548 WARNING authn.services — [assign_avatar] pool dir missing: /tmp/nx-avatar-test-l0h03_9i/avatars/pool/human -- run `python manage.py seed_avatars` first
-.2026-10-19 01:27:49,255 INFO authn.services — [avatar] sara@acme.test set a profile photo
-.2026-10-19 01:27:50,095 INFO authn.services — [avatar] sara@acme.test set a profile photo
-.2026-10-19 01:27:50,811 INFO authn.services — [avatar] sara@acme.test set a profile photo
-2026-10-19 01:27:50,831 INFO authn.services — [avatar] sara@acme.test set a profile photo
-.2026-10-19 01:27:51,570 INFO authn.services — [avatar] sara@acme.test set a profile photo
-.2026-10-19 01:27:52,314 INFO authn.services — [avatar] sara@acme.test set a profile photo
-....2026-10-19 01:27:59,696 WARNING django.request — Bad Request: /api/v1/auth/local/set-password/
-.2026-10-19 01:28:02,018 WARNING django.request — Forbidden: /api/v1/auth/local/reset-password/
-2026-10-19 01:28:03,445 INFO authn.services — [local-signin] vera@acme.test signed in with a local password
-.2026-10-19 01:28:05,762 WARNING django.request — Unauthorized: /api/v1/me/permissions/
-.2026-10-19 01:28:08,132 WARNING django.request — Forbidden: /api/v1/auth/local/signin/
-2026-10-19 01:28:08,133 WARNING django.request — Unauthorized: /api/v1/me/permissions/
-.2026-10-19 01:28:10,504 WARNING django.request — Not Found: /api/v1/auth/local/reset-password/
-.2026-10-19 01:28:14,248 INFO authn.services — [local-signin] sara@acme.test signed in with a local password
-.2026-10-19 01:28:17,430 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:18,113 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:18,870 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:19,572 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:20,260 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:20,969 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:21,670 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:22,359 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:23,108 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:23,799 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:23,802 WARNING django.request — Too Many Requests: /api/v1/auth/local/signin/
-.2026-10-19 01:28:26,917 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-2026-10-19 01:28:26,921 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
-.2026-10-19 01:28:26,938 ERROR django.request — Bad Gateway: /api/v1/auth/setup/start/
-.2026-10-19 01:28:27,233 INFO authn.services — [setup] install claimed by founder@acme.test — workspace 'Founder's Workspace'
-2026-10-19 01:28:27,235 WARNING django.request — Conflict: /api/v1/auth/setup/poll/
-2026-10-19 01:28:27,238 WARNING django.request — Conflict: /api/v1/auth/setup/start/
-....2026-10-19 01:28:27,535 INFO authn.services — [setup] install claimed by founder@acme.test — workspace 'Acme'
-.2026-10-19 01:28:29,899 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-2026-10-19 01:28:29,905 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
-.2026-10-19 01:28:32,322 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
-.2026-10-19 01:28:34,776 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-..2026-10-19 01:28:39,799 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-2026-10-19 01:28:39,809 WARNING chat.api — [chat/api] session opened personas=['Sara'] timeout=30m
-2026-10-19 01:28:39,844 WARNING chat.api — [chat/api] session auto-trigger refused user=387b6a5e-f7e4-4070-992f-041da531598d topic=a6aea98b-0e50-4124-8626-42934104300a
-.2026-10-19 01:28:42,212 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-2026-10-19 01:28:42,216 WARNING chat.api — [chat/api] mention refused user=facc82f8-b718-4f6f-854f-7dcb5529ae2c topic=b3cdae56-8e00-4d2c-b652-c3c1523a9d25 personas=['Sara']
-.2026-10-19 01:28:44,624 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-2026-10-19 01:28:44,628 WARNING chat.api — [chat/api] mention refused user=a3c9515c-f405-4ec1-bcc1-2b91881a623c topic=7a78f226-1814-4b0f-84ba-8f0a5fd10140 personas=['Sara']
-.2026-10-19 01:28:47,030 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-2026-10-19 01:28:47,036 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
-2026-10-19 01:28:47,040 WARNING chat.api — [chat/api] mention refused user=8143242b-2857-48a0-9439-fb5668c5f4bb topic=48c77e7e-fc44-479d-9d9c-f42d5a7238cd personas=['Sara', 'Bob']
-.2026-10-19 01:28:49,380 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-2026-10-19 01:28:49,385 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
-.2026-10-19 01:28:51,795 INFO workspace.services — [invite] user=vera@acme.test granted 1 topic(s) in project=Alpha
-....2026-10-19 01:29:01,324 INFO workspace.services — [invite] user=vera@acme.test granted 1 topic(s) in project=Alpha
-..2026-10-19 01:29:06,076 WARNING chat.api — [search] the ranking step failed; searching the rows instead
+..................2026-10-19 05:27:19,146 INFO authn.services — [roles] Admin rights updated: +0 -47 (now 1)
+2026-10-19 05:27:19,150 INFO authn.services — [roles] Admin rights updated: +1 -0 (now 2)
+..2026-10-19 05:27:20,655 INFO authn.services — [roles] Viewer rights updated: +1 -7 (now 2)
+.2026-10-19 05:27:21,453 INFO authn.services — [roles] Admin rights updated: +0 -2 (now 46)
+...2026-10-19 05:27:27,348 INFO authn.services — [roles] Viewer rights updated: +1 -0 (now 9)
+.......................................................2026-10-19 05:29:10,181 INFO authn.services — [avatar] sara@acme.test set a profile photo
+.2026-10-19 05:29:10,884 INFO authn.services — [avatar] sara@acme.test set a profile photo
+2026-10-19 05:29:10,886 WARNING authn.services — [assign_avatar] pool dir missing: /tmp/nx-avatar-test-2rzdq0i6/avatars/pool/human -- run `python manage.py seed_avatars` first
+.2026-10-19 05:29:11,573 WARNING authn.services — [assign_avatar] pool dir missing: /tmp/nx-avatar-test-2rzdq0i6/avatars/pool/human -- run `python manage.py seed_avatars` first
+.2026-10-19 05:29:12,290 INFO authn.services — [avatar] sara@acme.test set a profile photo
+.2026-10-19 05:29:13,093 INFO authn.services — [avatar] sara@acme.test set a profile photo
+.2026-10-19 05:29:13,799 INFO authn.services — [avatar] sara@acme.test set a profile photo
+2026-10-19 05:29:13,819 INFO authn.services — [avatar] sara@acme.test set a profile photo
+.2026-10-19 05:29:14,654 INFO authn.services — [avatar] sara@acme.test set a profile photo
+.2026-10-19 05:29:15,361 INFO authn.services — [avatar] sara@acme.test set a profile photo
+....2026-10-19 05:29:22,732 WARNING django.request — Bad Request: /api/v1/auth/local/set-password/
+.2026-10-19 05:29:25,155 WARNING django.request — Forbidden: /api/v1/auth/local/reset-password/
+2026-10-19 05:29:26,513 INFO authn.services — [local-signin] vera@acme.test signed in with a local password
+.2026-10-19 05:29:28,919 WARNING django.request — Unauthorized: /api/v1/me/permissions/
+.2026-10-19 05:29:31,211 WARNING django.request — Forbidden: /api/v1/auth/local/signin/
+2026-10-19 05:29:31,213 WARNING django.request — Unauthorized: /api/v1/me/permissions/
+.2026-10-19 05:29:33,585 WARNING django.request — Not Found: /api/v1/auth/local/reset-password/
+.2026-10-19 05:29:37,318 INFO authn.services — [local-signin] sara@acme.test signed in with a local password
+.2026-10-19 05:29:40,412 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:41,139 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:41,901 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:42,578 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:43,258 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:43,950 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:44,630 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:45,312 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:46,120 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:46,802 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:46,804 WARNING django.request — Too Many Requests: /api/v1/auth/local/signin/
+.2026-10-19 05:29:49,794 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+2026-10-19 05:29:49,797 WARNING django.request — Unauthorized: /api/v1/auth/local/signin/
+..2026-10-19 05:29:50,159 INFO authn.services — [setup] install claimed by founder@acme.test — workspace 'Founder's Workspace'
+..2026-10-19 05:29:50,483 INFO authn.services — [setup] install claimed by founder@acme.test — workspace 'Acme'
+.2026-10-19 05:29:50,509 WARNING django.request — Not Found: /api/v1/auth/setup/start/
+2026-10-19 05:29:50,510 WARNING django.request — Not Found: /api/v1/auth/setup/poll/
+.2026-10-19 05:29:52,982 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+2026-10-19 05:29:52,989 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
+.2026-10-19 05:29:55,657 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
+.2026-10-19 05:29:58,093 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+..2026-10-19 05:30:02,975 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+2026-10-19 05:30:02,985 WARNING chat.api — [chat/api] session opened personas=['Sara'] timeout=30m
+2026-10-19 05:30:03,023 WARNING chat.api — [chat/api] session auto-trigger refused user=f1eea812-e4b5-4b27-b1b6-5576c0326c16 topic=9f1746c9-d744-4540-a5e0-a064c2a2c939
+.2026-10-19 05:30:05,465 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+2026-10-19 05:30:05,469 WARNING chat.api — [chat/api] mention refused user=ed9a79ef-1c66-4c7e-94e7-075f94aeac59 topic=133f2707-ecc0-4a6f-8034-74d3cd10e31d personas=['Sara']
+.2026-10-19 05:30:07,808 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+2026-10-19 05:30:07,811 WARNING chat.api — [chat/api] mention refused user=fd7d476b-0c72-4f2c-a910-28af09ef3547 topic=f83ba8d3-e484-426a-90c5-b28eb6645b2f personas=['Sara']
+.2026-10-19 05:30:10,262 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+2026-10-19 05:30:10,267 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
+2026-10-19 05:30:10,271 WARNING chat.api — [chat/api] mention refused user=440eceb6-bd1a-4028-a5b4-eee0344dbcff topic=c561dcac-521b-4252-8969-66ac34673064 personas=['Sara', 'Bob']
+.2026-10-19 05:30:12,685 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+2026-10-19 05:30:12,692 INFO chat.api — [chat/api] mention=Bob resolved persona=Bob
+.2026-10-19 05:30:15,103 INFO workspace.services — [invite] user=vera@acme.test granted 1 topic(s) in project=Alpha
+....2026-10-19 05:30:24,681 INFO workspace.services — [invite] user=vera@acme.test granted 1 topic(s) in project=Alpha
+..2026-10-19 05:30:29,589 WARNING chat.api — [search] the ranking step failed; searching the rows instead
 Traceback (most recent call last):
   File "/nexus/nucleus/chat/api.py", line 541, in search_messages
     ranked = await search_svc.semantic_ids(company, query, project_ids, limit)
@@ -68,169 +67,169 @@ Traceback (most recent call last):
   File "/usr/local/lib/python3.13/unittest/mock.py", line 2327, in _execute_mock_call
     raise effect
 RuntimeError: worker down
-...2026-10-19 01:29:13,157 WARNING django.request — Conflict: /api/v1/projects/92ba809c-d109-4033-94c4-acb600e9b33c/channels/3c70a86d-fbee-47ef-a07c-10c6c4f6d262/topics/f4097fb5-9f30-488c-9c2d-49e3d9bf4311/messages/4000da13-7a21-4389-a0cf-fcc4012e4872/nudge/
-2026-10-19 01:29:13,179 WARNING django.request — Not Found: /api/v1/projects/92ba809c-d109-4033-94c4-acb600e9b33c/channels/3c70a86d-fbee-47ef-a07c-10c6c4f6d262/topics/f4097fb5-9f30-488c-9c2d-49e3d9bf4311/messages/00000000-0000-0000-0000-000000000000/nudge/
-.2026-10-19 01:29:15,558 WARNING django.request — Forbidden: /api/v1/projects/2f8f5ef9-2fda-463b-8896-1795bb09fd61/channels/6e18fc72-8dd3-4a57-b662-06469ef3f54a/topics/8cafbbef-7af6-48cb-ad11-22b26e8061ea/messages/68c9f22c-2d70-499d-a0a4-039b7f2256c7/nudge/
-2026-10-19 01:29:15,562 WARNING django.request — Unprocessable Content: /api/v1/projects/2f8f5ef9-2fda-463b-8896-1795bb09fd61/channels/6e18fc72-8dd3-4a57-b662-06469ef3f54a/topics/8cafbbef-7af6-48cb-ad11-22b26e8061ea/messages/68c9f22c-2d70-499d-a0a4-039b7f2256c7/nudge/
-.2026-10-19 01:29:17,965 INFO chat.tasks — [pause-expiry] resumed 1 of 1 expired paused runs
-.2026-10-19 01:29:20,319 INFO chat.tasks — [pause-expiry] resumed 1 of 1 expired paused runs
-............2026-10-19 01:29:49,099 WARNING django.request — Conflict: /api/v1/projects/9b8299b5-e019-4a4e-ac9d-41c456cc5b25/channels/fd3cf958-ce76-45e9-8a0c-1ba87f7923c3/topics/f0bf643c-b027-4741-9852-94a635ec8b51/messages/c67c612d-9625-40f8-826e-ed16751894c5/questions/q1/
-..2026-10-19 01:29:53,816 WARNING chat.relay — [relay] engine reported error for msg 1ed7cd42-47ca-4b12-8c52-a07e66b4f6c7: status_code: 429 rate_limit_error (code: None)
-......2026-10-19 01:30:08,380 WARNING chat.relay — [relay] streaming error for msg f6e5da1c-ce4f-4fd5-a4c6-427fa8255add: RuntimeError: peer closed connection without sending complete message body
-..2026-10-19 01:30:13,119 WARNING chat.relay — [relay] streaming error for msg 344411af-7308-4618-903d-30a6ba6681a8: ReadError: 
-.2026-10-19 01:30:15,473 WARNING chat.relay — [relay] engine reported error for msg 41aa07ed-50ca-4bac-b420-7ad020e8ceff: httpx.ConnectError: [Errno 111] Connection refused (code: None)
-.2026-10-19 01:30:17,847 WARNING chat.relay — [relay] streaming error for msg 661fc46a-22a2-41d1-84d6-0e4ea022a967: RuntimeError: nexus-ai /trigger/ returned 500: worker said no
-........2026-10-19 01:30:36,896 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-.2026-10-19 01:30:39,247 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-..2026-10-19 01:30:43,979 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-..2026-10-19 01:30:48,704 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-..2026-10-19 01:30:53,447 WARNING django.request — Forbidden: /api/v1/projects/7c9a7fbb-8c40-4a5c-8b44-b3998d39377d/channels/30473089-428d-4a83-b64e-90dcb4bd063e/topics/a1badcd1-f5c7-4938-900f-6a046bb66a94/messages/b95536c4-2f40-4495-89a5-39cadb296c36/stop/
-............2026-10-19 01:31:22,365 INFO gateway.api — [gateway] token 'for-vera' created by owner@acme.test for vera@acme.test
-.2026-10-19 01:31:24,698 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
-.2026-10-19 01:31:27,094 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
-.2026-10-19 01:31:29,456 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
-.2026-10-19 01:31:31,786 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
-.2026-10-19 01:31:34,168 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
-.2026-10-19 01:31:36,494 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
-.2026-10-19 01:31:38,867 WARNING django.request — Unauthorized: /api/v1/mcp/
-2026-10-19 01:31:38,869 WARNING django.request — Unauthorized: /api/v1/mcp/
-.2026-10-19 01:31:41,222 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
-2026-10-19 01:31:41,227 WARNING django.request — Forbidden: /api/v1/mcp/
-.2026-10-19 01:31:43,567 WARNING django.request — Unauthorized: /api/v1/mcp/
-2026-10-19 01:31:43,570 WARNING django.request — Unauthorized: /api/v1/mcp/
-2026-10-19 01:31:43,578 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
-2026-10-19 01:31:43,584 INFO gateway.api — [gateway] token 4bb2a408-75f3-4a49-b971-6b69f4cee402 revoked by owner@acme.test
-2026-10-19 01:31:43,588 WARNING django.request — Unauthorized: /api/v1/mcp/
-.2026-10-19 01:31:45,930 INFO gateway.api — [gateway] token 'mine' created by owner@acme.test for owner@acme.test
-2026-10-19 01:31:45,937 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
-2026-10-19 01:31:45,958 WARNING django.request — Forbidden: /api/v1/gateway/tokens/8d4d68ae-69f4-4d9b-ba1d-33dd8fc0f3da/
-2026-10-19 01:31:45,962 INFO gateway.api — [gateway] token 092ba249-e17c-41a8-930c-cdcb33ae31a7 revoked by sara@acme.test
-.2026-10-19 01:31:48,277 INFO gateway.api — [gateway] token 'laptop' created by owner@acme.test for owner@acme.test
-2026-10-19 01:31:48,295 WARNING django.request — Forbidden: /api/v1/gateway/tokens/
-2026-10-19 01:31:48,312 WARNING django.request — Forbidden: /api/v1/gateway/tokens/
-2026-10-19 01:31:49,026 INFO gateway.api — [gateway] token 'laptop' created by pat@acme.test for pat@acme.test
-2026-10-19 01:31:49,039 WARNING django.request — Forbidden: /api/v1/gateway/tokens/
-2026-10-19 01:31:49,049 INFO gateway.api — [gateway] token 'laptop' created by owner@acme.test for sara@acme.test
-.2026-10-19 01:31:51,394 WARNING django.request — Forbidden: /api/v1/mcp-catalog/
-2026-10-19 01:31:51,399 WARNING django.request — Forbidden: /api/v1/persona-catalog/
-...................2026-10-19 01:32:10,624 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: model_failure (status 401)
-2026-10-19 01:32:10,630 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: unsupported_provider (status None)
-2026-10-19 01:32:10,637 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: timeout (status None)
-2026-10-19 01:32:10,644 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: error (status 400)
-2026-10-19 01:32:10,651 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: error (status 400)
-2026-10-19 01:32:10,657 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: error (status 418)
-..2026-10-19 01:32:15,331 WARNING django.request — Bad Request: /api/v1/model-configs/check/
-2026-10-19 01:32:15,341 WARNING django.request — Bad Request: /api/v1/model-configs/check/
-2026-10-19 01:32:15,348 WARNING intelligence.services — [model_check] worker call failed: ConnectError
-2026-10-19 01:32:15,348 ERROR django.request — Bad Gateway: /api/v1/model-configs/check/
-2026-10-19 01:32:15,354 ERROR django.request — Service Unavailable: /api/v1/model-configs/check/
-.2026-10-19 01:32:17,729 WARNING django.request — Forbidden: /api/v1/model-configs/check/
-....2026-10-19 01:32:27,251 WARNING django.request — Forbidden: /api/v1/projects/80dec32d-ce63-4aa2-b6dc-92b6555e4c4d/recall/2a2220ba-6d3c-4e5f-9253-b2a5f8f58430/
-2026-10-19 01:32:27,276 WARNING django.request — Bad Request: /api/v1/projects/80dec32d-ce63-4aa2-b6dc-92b6555e4c4d/recall/2a2220ba-6d3c-4e5f-9253-b2a5f8f58430/
-2026-10-19 01:32:27,283 WARNING django.request — Forbidden: /api/v1/projects/80dec32d-ce63-4aa2-b6dc-92b6555e4c4d/recall/2a2220ba-6d3c-4e5f-9253-b2a5f8f58430/
-..2026-10-19 01:32:32,056 WARNING django.request — Not Found: /api/v1/internal/recall/
-..2026-10-19 01:32:36,824 WARNING django.request — Forbidden: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-2026-10-19 01:32:36,840 WARNING django.request — Bad Request: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-2026-10-19 01:32:36,847 WARNING django.request — Bad Request: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-2026-10-19 01:32:36,854 WARNING django.request — Bad Request: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-2026-10-19 01:32:36,862 WARNING django.request — Bad Request: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-2026-10-19 01:32:36,870 WARNING django.request — Bad Request: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-2026-10-19 01:32:36,877 WARNING django.request — Bad Request: /api/v1/projects/d6c49a9d-0fee-4cab-a4fd-72086e4ce7c5/routines/
-..2026-10-19 01:32:41,593 WARNING django.request — Conflict: /api/v1/projects/0f9304e6-4120-4180-add3-2e5ce379a9c5/routines/e82a80f5-0fc0-48cc-8435-807f64342cca/
-2026-10-19 01:32:41,607 WARNING django.request — Forbidden: /api/v1/projects/0f9304e6-4120-4180-add3-2e5ce379a9c5/routines/f0676157-927e-45d2-9416-66943fcae5fe/
-.....2026-10-19 01:32:53,450 WARNING django.request — Not Found: /api/v1/model-configs/00000000-0000-0000-0000-000000000000/utility/
-2026-10-19 01:32:53,457 WARNING django.request — Not Found: /api/v1/model-configs/810d3a5d-36b8-4a0d-8631-ab50bda32933/utility/
-..2026-10-19 01:32:58,189 WARNING django.request — Forbidden: /api/v1/model-configs/19c5c6ce-e69e-4bcf-b86b-a51306d31e70/utility/
-2026-10-19 01:32:58,203 WARNING django.request — Forbidden: /api/v1/model-configs/19c5c6ce-e69e-4bcf-b86b-a51306d31e70/utility/
-..2026-10-19 01:33:02,900 WARNING django.request — Forbidden: /api/v1/ai-config/
-......2026-10-19 01:33:07,698 ERROR django.request — Bad Gateway: /api/v1/mcp-servers/7b5bf2ea-7aa9-4304-87ce-ea72aa195689/oauth/authorize/
-.....2026-10-19 01:33:19,661 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:33:22,099 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-..2026-10-19 01:33:26,758 WARNING django.request — Unauthorized: /api/v1/internal/usage/
-.....2026-10-19 01:33:38,544 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:33:40,963 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:33:40,971 WARNING django.request — Forbidden: /api/v1/usage/company/
-.2026-10-19 01:33:43,367 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:33:43,378 WARNING django.request — Forbidden: /api/v1/projects/e8b0c083-47a9-46c2-a6b1-5449a405cdac/usage/
-....2026-10-19 01:33:52,851 WARNING django.request — Unauthorized: /api/v1/internal/topics/3cab0096-6a86-49bd-bbd5-6fe32776e04b/history/
-.....2026-10-19 01:34:04,796 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:34:07,233 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:07,711 WARNING django.request — Too Many Requests: /api/v1/hooks/sC4ikbTedwL0aZcUWlF_mEGmMYMzHRUwVKPwddUN-MQ/
-2026-10-19 01:34:07,776 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:34:10,191 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:10,202 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,210 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,222 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,231 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,239 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,248 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,257 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,266 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,277 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,293 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,302 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,312 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,321 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,331 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,340 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,351 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,360 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,369 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,379 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,387 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,396 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,404 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,413 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,421 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,430 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,438 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,447 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,457 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,465 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,474 WARNING django.request — Conflict: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-2026-10-19 01:34:10,484 WARNING django.request — Too Many Requests: /api/v1/hooks/feISw0vsWnDqSxqsxwYH-Lc92LUDdGeQX0sKodAEmN0/
-.2026-10-19 01:34:12,932 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:12,949 WARNING django.request — Forbidden: /api/v1/hooks/SD4GyFmQW7v909jyTS2PbRcb99KT_aJZpVjaRt30enY/
-.2026-10-19 01:34:15,325 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:15,337 WARNING scheduling.hooks — [hook] rate limit unavailable for 122327a2-42d5-4732-bd52-31059c6180bd: RuntimeError
-2026-10-19 01:34:15,338 ERROR django.request — Service Unavailable: /api/v1/hooks/e-UjCp8CVs6drZW9ZgF9QzGEHkI1AAM2vxZP_7dsXIk/
-.2026-10-19 01:34:17,714 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:17,731 WARNING django.request — Conflict: /api/v1/hooks/He89sNz1-P91T70FB0dvYwewgIbYw3UOKas_IZcJILM/
-.2026-10-19 01:34:20,127 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:20,153 WARNING django.request — Not Found: /api/v1/hooks/gDcRbIn4PtX8XqoobLUuOEX_Tl0Ac2WFZKlblUMdbJw/
-2026-10-19 01:34:20,179 WARNING django.request — Not Found: /api/v1/hooks/gDcRbIn4PtX8XqoobLUuOEX_Tl0Ac2WFZKlblUMdbJw/
-.2026-10-19 01:34:22,609 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:34:25,001 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:25,010 WARNING django.request — Not Found: /api/v1/hooks/nope-not-a-token/
-2026-10-19 01:34:25,020 WARNING django.request — Bad Request: /api/v1/hooks/_pIAYB4dtx9nCF1vOmLnUdLw26ZpRyPFdPYuB92mzw8/
-2026-10-19 01:34:25,028 WARNING django.request — Content Too Large: /api/v1/hooks/_pIAYB4dtx9nCF1vOmLnUdLw26ZpRyPFdPYuB92mzw8/
-2026-10-19 01:34:25,037 WARNING django.request — Content Too Large: /api/v1/hooks/_pIAYB4dtx9nCF1vOmLnUdLw26ZpRyPFdPYuB92mzw8/
-2026-10-19 01:34:25,048 WARNING django.request — Conflict: /api/v1/hooks/_pIAYB4dtx9nCF1vOmLnUdLw26ZpRyPFdPYuB92mzw8/
-2026-10-19 01:34:25,066 WARNING django.request — Forbidden: /api/v1/hooks/_pIAYB4dtx9nCF1vOmLnUdLw26ZpRyPFdPYuB92mzw8/
-.2026-10-19 01:34:27,539 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:34:29,921 WARNING django.request — Forbidden: /api/v1/projects/e007cc68-7892-4dbc-83cc-cd752788ff0f/channels/009c9212-7630-4253-a7c2-cefbeaa74626/topics/8b9a1374-a585-4677-8963-0c6dbd45b688/hooks/
-.2026-10-19 01:34:32,295 WARNING django.request — Forbidden: /api/v1/projects/7ebcf98d-e866-4a15-845b-d8370c57e051/channels/db5ef68a-fe00-4ae7-b499-6874496cebf8/topics/3bd48915-c5ec-4786-bbb9-5fc6c64794b0/hooks/
-2026-10-19 01:34:32,997 WARNING django.request — Forbidden: /api/v1/projects/7ebcf98d-e866-4a15-845b-d8370c57e051/channels/db5ef68a-fe00-4ae7-b499-6874496cebf8/topics/3bd48915-c5ec-4786-bbb9-5fc6c64794b0/hooks/
-2026-10-19 01:34:33,059 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-.2026-10-19 01:34:35,537 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:35,590 WARNING django.request — Not Found: /api/v1/projects/7469d057-7f20-4200-bb23-793e82c66cbf/channels/e2c8594f-38ac-4e62-aff0-a67cb0df2fba/topics/80d568c9-4d09-4b5e-b6f0-280ab87a94ae/hooks/3fc87c22-a063-4243-b5f1-2a5c1df0b7f5/
-.2026-10-19 01:34:37,989 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:34:38,053 WARNING django.request — Not Found: /api/v1/hooks/JCevOMzfDFM8bQPl19rQHH-d59GZ3Cirmkd1NcgWbL4/
-2026-10-19 01:34:38,111 WARNING django.request — Not Found: /api/v1/hooks/7cC66UZdnUvgGRPKNAcXCxD0wGJJFifDkuXoUKhheeA/
-.2026-10-19 01:34:40,503 WARNING django.request — Forbidden: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-2026-10-19 01:34:40,510 WARNING django.request — Bad Request: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-2026-10-19 01:34:40,517 WARNING django.request — Bad Request: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-2026-10-19 01:34:40,526 WARNING django.request — Bad Request: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-2026-10-19 01:34:40,535 WARNING django.request — Bad Request: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-2026-10-19 01:34:40,544 WARNING django.request — Bad Request: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-2026-10-19 01:34:40,553 WARNING django.request — Bad Request: /api/v1/projects/28bc7447-c1d7-48d2-b0bb-c68d6db102cd/runbooks/
-.2026-10-19 01:34:43,002 WARNING django.request — Bad Request: /api/v1/projects/65d174dd-2826-4893-8bea-36498b924ea5/runbooks/a0e10755-68d1-4a4f-af3a-f71526163341/
-2026-10-19 01:34:43,009 WARNING django.request — Forbidden: /api/v1/projects/65d174dd-2826-4893-8bea-36498b924ea5/runbooks/a0e10755-68d1-4a4f-af3a-f71526163341/
-..2026-10-19 01:34:47,769 WARNING django.request — Forbidden: /api/v1/projects/1f62fad3-1237-4f68-88e4-bed9620ee146/runbooks/4a540267-3c32-41a6-b7ed-4aa02f1198a9/run/
-..2026-10-19 01:34:52,611 WARNING django.request — Forbidden: /api/v1/projects/d0629074-432b-4aa8-8ac7-99b6ae67cfc5/runbooks/runs/cb60ea8a-fb71-460b-98dc-cafa7167b632/stop/
-2026-10-19 01:34:52,640 WARNING django.request — Conflict: /api/v1/projects/d0629074-432b-4aa8-8ac7-99b6ae67cfc5/runbooks/runs/cb60ea8a-fb71-460b-98dc-cafa7167b632/stop/
-..2026-10-19 01:34:57,754 INFO scheduling.runbooks — [runbook] run 82f0f432-3c9e-478c-8cde-90170fbb69fb was not queued, nothing to do
-..2026-10-19 01:35:02,566 ERROR scheduling.runbooks — [runbook] run a871e27c-4813-4084-b7ef-1db17145406e stopped driving
+...2026-10-19 05:30:36,858 WARNING django.request — Conflict: /api/v1/projects/6aedc68f-12bd-4f6f-bbf8-1c91875e229a/channels/e212d1bd-12da-4144-af43-90dfa448815b/topics/9c3be668-a801-46cc-96a7-5f9db03ba550/messages/254d879a-a5a6-4fbd-b5e5-a5bf225351da/nudge/
+2026-10-19 05:30:36,880 WARNING django.request — Not Found: /api/v1/projects/6aedc68f-12bd-4f6f-bbf8-1c91875e229a/channels/e212d1bd-12da-4144-af43-90dfa448815b/topics/9c3be668-a801-46cc-96a7-5f9db03ba550/messages/00000000-0000-0000-0000-000000000000/nudge/
+.2026-10-19 05:30:39,237 WARNING django.request — Forbidden: /api/v1/projects/0fa074aa-6785-4fc6-8dcb-9445502e8a6a/channels/a7afd340-8b3c-4ce0-a68f-77bf2c6cb4e4/topics/0cd1bf22-cb8a-4acc-bd04-04222872d256/messages/709fb75e-3914-451d-8e6f-9877af6861c8/nudge/
+2026-10-19 05:30:39,240 WARNING django.request — Unprocessable Content: /api/v1/projects/0fa074aa-6785-4fc6-8dcb-9445502e8a6a/channels/a7afd340-8b3c-4ce0-a68f-77bf2c6cb4e4/topics/0cd1bf22-cb8a-4acc-bd04-04222872d256/messages/709fb75e-3914-451d-8e6f-9877af6861c8/nudge/
+.2026-10-19 05:30:41,701 INFO chat.tasks — [pause-expiry] resumed 1 of 1 expired paused runs
+.2026-10-19 05:30:44,060 INFO chat.tasks — [pause-expiry] resumed 1 of 1 expired paused runs
+............2026-10-19 05:31:12,998 WARNING django.request — Conflict: /api/v1/projects/e80a0c82-c80f-419d-a15e-5ced834f5348/channels/4168037c-3779-4ecd-a876-ff7a281b9949/topics/53f08c26-aa97-4e15-956c-c6bf23885d29/messages/744a9fcb-aa9e-454e-9cd4-b5d73388bb9a/questions/q1/
+..2026-10-19 05:31:17,776 WARNING chat.relay — [relay] engine reported error for msg 6f194d1c-18d2-43a5-9387-bfb01c3ba509: status_code: 429 rate_limit_error (code: None)
+......2026-10-19 05:31:32,367 WARNING chat.relay — [relay] streaming error for msg ec1ae299-14d2-40ee-9534-7606f485bfe1: RuntimeError: peer closed connection without sending complete message body
+..2026-10-19 05:31:37,145 WARNING chat.relay — [relay] streaming error for msg 3771bfbb-a3da-4588-a2cf-509bbc4fbb31: ReadError: 
+.2026-10-19 05:31:39,530 WARNING chat.relay — [relay] engine reported error for msg 70a416c3-0f50-415b-99fe-08e3487b5398: httpx.ConnectError: [Errno 111] Connection refused (code: None)
+.2026-10-19 05:31:41,859 WARNING chat.relay — [relay] streaming error for msg a2520209-82ef-4019-9e9d-940f37e6b5c7: RuntimeError: nexus-ai /trigger/ returned 500: worker said no
+........2026-10-19 05:32:01,199 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+.2026-10-19 05:32:03,561 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+..2026-10-19 05:32:08,368 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+..2026-10-19 05:32:13,147 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+..2026-10-19 05:32:17,895 WARNING django.request — Forbidden: /api/v1/projects/075301e7-8b25-4df5-8726-21b08ab07d2f/channels/6298edf1-8e53-46e0-8c97-f9f249adb8ae/topics/6689ec1a-c326-42e2-bf7f-9f32ee22dd88/messages/193361cf-6433-48fb-97a6-15134b4f05cd/stop/
+............2026-10-19 05:32:47,266 INFO gateway.api — [gateway] token 'for-vera' created by owner@acme.test for vera@acme.test
+.2026-10-19 05:32:49,700 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
+.2026-10-19 05:32:52,084 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
+.2026-10-19 05:32:54,491 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
+.2026-10-19 05:32:56,861 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
+.2026-10-19 05:32:59,306 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
+.2026-10-19 05:33:01,681 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
+.2026-10-19 05:33:04,155 WARNING django.request — Unauthorized: /api/v1/mcp/
+2026-10-19 05:33:04,158 WARNING django.request — Unauthorized: /api/v1/mcp/
+.2026-10-19 05:33:06,464 INFO gateway.api — [gateway] token 'for-owner' created by owner@acme.test for owner@acme.test
+2026-10-19 05:33:06,468 WARNING django.request — Forbidden: /api/v1/mcp/
+.2026-10-19 05:33:08,845 WARNING django.request — Unauthorized: /api/v1/mcp/
+2026-10-19 05:33:08,848 WARNING django.request — Unauthorized: /api/v1/mcp/
+2026-10-19 05:33:08,855 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
+2026-10-19 05:33:08,861 INFO gateway.api — [gateway] token f144be6e-39c9-4e88-ac1b-6eb09fc68294 revoked by owner@acme.test
+2026-10-19 05:33:08,865 WARNING django.request — Unauthorized: /api/v1/mcp/
+.2026-10-19 05:33:11,239 INFO gateway.api — [gateway] token 'mine' created by owner@acme.test for owner@acme.test
+2026-10-19 05:33:11,247 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
+2026-10-19 05:33:11,268 WARNING django.request — Forbidden: /api/v1/gateway/tokens/ea6ecb83-eab4-45f7-9f24-b8233c6b1a0f/
+2026-10-19 05:33:11,272 INFO gateway.api — [gateway] token 351413e9-04d5-42a7-a0f6-895779e4b8af revoked by sara@acme.test
+.2026-10-19 05:33:13,661 INFO gateway.api — [gateway] token 'laptop' created by owner@acme.test for owner@acme.test
+2026-10-19 05:33:13,678 WARNING django.request — Forbidden: /api/v1/gateway/tokens/
+2026-10-19 05:33:13,695 WARNING django.request — Forbidden: /api/v1/gateway/tokens/
+2026-10-19 05:33:14,390 INFO gateway.api — [gateway] token 'laptop' created by pat@acme.test for pat@acme.test
+2026-10-19 05:33:14,401 WARNING django.request — Forbidden: /api/v1/gateway/tokens/
+2026-10-19 05:33:14,408 INFO gateway.api — [gateway] token 'laptop' created by owner@acme.test for sara@acme.test
+.2026-10-19 05:33:16,764 WARNING django.request — Forbidden: /api/v1/mcp-catalog/
+2026-10-19 05:33:16,770 WARNING django.request — Forbidden: /api/v1/persona-catalog/
+...................2026-10-19 05:33:36,173 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: model_failure (status 401)
+2026-10-19 05:33:36,180 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: unsupported_provider (status None)
+2026-10-19 05:33:36,186 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: timeout (status None)
+2026-10-19 05:33:36,193 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: error (status 400)
+2026-10-19 05:33:36,200 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: error (status 400)
+2026-10-19 05:33:36,207 INFO intelligence.services — [model_check] openai:gpt-4o-mini refused: error (status 418)
+..2026-10-19 05:33:40,899 WARNING django.request — Bad Request: /api/v1/model-configs/check/
+2026-10-19 05:33:40,905 WARNING django.request — Bad Request: /api/v1/model-configs/check/
+2026-10-19 05:33:40,912 WARNING intelligence.services — [model_check] worker call failed: ConnectError
+2026-10-19 05:33:40,913 ERROR django.request — Bad Gateway: /api/v1/model-configs/check/
+2026-10-19 05:33:40,919 ERROR django.request — Service Unavailable: /api/v1/model-configs/check/
+.2026-10-19 05:33:43,262 WARNING django.request — Forbidden: /api/v1/model-configs/check/
+....2026-10-19 05:33:52,832 WARNING django.request — Forbidden: /api/v1/projects/c8ac28cb-8120-4019-bc6d-6527056c1570/recall/f02f36d2-39cd-4633-a14a-8c7ae7072244/
+2026-10-19 05:33:52,858 WARNING django.request — Bad Request: /api/v1/projects/c8ac28cb-8120-4019-bc6d-6527056c1570/recall/f02f36d2-39cd-4633-a14a-8c7ae7072244/
+2026-10-19 05:33:52,865 WARNING django.request — Forbidden: /api/v1/projects/c8ac28cb-8120-4019-bc6d-6527056c1570/recall/f02f36d2-39cd-4633-a14a-8c7ae7072244/
+..2026-10-19 05:33:57,611 WARNING django.request — Not Found: /api/v1/internal/recall/
+..2026-10-19 05:34:02,395 WARNING django.request — Forbidden: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+2026-10-19 05:34:02,410 WARNING django.request — Bad Request: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+2026-10-19 05:34:02,417 WARNING django.request — Bad Request: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+2026-10-19 05:34:02,424 WARNING django.request — Bad Request: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+2026-10-19 05:34:02,431 WARNING django.request — Bad Request: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+2026-10-19 05:34:02,438 WARNING django.request — Bad Request: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+2026-10-19 05:34:02,445 WARNING django.request — Bad Request: /api/v1/projects/e6c4c596-9c83-4693-82ff-6da8420c135e/routines/
+..2026-10-19 05:34:07,148 WARNING django.request — Conflict: /api/v1/projects/b3d91b53-1e71-4c3f-9fa8-3baf6f06b697/routines/366c14a8-99d2-415d-82a1-4a3241ab63de/
+2026-10-19 05:34:07,165 WARNING django.request — Forbidden: /api/v1/projects/b3d91b53-1e71-4c3f-9fa8-3baf6f06b697/routines/9a1cd33a-3dfc-4d35-9367-cbf7a9551814/
+.....2026-10-19 05:34:19,157 WARNING django.request — Not Found: /api/v1/model-configs/00000000-0000-0000-0000-000000000000/utility/
+2026-10-19 05:34:19,164 WARNING django.request — Not Found: /api/v1/model-configs/f7706562-6c84-4d28-bba3-de8f2581f41d/utility/
+..2026-10-19 05:34:23,910 WARNING django.request — Forbidden: /api/v1/model-configs/685932e9-eec0-41d7-84f6-dc2ee9de3cb1/utility/
+2026-10-19 05:34:23,927 WARNING django.request — Forbidden: /api/v1/model-configs/685932e9-eec0-41d7-84f6-dc2ee9de3cb1/utility/
+..2026-10-19 05:34:28,730 WARNING django.request — Forbidden: /api/v1/ai-config/
+......2026-10-19 05:34:33,546 ERROR django.request — Bad Gateway: /api/v1/mcp-servers/f268af46-fff9-4aaf-9f5c-f30a9d56dc44/oauth/authorize/
+.....2026-10-19 05:34:45,525 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:34:47,972 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+..2026-10-19 05:34:52,639 WARNING django.request — Unauthorized: /api/v1/internal/usage/
+.....2026-10-19 05:35:04,597 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:35:07,026 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:07,035 WARNING django.request — Forbidden: /api/v1/usage/company/
+.2026-10-19 05:35:09,423 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:09,435 WARNING django.request — Forbidden: /api/v1/projects/5d7e5435-ab80-4416-a598-30f371457a39/usage/
+....2026-10-19 05:35:18,997 WARNING django.request — Unauthorized: /api/v1/internal/topics/c113d8fe-44b0-4d1e-8621-ff068a013d34/history/
+.....2026-10-19 05:35:30,912 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:35:33,400 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:33,872 WARNING django.request — Too Many Requests: /api/v1/hooks/5rpFcHPJUlSQNB6ApqS0ejwDoTmwCxmHuG3kniBFq5I/
+2026-10-19 05:35:33,934 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:35:36,357 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:36,369 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,378 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,387 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,398 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,407 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,415 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,424 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,432 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,442 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,452 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,462 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,473 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,485 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,495 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,505 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,519 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,530 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,540 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,549 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,558 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,566 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,575 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,583 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,592 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,600 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,609 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,617 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,626 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,634 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,642 WARNING django.request — Conflict: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+2026-10-19 05:35:36,653 WARNING django.request — Too Many Requests: /api/v1/hooks/_B9vQjdPo55oJS78Ctv8vvYWZzicHhpxblRiHcarq84/
+.2026-10-19 05:35:39,078 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:39,095 WARNING django.request — Forbidden: /api/v1/hooks/YzBWH9tIHH-eEIUZhpc6-usmN1-JBBrydq6PHt2Merc/
+.2026-10-19 05:35:41,602 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:41,612 WARNING scheduling.hooks — [hook] rate limit unavailable for 27b1fabc-dbcc-4b1d-b6e0-989d65f7093f: RuntimeError
+2026-10-19 05:35:41,613 ERROR django.request — Service Unavailable: /api/v1/hooks/nHK11b1_lmMqT7SSFUcAeCAKPcAsjxu7viWO3iU-B3E/
+.2026-10-19 05:35:44,016 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:44,035 WARNING django.request — Conflict: /api/v1/hooks/7DVVVOp-lyxN0kgHFatgx8Dm5sOEWCRf8P9jLHVSrmI/
+.2026-10-19 05:35:46,450 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:46,478 WARNING django.request — Not Found: /api/v1/hooks/RKssS23KWgz20Uxxcu5JhzbWo8pb1tP488D-YrDKno0/
+2026-10-19 05:35:46,503 WARNING django.request — Not Found: /api/v1/hooks/RKssS23KWgz20Uxxcu5JhzbWo8pb1tP488D-YrDKno0/
+.2026-10-19 05:35:48,978 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:35:51,427 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:35:51,439 WARNING django.request — Not Found: /api/v1/hooks/nope-not-a-token/
+2026-10-19 05:35:51,448 WARNING django.request — Bad Request: /api/v1/hooks/7oToUkHR2hYjsXxec2A2acvconUw-r_FoTtSZfpsD2c/
+2026-10-19 05:35:51,456 WARNING django.request — Content Too Large: /api/v1/hooks/7oToUkHR2hYjsXxec2A2acvconUw-r_FoTtSZfpsD2c/
+2026-10-19 05:35:51,465 WARNING django.request — Content Too Large: /api/v1/hooks/7oToUkHR2hYjsXxec2A2acvconUw-r_FoTtSZfpsD2c/
+2026-10-19 05:35:51,475 WARNING django.request — Conflict: /api/v1/hooks/7oToUkHR2hYjsXxec2A2acvconUw-r_FoTtSZfpsD2c/
+2026-10-19 05:35:51,493 WARNING django.request — Forbidden: /api/v1/hooks/7oToUkHR2hYjsXxec2A2acvconUw-r_FoTtSZfpsD2c/
+.2026-10-19 05:35:53,905 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:35:56,304 WARNING django.request — Forbidden: /api/v1/projects/a751a9f2-d264-4b06-8c7a-35f1617592ff/channels/daaec496-e839-42bb-b299-150386813767/topics/e1883427-8ddd-48c0-a3a5-ceae9f11b4d6/hooks/
+.2026-10-19 05:35:58,742 WARNING django.request — Forbidden: /api/v1/projects/d4cfc9ce-22de-403b-b6f9-a982a62422b6/channels/8e49643c-aa15-45db-928f-5608352485ba/topics/c9a3ca08-d521-4339-acc8-212882dec636/hooks/
+2026-10-19 05:35:59,487 WARNING django.request — Forbidden: /api/v1/projects/d4cfc9ce-22de-403b-b6f9-a982a62422b6/channels/8e49643c-aa15-45db-928f-5608352485ba/topics/c9a3ca08-d521-4339-acc8-212882dec636/hooks/
+2026-10-19 05:35:59,550 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+.2026-10-19 05:36:02,011 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:36:02,058 WARNING django.request — Not Found: /api/v1/projects/94fbf53d-e7d5-48e1-8d47-351b59db63be/channels/731105d1-2e76-4f95-8626-18d4d113c6c3/topics/2ee523cf-3234-4a95-ae33-3aba5ac73bda/hooks/72078f9f-a984-472d-af0c-7cd0a2b9d38b/
+.2026-10-19 05:36:04,513 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:36:04,581 WARNING django.request — Not Found: /api/v1/hooks/-h6MXH4p_qcdkoYu5wrOLHIhNJz8ehWexnYmXKXLrBA/
+2026-10-19 05:36:04,638 WARNING django.request — Not Found: /api/v1/hooks/4HQRyx5bX9VnnM8rcO7W2jAojvNlRD91z076SxGr-BU/
+.2026-10-19 05:36:07,039 WARNING django.request — Forbidden: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+2026-10-19 05:36:07,046 WARNING django.request — Bad Request: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+2026-10-19 05:36:07,053 WARNING django.request — Bad Request: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+2026-10-19 05:36:07,062 WARNING django.request — Bad Request: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+2026-10-19 05:36:07,073 WARNING django.request — Bad Request: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+2026-10-19 05:36:07,082 WARNING django.request — Bad Request: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+2026-10-19 05:36:07,090 WARNING django.request — Bad Request: /api/v1/projects/bcc8c3a2-6e32-47a7-bbe6-00d37eb60523/runbooks/
+.2026-10-19 05:36:09,455 WARNING django.request — Bad Request: /api/v1/projects/58b8648c-746e-4e26-989f-e16e94a70672/runbooks/b6e98cdd-79c4-4a14-8fa6-27957501be24/
+2026-10-19 05:36:09,463 WARNING django.request — Forbidden: /api/v1/projects/58b8648c-746e-4e26-989f-e16e94a70672/runbooks/b6e98cdd-79c4-4a14-8fa6-27957501be24/
+..2026-10-19 05:36:14,216 WARNING django.request — Forbidden: /api/v1/projects/c288795d-a8df-4dba-a5cd-74375544c574/runbooks/6215c60c-fae8-4c25-929f-7ebef783bdc8/run/
+..2026-10-19 05:36:19,027 WARNING django.request — Forbidden: /api/v1/projects/9cb6cddc-8f01-4b7a-b848-79b4813ef0f4/runbooks/runs/d5d92681-5e66-428c-a125-31b4fae1648b/stop/
+2026-10-19 05:36:19,056 WARNING django.request — Conflict: /api/v1/projects/9cb6cddc-8f01-4b7a-b848-79b4813ef0f4/runbooks/runs/d5d92681-5e66-428c-a125-31b4fae1648b/stop/
+..2026-10-19 05:36:24,198 INFO scheduling.runbooks — [runbook] run df01c717-957c-4deb-bb48-4aef2750eb33 was not queued, nothing to do
+..2026-10-19 05:36:29,160 ERROR scheduling.runbooks — [runbook] run 09f54bdb-ca29-4216-95de-c6c89273730e stopped driving
 Traceback (most recent call last):
   File "/nexus/nucleus/scheduling/runbooks.py", line 415, in execute_run
     _drive(run)
@@ -247,183 +246,183 @@ Traceback (most recent call last):
   File "/usr/local/lib/python3.13/unittest/mock.py", line 1234, in _execute_mock_call
     raise effect
 RuntimeError: the database went away
-...2026-10-19 01:35:09,871 WARNING django.request — Forbidden: /api/v1/projects/4c66dcd0-ff61-4581-9735-97fb5e345c15/channels/98fdd3c6-302a-42e1-ba5d-8258c8dc9eb5/topics/f10ba628-819e-4914-b4a5-7af4cc419286/schedules/
-2026-10-19 01:35:09,938 WARNING django.request — Bad Request: /api/v1/projects/4c66dcd0-ff61-4581-9735-97fb5e345c15/channels/98fdd3c6-302a-42e1-ba5d-8258c8dc9eb5/topics/f10ba628-819e-4914-b4a5-7af4cc419286/schedules/
-2026-10-19 01:35:09,964 WARNING django.request — Bad Request: /api/v1/projects/4c66dcd0-ff61-4581-9735-97fb5e345c15/channels/98fdd3c6-302a-42e1-ba5d-8258c8dc9eb5/topics/f10ba628-819e-4914-b4a5-7af4cc419286/schedules/
-..2026-10-19 01:35:14,822 WARNING scheduling.tasks — [scheduling] fire_persona_schedule: schedule cea3589f-a388-4145-80e4-bfe68f17af88 skipped: sara@acme.test can no longer call personas in this topic
-.2026-10-19 01:35:17,268 WARNING scheduling.tasks — [scheduling] fire_persona_schedule: schedule 33379def-dbd9-4fab-be65-6d9c391f42e1 skipped: its creator no longer has an account here
-.2026-10-19 01:35:19,600 WARNING django.request — Forbidden: /api/v1/projects/0f962ddb-eb6f-438b-8021-b11ea97e3729/channels/fa5ba2ea-9814-4b72-b599-51c35891dc6c/topics/c1e3e2c5-ebaf-4059-828d-c8bb973f17cd/schedules/
-.2026-10-19 01:35:22,067 WARNING django.request — Bad Request: /api/v1/projects/38ef2357-f409-4b77-aabd-203f4a881250/channels/5447a6cf-6cdf-4557-8a96-a5c3b7959f5e/topics/6fa3cf9e-dc22-4b8d-ba43-9fc75ce587aa/schedules/
-.2026-10-19 01:35:24,430 WARNING django.request — Bad Request: /api/v1/projects/b8ab822d-773b-4dcd-a6cc-13e40df79251/runbooks/
-2026-10-19 01:35:24,438 WARNING django.request — Bad Request: /api/v1/projects/b8ab822d-773b-4dcd-a6cc-13e40df79251/runbooks/
-2026-10-19 01:35:24,446 WARNING django.request — Bad Request: /api/v1/projects/b8ab822d-773b-4dcd-a6cc-13e40df79251/runbooks/
-.2026-10-19 01:35:26,784 WARNING django.request — Bad Request: /api/v1/projects/11e297a8-c99b-43be-ae40-44862d995c65/runbooks/3ae2b9aa-f8df-4197-a3a3-1785cae85b4e/run/
-.2026-10-19 01:35:29,154 WARNING django.request — Bad Request: /api/v1/projects/c45d0b72-d40a-4611-8084-3a1d01bcab86/runbooks/f657d8ef-c1b2-4f60-90fe-e938ed217859/
-2026-10-19 01:35:29,163 WARNING django.request — Bad Request: /api/v1/projects/c45d0b72-d40a-4611-8084-3a1d01bcab86/runbooks/
-.2026-10-19 01:35:31,505 ERROR scheduling.tasks — [scheduling] fire_persona_schedule failed for schedule 8066fd20-a526-47d2-a541-fd5358aae005
+...2026-10-19 05:36:36,528 WARNING django.request — Forbidden: /api/v1/projects/bd44cd34-1dbe-4c45-a410-eea2c7fe271a/channels/f2e133dd-dbdf-4dcc-bd30-2394d589724d/topics/99107bd0-c6b5-4aae-9af1-b4479fcc24ba/schedules/
+2026-10-19 05:36:36,601 WARNING django.request — Bad Request: /api/v1/projects/bd44cd34-1dbe-4c45-a410-eea2c7fe271a/channels/f2e133dd-dbdf-4dcc-bd30-2394d589724d/topics/99107bd0-c6b5-4aae-9af1-b4479fcc24ba/schedules/
+2026-10-19 05:36:36,625 WARNING django.request — Bad Request: /api/v1/projects/bd44cd34-1dbe-4c45-a410-eea2c7fe271a/channels/f2e133dd-dbdf-4dcc-bd30-2394d589724d/topics/99107bd0-c6b5-4aae-9af1-b4479fcc24ba/schedules/
+..2026-10-19 05:36:41,583 WARNING scheduling.tasks — [scheduling] fire_persona_schedule: schedule 09bcae70-efbf-4d01-bbf5-6d6f15c1b4cc skipped: sara@acme.test can no longer call personas in this topic
+.2026-10-19 05:36:44,030 WARNING scheduling.tasks — [scheduling] fire_persona_schedule: schedule 0c6f2b53-a046-4b95-a342-21a1a6475edc skipped: its creator no longer has an account here
+.2026-10-19 05:36:46,449 WARNING django.request — Forbidden: /api/v1/projects/edcc3b3e-bb2e-4ed2-aa20-9b4f453851e0/channels/25438bec-032c-42f0-86c7-c5fc0ab8f1a2/topics/6bdab516-9b69-42e0-bf30-49fd536b88ec/schedules/
+.2026-10-19 05:36:48,931 WARNING django.request — Bad Request: /api/v1/projects/cfa7e2d8-38ce-4717-b82d-75120da14326/channels/2b33fdab-f1f0-40b7-9493-e42206a9bae5/topics/6b683890-dca0-4887-925f-0e880718b397/schedules/
+.2026-10-19 05:36:51,307 WARNING django.request — Bad Request: /api/v1/projects/e7238d48-988a-4fdc-b5f4-a1e248f36e73/runbooks/
+2026-10-19 05:36:51,315 WARNING django.request — Bad Request: /api/v1/projects/e7238d48-988a-4fdc-b5f4-a1e248f36e73/runbooks/
+2026-10-19 05:36:51,323 WARNING django.request — Bad Request: /api/v1/projects/e7238d48-988a-4fdc-b5f4-a1e248f36e73/runbooks/
+.2026-10-19 05:36:53,709 WARNING django.request — Bad Request: /api/v1/projects/6e75b234-51b3-411a-8f16-d3218cff54e4/runbooks/397ebaa9-29f2-4fce-8cc1-08951ba2862f/run/
+.2026-10-19 05:36:56,162 WARNING django.request — Bad Request: /api/v1/projects/f6aa83fb-3cd5-4dd9-ab33-916972884e27/runbooks/208eac5d-6952-41e4-a234-15f3b4a2713e/
+2026-10-19 05:36:56,173 WARNING django.request — Bad Request: /api/v1/projects/f6aa83fb-3cd5-4dd9-ab33-916972884e27/runbooks/
+.2026-10-19 05:36:58,610 ERROR scheduling.tasks — [scheduling] fire_persona_schedule failed for schedule 6c7fbf7e-a8b4-4427-8acc-a6a9fc9e6efe
 Traceback (most recent call last):
   File "/nexus/nucleus/scheduling/tasks.py", line 135, in fire_persona_schedule
     raise RuntimeError("this chain waits for a person at a checkpoint — it cannot run on a schedule; run it by hand")
 RuntimeError: this chain waits for a person at a checkpoint — it cannot run on a schedule; run it by hand
-...2026-10-19 01:35:38,880 INFO scheduling.tasks — [checkpoint-expiry] expired 1 of 1 waiting runs
-.2026-10-19 01:35:41,324 WARNING django.request — Forbidden: /api/v1/projects/dd2e85a9-2201-4875-b674-4c0df713db3e/runbooks/runs/d7241bf8-475d-4b2b-a5d0-2b856dca2c97/checkpoint/
-2026-10-19 01:35:41,366 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:35:41,396 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
-2026-10-19 01:35:41,413 WARNING django.request — Conflict: /api/v1/projects/dd2e85a9-2201-4875-b674-4c0df713db3e/runbooks/runs/d7241bf8-475d-4b2b-a5d0-2b856dca2c97/checkpoint/
-.2026-10-19 01:35:43,881 INFO gateway.api — [gateway] token 'for-vera' created by owner@acme.test for vera@acme.test
-.2026-10-19 01:35:46,222 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
-.....2026-10-19 01:35:57,671 INFO workspace.services — [invite] user=new@acme.test granted 2 topic(s) in project=Alpha
-2026-10-19 01:35:57,674 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Beta
-2026-10-19 01:35:57,675 INFO authn.services — [invite] user=new@acme.test granted 2 project(s) at acceptance
-2026-10-19 01:35:57,675 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
-2026-10-19 01:35:57,676 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
-.2026-10-19 01:35:59,375 INFO workspace.services — [invite] user=new@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:35:59,376 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
-2026-10-19 01:35:59,376 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
-2026-10-19 01:35:59,377 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
-.2026-10-19 01:36:01,039 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Alpha
-2026-10-19 01:36:01,040 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
-2026-10-19 01:36:01,040 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=admin
-2026-10-19 01:36:01,041 INFO authn.services — [auth_verify] user=new@acme.test role=admin company=Acme
-.2026-10-19 01:36:02,751 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=viewer
-2026-10-19 01:36:02,752 INFO authn.services — [auth_verify] user=new@acme.test role=viewer company=Acme
-.2026-10-19 01:36:04,405 INFO workspace.services — [invite] user=new@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:04,405 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
-2026-10-19 01:36:04,406 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
-2026-10-19 01:36:04,406 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
-.2026-10-19 01:36:06,065 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Alpha
-2026-10-19 01:36:06,065 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
-2026-10-19 01:36:06,065 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
-2026-10-19 01:36:06,066 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
-.2026-10-19 01:36:07,817 INFO workspace.services — [invite] user=old@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:07,817 INFO authn.services — [invite] user=old@acme.test granted 1 project(s) at acceptance
-2026-10-19 01:36:07,817 INFO authn.services — [auth_verify] invitation accepted user=old@acme.test role=member
-2026-10-19 01:36:07,818 INFO authn.services — [auth_verify] user=old@acme.test role=member company=Acme
-.2026-10-19 01:36:09,483 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
-.2026-10-19 01:36:11,182 INFO workspace.services — [invite] user=new@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:11,182 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
-2026-10-19 01:36:11,182 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
-2026-10-19 01:36:11,183 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
-.2026-10-19 01:36:12,907 INFO workspace.services — [invite] user=new@acme.test granted 2 topic(s) in project=Alpha
-2026-10-19 01:36:12,911 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Beta
-2026-10-19 01:36:12,911 INFO authn.services — [invite] user=new@acme.test granted 2 project(s) at acceptance
-2026-10-19 01:36:12,912 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
-2026-10-19 01:36:12,912 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
-.2026-10-19 01:36:14,657 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-.2026-10-19 01:36:16,289 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
-..2026-10-19 01:36:20,310 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:20,316 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
-.2026-10-19 01:36:22,012 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:22,016 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
-2026-10-19 01:36:22,026 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:22,028 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
-..2026-10-19 01:36:25,281 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-....2026-10-19 01:36:31,924 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:36:31,928 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
-.2026-10-19 01:36:33,615 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
-.2026-10-19 01:36:35,244 INFO workspace.services — [invite] user=sara@acme.test granted 2 topic(s) in project=Alpha
-.2026-10-19 01:36:37,645 WARNING django.request — Forbidden: /api/v1/projects/302665d0-6878-45d3-b360-a56096dd3870/deliverables/
-2026-10-19 01:36:37,664 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=302665d0-6878-45d3-b360-a56096dd3870 by 244911e0-0e71-4dc8-ab5b-875ae0852b77
-2026-10-19 01:36:37,682 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=302665d0-6878-45d3-b360-a56096dd3870 by ff04dcc1-46b5-413e-b615-64c46725c0bf
-.2026-10-19 01:36:39,990 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=5383f3e7-1524-45b1-9e45-45ce552ef37a by 26b559bb-e05e-42cc-b100-a0f1e98a8b6c
-2026-10-19 01:36:40,007 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=5383f3e7-1524-45b1-9e45-45ce552ef37a by 26b559bb-e05e-42cc-b100-a0f1e98a8b6c
-2026-10-19 01:36:40,017 WARNING django.request — Forbidden: /api/v1/projects/5383f3e7-1524-45b1-9e45-45ce552ef37a/deliverables/c7b1b905-35a3-4e12-94e9-d15f1c8fee2a/
-2026-10-19 01:36:40,058 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=5383f3e7-1524-45b1-9e45-45ce552ef37a by 26b559bb-e05e-42cc-b100-a0f1e98a8b6c
-.2026-10-19 01:36:42,450 INFO workspace.deliverables — [deliverable] kept Chart 0 v1 in project=3eb5bcdc-cee5-4a7d-9df2-060554691dd5 by 8b952945-3d14-4caa-bc97-379b08ddb058
-2026-10-19 01:36:42,468 INFO workspace.deliverables — [deliverable] kept Chart 1 v1 in project=3eb5bcdc-cee5-4a7d-9df2-060554691dd5 by 8b952945-3d14-4caa-bc97-379b08ddb058
-2026-10-19 01:36:42,485 INFO workspace.deliverables — [deliverable] kept Chart 2 v1 in project=3eb5bcdc-cee5-4a7d-9df2-060554691dd5 by 8b952945-3d14-4caa-bc97-379b08ddb058
-2026-10-19 01:36:42,502 INFO workspace.deliverables — [deliverable] kept Chart 3 v1 in project=3eb5bcdc-cee5-4a7d-9df2-060554691dd5 by 8b952945-3d14-4caa-bc97-379b08ddb058
-.2026-10-19 01:36:44,887 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=08a06daa-2583-4ee2-a5aa-fd75833ef48c by 4959a481-32ae-4667-a048-41a81a46c1c3
-2026-10-19 01:36:44,906 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=08a06daa-2583-4ee2-a5aa-fd75833ef48c by 4959a481-32ae-4667-a048-41a81a46c1c3
-2026-10-19 01:36:44,923 INFO workspace.deliverables — [deliverable] kept Churn v1 in project=08a06daa-2583-4ee2-a5aa-fd75833ef48c by 4959a481-32ae-4667-a048-41a81a46c1c3
-.2026-10-19 01:36:47,288 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=1377cfd0-2ee3-4189-a7ec-c50427790d7b by 3c07fa0c-914b-4d40-8b00-1815bceb5c51
-2026-10-19 01:36:47,308 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=1377cfd0-2ee3-4189-a7ec-c50427790d7b by 3c07fa0c-914b-4d40-8b00-1815bceb5c51
-2026-10-19 01:36:47,329 WARNING django.request — Conflict: /api/v1/projects/1377cfd0-2ee3-4189-a7ec-c50427790d7b/deliverables/
-.2026-10-19 01:36:49,706 WARNING django.request — Bad Request: /api/v1/projects/a4d0ac8c-218e-4f19-8f29-900e9da64ec5/deliverables/
-2026-10-19 01:36:49,720 WARNING django.request — Bad Request: /api/v1/projects/a4d0ac8c-218e-4f19-8f29-900e9da64ec5/deliverables/
-2026-10-19 01:36:49,736 WARNING django.request — Bad Request: /api/v1/projects/a4d0ac8c-218e-4f19-8f29-900e9da64ec5/deliverables/
-2026-10-19 01:36:49,746 WARNING django.request — Not Found: /api/v1/projects/a4d0ac8c-218e-4f19-8f29-900e9da64ec5/deliverables/
-2026-10-19 01:36:49,758 WARNING django.request — Not Found: /api/v1/projects/a4d0ac8c-218e-4f19-8f29-900e9da64ec5/deliverables/
-.2026-10-19 01:36:51,414 WARNING django.request — Bad Request: /api/v1/members/invite/
-....2026-10-19 01:36:58,159 WARNING workspace.services — [invite] email to known@acme.test not sent: Supabase invite failed: A user with this email address has already been registered
-.2026-10-19 01:36:59,822 WARNING workspace.services — [invite] email to known@acme.test not sent: Supabase invite failed: A user with this email address has already been registered
-2026-10-19 01:36:59,822 WARNING workspace.services — [invite] recovery email to known@acme.test not sent: rate limited
-...2026-10-19 01:37:04,895 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
-.2026-10-19 01:37:06,528 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-..2026-10-19 01:37:09,862 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:37:09,874 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-.....2026-10-19 01:37:19,487 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
-.2026-10-19 01:37:21,130 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-.....2026-10-19 01:37:30,102 WARNING django.request — Not Found: /api/v1/projects/9c0c5b30-4a19-43e1-a63a-329d2b83d7ab/browser/session/
-.2026-10-19 01:37:32,474 ERROR django.request — Service Unavailable: /api/v1/projects/08ea75be-36da-4d9d-b733-26b7959b4407/browser/session/
-.2026-10-19 01:37:34,815 WARNING django.request — Forbidden: /api/v1/projects/d47e6ebb-cde4-45ce-9495-aa8f204244ef/browser/session/
-2026-10-19 01:37:34,822 INFO workspace.services — [browser] session user=f046033a-f0a1-4c87-bbf0-fdbe35b40537 project=d47e6ebb-cde4-45ce-9495-aa8f204244ef
-.2026-10-19 01:37:36,505 WARNING django.request — Forbidden: /api/v1/members/f0f6651a-7f43-4373-9f84-02b16a496c99/access/
-.2026-10-19 01:37:38,948 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:37:38,980 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
-2026-10-19 01:37:38,981 INFO workspace.services — [access] owner@acme.test set bob@acme.test to viewer (scoped)
-.2026-10-19 01:37:40,600 WARNING django.request — Bad Request: /api/v1/members/8452f1d3-e1aa-4cbe-a268-ca6d99cf5bed/access/
-.2026-10-19 01:37:43,074 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
-.2026-10-19 01:37:45,441 INFO workspace.services — [invite] user=bob@acme.test granted 2 topic(s) in project=Alpha
-2026-10-19 01:37:45,460 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:37:45,461 INFO workspace.services — [access] owner@acme.test set bob@acme.test to member (scoped)
-.2026-10-19 01:37:47,885 INFO workspace.services — [invite] user=bob@acme.test granted 2 topic(s) in project=Alpha
-2026-10-19 01:37:47,888 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
-2026-10-19 01:37:47,898 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Alpha
-...2026-10-19 01:37:53,481 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:37:53,489 INFO workspace.services — [access] owner@acme.test set bob@acme.test to admin (server-wide)
-.2026-10-19 01:37:55,166 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
-2026-10-19 01:37:55,166 INFO workspace.services — [access] owner@acme.test set sara@acme.test to member (scoped)
-.....2026-10-19 01:38:10,396 INFO workspace.services — [access] adam@acme.test set sara@acme.test to admin (server-wide)
-.2026-10-19 01:38:13,413 INFO workspace.services — [access] owner@acme.test set bea@acme.test to member (server-wide)
-..2026-10-19 01:38:16,753 WARNING django.request — Forbidden: /api/v1/projects/2e41e6a0-ffe3-43fe-b080-0fd375f763ad/
-.2026-10-19 01:38:18,461 WARNING django.request — Bad Request: /api/v1/projects/31f0120d-4819-4a83-9201-36b1cbd3fa22/
-....2026-10-19 01:38:25,150 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:38:25,172 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-...2026-10-19 01:38:30,136 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
-2026-10-19 01:38:30,140 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
-.2026-10-19 01:38:33,310 WARNING django.request — Forbidden: /api/v1/projects/server/members/316e1ed3-6086-4638-b3e3-e76984283d48/
-.2026-10-19 01:38:36,343 WARNING django.request — Forbidden: /api/v1/projects/a2a01910-34dd-428a-89ec-ac77735c98d3/team/
-2026-10-19 01:38:36,353 WARNING django.request — Forbidden: /api/v1/projects/a2a01910-34dd-428a-89ec-ac77735c98d3/team/invite/
-2026-10-19 01:38:36,375 WARNING django.request — Forbidden: /api/v1/projects/a2a01910-34dd-428a-89ec-ac77735c98d3/team/64ffbc1f-c2e6-4af2-b83c-3483f6033906/
-.2026-10-19 01:38:40,180 INFO workspace.services — [invite] user=pm@acme.test granted the whole project in project=Alpha
-2026-10-19 01:38:40,201 WARNING django.request — Not Found: /api/v1/projects/5b91cf67-f90e-4016-999d-4fcd79c58fa0/team/
-.2026-10-19 01:38:43,259 WARNING django.request — Bad Request: /api/v1/projects/server/members/a21e1f6d-8fa8-44bd-860b-05536a82a264/
-.2026-10-19 01:38:45,714 WARNING django.request — Conflict: /api/v1/projects/4352a0ec-53f4-455c-a48c-1f59a75a0259/terminal/session/
-.2026-10-19 01:38:48,073 ERROR django.request — Service Unavailable: /api/v1/projects/6b9a9d3b-7a79-422f-bfcc-84f3aeaff2e6/terminal/session/
-.2026-10-19 01:38:50,460 WARNING django.request — Forbidden: /api/v1/projects/d6384413-ba7b-4597-9b1e-20deeb44873f/terminal/session/
-2026-10-19 01:38:50,468 INFO workspace.services — [terminal] session user=2ba2fe2b-2b9b-4d96-be64-a4c64841deed project=d6384413-ba7b-4597-9b1e-20deeb44873f cwd=/nexus/projects/alpha-d6384413
-.2026-10-19 01:38:52,888 WARNING django.request — Bad Request: /api/v1/projects/b7dd4a67-3728-4bd6-98c8-2314d9130a39/embedder/
-2026-10-19 01:38:52,895 WARNING django.request — Bad Request: /api/v1/projects/b7dd4a67-3728-4bd6-98c8-2314d9130a39/embedder/
-..2026-10-19 01:38:57,593 WARNING django.request — Conflict: /api/v1/projects/69465f1b-35af-4b56-aaf9-eb9b4286f170/embedder/
-.2026-10-19 01:38:59,990 WARNING django.request — Forbidden: /api/v1/projects/6f8e925e-a1a7-4ae7-8c65-780aa3898f1e/embedder/
-.2026-10-19 01:39:02,352 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
-..2026-10-19 01:39:07,049 INFO intelligence.tasks — [reindex] project c4ed583a-71d6-4659-875a-4a2f9dedeef3 active again (2/2)
-.2026-10-19 01:39:09,442 WARNING intelligence.tasks — [reindex] project d806b782-af9a-4675-9d70-6e91e9651f68 never came back active — marked failed
-.2026-10-19 01:39:11,772 WARNING intelligence.tasks — [reindex] project e3eb9a49-7ca1-4c86-8e14-92bfba5efbf7 refused: vector store is not configured
-.2026-10-19 01:39:14,132 WARNING django.request — Conflict: /api/v1/projects/fef6a577-f750-4768-a282-a11adf024671/files/
-.2026-10-19 01:39:17,218 WARNING django.request — Not Found: /api/v1/projects/75476f96-ab94-4bf2-8b5b-82012e5e5d93/files/
-.2026-10-19 01:39:19,607 WARNING django.request — Content Too Large: /api/v1/projects/76f8358e-258e-4c28-96c0-953b6671e293/files/content/
-.2026-10-19 01:39:21,936 WARNING django.request — Unsupported Media Type: /api/v1/projects/6210a329-58d6-45b4-bc21-907828434188/files/content/
-......2026-10-19 01:39:36,337 WARNING django.request — Not Found: /api/v1/projects/310ad13f-f1ce-404c-8478-e03ec1970f45/files/content/
-2026-10-19 01:39:36,343 WARNING django.request — Bad Request: /api/v1/projects/310ad13f-f1ce-404c-8478-e03ec1970f45/files/content/
-2026-10-19 01:39:36,351 WARNING django.request — Bad Request: /api/v1/projects/310ad13f-f1ce-404c-8478-e03ec1970f45/files/
-.2026-10-19 01:39:38,732 WARNING django.request — Bad Request: /api/v1/projects/dbd8541c-8b46-4714-8afb-edf063bf384f/files/
-2026-10-19 01:39:38,739 WARNING django.request — Bad Request: /api/v1/projects/dbd8541c-8b46-4714-8afb-edf063bf384f/files/content/
-2026-10-19 01:39:38,745 WARNING django.request — Not Found: /api/v1/projects/dbd8541c-8b46-4714-8afb-edf063bf384f/files/content/
-2026-10-19 01:39:38,752 WARNING django.request — Bad Request: /api/v1/projects/dbd8541c-8b46-4714-8afb-edf063bf384f/files/content/
-2026-10-19 01:39:38,759 WARNING django.request — Bad Request: /api/v1/projects/dbd8541c-8b46-4714-8afb-edf063bf384f/files/content/
-....2026-10-19 01:39:49,037 WARNING django.request — Not Found: /api/v1/projects/b6ce81f6-02a0-4a26-aca4-74af1939ddf4/channels/f1b7355c-88e7-4615-b773-c7ad9b6b82d0/topics/e6219669-66e7-474a-8fa7-352c9e9c41c5/messages/
-..2026-10-19 01:39:53,749 INFO core.phone_home — [phone-home] open sent (total_tokens=0)
-.2026-10-19 01:39:56,093 ERROR django.request — Bad Gateway: /api/v1/mcp-servers/6ad4f2ec-f4ec-4169-9553-767bdd5e9f39/tools/refresh/
-..2026-10-19 01:40:00,827 WARNING django.request — Forbidden: /api/v1/mcp-servers/dd26b4f3-c34b-413f-b744-87540eb62472/tools/refresh/
+...2026-10-19 05:37:05,985 INFO scheduling.tasks — [checkpoint-expiry] expired 1 of 1 waiting runs
+.2026-10-19 05:37:08,462 WARNING django.request — Forbidden: /api/v1/projects/9c573e4d-51d0-49ba-8002-2c0c5f738ccc/runbooks/runs/22154951-c4f8-4849-b657-8581ebcc39a0/checkpoint/
+2026-10-19 05:37:08,506 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:37:08,536 INFO httpx — HTTP Request: POST http://centrifugo-dev:8000/api/publish "HTTP/1.1 200 OK"
+2026-10-19 05:37:08,554 WARNING django.request — Conflict: /api/v1/projects/9c573e4d-51d0-49ba-8002-2c0c5f738ccc/runbooks/runs/22154951-c4f8-4849-b657-8581ebcc39a0/checkpoint/
+.2026-10-19 05:37:11,020 INFO gateway.api — [gateway] token 'for-vera' created by owner@acme.test for vera@acme.test
+.2026-10-19 05:37:13,490 INFO gateway.api — [gateway] token 'for-sara' created by owner@acme.test for sara@acme.test
+.....2026-10-19 05:37:25,115 INFO workspace.services — [invite] user=new@acme.test granted 2 topic(s) in project=Alpha
+2026-10-19 05:37:25,119 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Beta
+2026-10-19 05:37:25,120 INFO authn.services — [invite] user=new@acme.test granted 2 project(s) at acceptance
+2026-10-19 05:37:25,120 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
+2026-10-19 05:37:25,121 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
+.2026-10-19 05:37:26,821 INFO workspace.services — [invite] user=new@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:26,822 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
+2026-10-19 05:37:26,822 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
+2026-10-19 05:37:26,823 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
+.2026-10-19 05:37:28,513 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Alpha
+2026-10-19 05:37:28,513 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
+2026-10-19 05:37:28,513 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=admin
+2026-10-19 05:37:28,514 INFO authn.services — [auth_verify] user=new@acme.test role=admin company=Acme
+.2026-10-19 05:37:30,194 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=viewer
+2026-10-19 05:37:30,195 INFO authn.services — [auth_verify] user=new@acme.test role=viewer company=Acme
+.2026-10-19 05:37:31,934 INFO workspace.services — [invite] user=new@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:31,934 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
+2026-10-19 05:37:31,934 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
+2026-10-19 05:37:31,935 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
+.2026-10-19 05:37:33,654 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Alpha
+2026-10-19 05:37:33,654 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
+2026-10-19 05:37:33,654 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
+2026-10-19 05:37:33,655 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
+.2026-10-19 05:37:35,377 INFO workspace.services — [invite] user=old@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:35,377 INFO authn.services — [invite] user=old@acme.test granted 1 project(s) at acceptance
+2026-10-19 05:37:35,377 INFO authn.services — [auth_verify] invitation accepted user=old@acme.test role=member
+2026-10-19 05:37:35,378 INFO authn.services — [auth_verify] user=old@acme.test role=member company=Acme
+.2026-10-19 05:37:37,034 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
+.2026-10-19 05:37:38,696 INFO workspace.services — [invite] user=new@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:38,696 INFO authn.services — [invite] user=new@acme.test granted 1 project(s) at acceptance
+2026-10-19 05:37:38,696 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
+2026-10-19 05:37:38,697 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
+.2026-10-19 05:37:40,401 INFO workspace.services — [invite] user=new@acme.test granted 2 topic(s) in project=Alpha
+2026-10-19 05:37:40,405 INFO workspace.services — [invite] user=new@acme.test granted the whole project in project=Beta
+2026-10-19 05:37:40,405 INFO authn.services — [invite] user=new@acme.test granted 2 project(s) at acceptance
+2026-10-19 05:37:40,406 INFO authn.services — [auth_verify] invitation accepted user=new@acme.test role=member
+2026-10-19 05:37:40,406 INFO authn.services — [auth_verify] user=new@acme.test role=member company=Acme
+.2026-10-19 05:37:42,102 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+.2026-10-19 05:37:43,812 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
+..2026-10-19 05:37:47,885 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:47,890 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
+.2026-10-19 05:37:49,568 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:49,572 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
+2026-10-19 05:37:49,582 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:49,584 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
+..2026-10-19 05:37:52,959 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+....2026-10-19 05:37:59,564 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:37:59,568 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
+.2026-10-19 05:38:01,251 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
+.2026-10-19 05:38:02,897 INFO workspace.services — [invite] user=sara@acme.test granted 2 topic(s) in project=Alpha
+.2026-10-19 05:38:05,257 WARNING django.request — Forbidden: /api/v1/projects/40eae967-d317-4422-bfe5-d78252e6bc86/deliverables/
+2026-10-19 05:38:05,275 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=40eae967-d317-4422-bfe5-d78252e6bc86 by 1966df5c-3619-476a-8bdb-6fa22fb22e7e
+2026-10-19 05:38:05,294 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=40eae967-d317-4422-bfe5-d78252e6bc86 by eb7782f6-5351-491a-bbd3-a289664529de
+.2026-10-19 05:38:07,684 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=8e01f3af-a6cf-4d3b-b2fc-4914b8e5352c by ca8a5474-693a-4993-9c06-303615d8d863
+2026-10-19 05:38:07,702 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=8e01f3af-a6cf-4d3b-b2fc-4914b8e5352c by ca8a5474-693a-4993-9c06-303615d8d863
+2026-10-19 05:38:07,711 WARNING django.request — Forbidden: /api/v1/projects/8e01f3af-a6cf-4d3b-b2fc-4914b8e5352c/deliverables/5d025d64-aa19-4411-b750-c469ce7fc16d/
+2026-10-19 05:38:07,747 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=8e01f3af-a6cf-4d3b-b2fc-4914b8e5352c by ca8a5474-693a-4993-9c06-303615d8d863
+.2026-10-19 05:38:10,120 INFO workspace.deliverables — [deliverable] kept Chart 0 v1 in project=c08f34ad-f0c4-47e2-94f3-14a88c457f74 by 68172a7b-2b90-4421-bc65-ab4ee06c02bd
+2026-10-19 05:38:10,137 INFO workspace.deliverables — [deliverable] kept Chart 1 v1 in project=c08f34ad-f0c4-47e2-94f3-14a88c457f74 by 68172a7b-2b90-4421-bc65-ab4ee06c02bd
+2026-10-19 05:38:10,153 INFO workspace.deliverables — [deliverable] kept Chart 2 v1 in project=c08f34ad-f0c4-47e2-94f3-14a88c457f74 by 68172a7b-2b90-4421-bc65-ab4ee06c02bd
+2026-10-19 05:38:10,169 INFO workspace.deliverables — [deliverable] kept Chart 3 v1 in project=c08f34ad-f0c4-47e2-94f3-14a88c457f74 by 68172a7b-2b90-4421-bc65-ab4ee06c02bd
+.2026-10-19 05:38:12,563 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=c1c90383-4301-4c18-8a34-be125228bbdb by 3417ac79-e326-4e30-bd4c-c08c9b92aaeb
+2026-10-19 05:38:12,581 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=c1c90383-4301-4c18-8a34-be125228bbdb by 3417ac79-e326-4e30-bd4c-c08c9b92aaeb
+2026-10-19 05:38:12,598 INFO workspace.deliverables — [deliverable] kept Churn v1 in project=c1c90383-4301-4c18-8a34-be125228bbdb by 3417ac79-e326-4e30-bd4c-c08c9b92aaeb
+.2026-10-19 05:38:15,038 INFO workspace.deliverables — [deliverable] kept Q3 revenue v1 in project=fef60646-de24-4887-af2e-d413881c9c53 by 7451472b-1bd4-480c-a325-7f006017a5c1
+2026-10-19 05:38:15,057 INFO workspace.deliverables — [deliverable] kept Q3 revenue v2 in project=fef60646-de24-4887-af2e-d413881c9c53 by 7451472b-1bd4-480c-a325-7f006017a5c1
+2026-10-19 05:38:15,078 WARNING django.request — Conflict: /api/v1/projects/fef60646-de24-4887-af2e-d413881c9c53/deliverables/
+.2026-10-19 05:38:17,434 WARNING django.request — Bad Request: /api/v1/projects/813c5fd1-be47-4e3e-8e03-6dc4a059f310/deliverables/
+2026-10-19 05:38:17,448 WARNING django.request — Bad Request: /api/v1/projects/813c5fd1-be47-4e3e-8e03-6dc4a059f310/deliverables/
+2026-10-19 05:38:17,462 WARNING django.request — Bad Request: /api/v1/projects/813c5fd1-be47-4e3e-8e03-6dc4a059f310/deliverables/
+2026-10-19 05:38:17,472 WARNING django.request — Not Found: /api/v1/projects/813c5fd1-be47-4e3e-8e03-6dc4a059f310/deliverables/
+2026-10-19 05:38:17,483 WARNING django.request — Not Found: /api/v1/projects/813c5fd1-be47-4e3e-8e03-6dc4a059f310/deliverables/
+.2026-10-19 05:38:19,169 WARNING django.request — Bad Request: /api/v1/members/invite/
+....2026-10-19 05:38:25,850 WARNING workspace.services — [invite] email to known@acme.test not sent: Supabase invite failed: A user with this email address has already been registered
+.2026-10-19 05:38:27,563 WARNING workspace.services — [invite] email to known@acme.test not sent: Supabase invite failed: A user with this email address has already been registered
+2026-10-19 05:38:27,563 WARNING workspace.services — [invite] recovery email to known@acme.test not sent: rate limited
+...2026-10-19 05:38:32,603 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Alpha
+.2026-10-19 05:38:34,290 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+..2026-10-19 05:38:37,656 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:38:37,668 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+.....2026-10-19 05:38:47,387 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
+.2026-10-19 05:38:49,037 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+.....2026-10-19 05:38:58,096 WARNING django.request — Not Found: /api/v1/projects/59aa258a-b919-479c-b9e0-3dea912c69cd/browser/session/
+.2026-10-19 05:39:00,562 ERROR django.request — Service Unavailable: /api/v1/projects/ff8cfcdf-df8e-40ea-95cd-31d13e1ddfb5/browser/session/
+.2026-10-19 05:39:02,919 WARNING django.request — Forbidden: /api/v1/projects/40ac9d87-4214-4467-9b6a-482a33fef69a/browser/session/
+2026-10-19 05:39:02,931 INFO workspace.services — [browser] session user=fe7b1dd5-46f2-4bb8-bb93-d85eb2f736c5 project=40ac9d87-4214-4467-9b6a-482a33fef69a
+.2026-10-19 05:39:04,635 WARNING django.request — Forbidden: /api/v1/members/4de03328-0975-494b-bca4-0f9fc9b4750f/access/
+.2026-10-19 05:39:07,012 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:39:07,043 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
+2026-10-19 05:39:07,044 INFO workspace.services — [access] owner@acme.test set bob@acme.test to viewer (scoped)
+.2026-10-19 05:39:08,787 WARNING django.request — Bad Request: /api/v1/members/06c51cea-65ff-4f34-ab26-50afa2e2f712/access/
+.2026-10-19 05:39:11,124 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
+.2026-10-19 05:39:13,542 INFO workspace.services — [invite] user=bob@acme.test granted 2 topic(s) in project=Alpha
+2026-10-19 05:39:13,560 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:39:13,560 INFO workspace.services — [access] owner@acme.test set bob@acme.test to member (scoped)
+.2026-10-19 05:39:15,913 INFO workspace.services — [invite] user=bob@acme.test granted 2 topic(s) in project=Alpha
+2026-10-19 05:39:15,917 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Beta
+2026-10-19 05:39:15,926 INFO workspace.services — [invite] user=bob@acme.test granted the whole project in project=Alpha
+...2026-10-19 05:39:21,756 INFO workspace.services — [invite] user=bob@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:39:21,765 INFO workspace.services — [access] owner@acme.test set bob@acme.test to admin (server-wide)
+.2026-10-19 05:39:23,453 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
+2026-10-19 05:39:23,453 INFO workspace.services — [access] owner@acme.test set sara@acme.test to member (scoped)
+.....2026-10-19 05:39:38,872 INFO workspace.services — [access] adam@acme.test set sara@acme.test to admin (server-wide)
+.2026-10-19 05:39:41,938 INFO workspace.services — [access] owner@acme.test set bea@acme.test to member (server-wide)
+..2026-10-19 05:39:45,326 WARNING django.request — Forbidden: /api/v1/projects/c5d4a0d0-d0b2-49c6-8b4d-7fd61d888b83/
+.2026-10-19 05:39:46,969 WARNING django.request — Bad Request: /api/v1/projects/59e63410-c8da-48ef-beeb-7df7407e6ce6/
+....2026-10-19 05:39:53,662 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:39:53,684 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+...2026-10-19 05:39:58,778 INFO workspace.services — [invite] user=sara@acme.test granted 1 topic(s) in project=Alpha
+2026-10-19 05:39:58,782 INFO workspace.services — [invite] user=sara@acme.test granted the whole project in project=Beta
+.2026-10-19 05:40:01,904 WARNING django.request — Forbidden: /api/v1/projects/server/members/581e5ab5-ad32-4d55-a741-9baf034930c4/
+.2026-10-19 05:40:04,921 WARNING django.request — Forbidden: /api/v1/projects/d00d71ba-58f8-4f25-84eb-daec42bb43f2/team/
+2026-10-19 05:40:04,931 WARNING django.request — Forbidden: /api/v1/projects/d00d71ba-58f8-4f25-84eb-daec42bb43f2/team/invite/
+2026-10-19 05:40:04,954 WARNING django.request — Forbidden: /api/v1/projects/d00d71ba-58f8-4f25-84eb-daec42bb43f2/team/90ccd163-cb30-443e-af9a-70642a8fc86a/
+.2026-10-19 05:40:08,803 INFO workspace.services — [invite] user=pm@acme.test granted the whole project in project=Alpha
+2026-10-19 05:40:08,821 WARNING django.request — Not Found: /api/v1/projects/d588b9d1-0bc2-4c59-88f6-3e0d1594bf77/team/
+.2026-10-19 05:40:11,934 WARNING django.request — Bad Request: /api/v1/projects/server/members/18dc7d73-5846-442f-ac2a-e4ef97fc7d4f/
+.2026-10-19 05:40:14,334 WARNING django.request — Conflict: /api/v1/projects/6843b914-3285-4b51-a74a-b584570a68a8/terminal/session/
+.2026-10-19 05:40:16,731 ERROR django.request — Service Unavailable: /api/v1/projects/0f3fc26c-9f35-48ec-a1dd-a69fbd47b5b2/terminal/session/
+.2026-10-19 05:40:19,069 WARNING django.request — Forbidden: /api/v1/projects/02ab29a9-d686-413a-a9fa-31cd9b69c75c/terminal/session/
+2026-10-19 05:40:19,081 INFO workspace.services — [terminal] session user=3a14365c-6888-4dc0-bd06-cec0e89047ca project=02ab29a9-d686-413a-a9fa-31cd9b69c75c cwd=/nexus/projects/alpha-02ab29a9
+.2026-10-19 05:40:21,479 WARNING django.request — Bad Request: /api/v1/projects/ef9f91c7-d597-43f6-9650-74f3393161ff/embedder/
+2026-10-19 05:40:21,486 WARNING django.request — Bad Request: /api/v1/projects/ef9f91c7-d597-43f6-9650-74f3393161ff/embedder/
+..2026-10-19 05:40:26,318 WARNING django.request — Conflict: /api/v1/projects/fb7bc163-8563-49c1-8028-dfc2f0ab7d45/embedder/
+.2026-10-19 05:40:28,712 WARNING django.request — Forbidden: /api/v1/projects/4e4b133e-9eb3-4e26-9133-8cd63d38542e/embedder/
+.2026-10-19 05:40:31,054 INFO chat.api — [chat/api] mention=Sara resolved persona=Sara
+..2026-10-19 05:40:35,869 INFO intelligence.tasks — [reindex] project 8bde20d2-8857-4c54-a0f8-6e694e1c011d active again (2/2)
+.2026-10-19 05:40:38,290 WARNING intelligence.tasks — [reindex] project 7a82e024-3fdb-4b05-8792-ed3dd782481e never came back active — marked failed
+.2026-10-19 05:40:40,607 WARNING intelligence.tasks — [reindex] project 2c3b16fa-82e4-4127-9322-77bb32c2093c refused: vector store is not configured
+.2026-10-19 05:40:43,085 WARNING django.request — Conflict: /api/v1/projects/05b6ab4b-0228-4a93-9c44-0440dce51657/files/
+.2026-10-19 05:40:46,165 WARNING django.request — Not Found: /api/v1/projects/08eed81c-58b6-471a-9fa5-363f20166fea/files/
+.2026-10-19 05:40:48,505 WARNING django.request — Content Too Large: /api/v1/projects/ec1580a3-5d92-4633-b927-9665c33cce56/files/content/
+.2026-10-19 05:40:50,922 WARNING django.request — Unsupported Media Type: /api/v1/projects/07004da7-887f-40e5-9b66-ef56807c3980/files/content/
+......2026-10-19 05:41:05,355 WARNING django.request — Not Found: /api/v1/projects/9e7cea59-a23d-40d0-8c28-7dbac9917b51/files/content/
+2026-10-19 05:41:05,362 WARNING django.request — Bad Request: /api/v1/projects/9e7cea59-a23d-40d0-8c28-7dbac9917b51/files/content/
+2026-10-19 05:41:05,369 WARNING django.request — Bad Request: /api/v1/projects/9e7cea59-a23d-40d0-8c28-7dbac9917b51/files/
+.2026-10-19 05:41:07,691 WARNING django.request — Bad Request: /api/v1/projects/c8973d0b-99d6-4144-9fa3-7786774d1f8f/files/
+2026-10-19 05:41:07,698 WARNING django.request — Bad Request: /api/v1/projects/c8973d0b-99d6-4144-9fa3-7786774d1f8f/files/content/
+2026-10-19 05:41:07,705 WARNING django.request — Not Found: /api/v1/projects/c8973d0b-99d6-4144-9fa3-7786774d1f8f/files/content/
+2026-10-19 05:41:07,712 WARNING django.request — Bad Request: /api/v1/projects/c8973d0b-99d6-4144-9fa3-7786774d1f8f/files/content/
+2026-10-19 05:41:07,719 WARNING django.request — Bad Request: /api/v1/projects/c8973d0b-99d6-4144-9fa3-7786774d1f8f/files/content/
+....2026-10-19 05:41:18,195 WARNING django.request — Not Found: /api/v1/projects/73c0c10c-6c96-41f6-9b90-1cc4da602f5c/channels/ce18575e-2fcd-40ae-b187-29d3da4c6bf2/topics/9f47e24c-b777-46c2-8f13-97f6ec9760a3/messages/
+..2026-10-19 05:41:23,006 INFO core.phone_home — [phone-home] open sent (total_tokens=0)
+.2026-10-19 05:41:25,349 ERROR django.request — Bad Gateway: /api/v1/mcp-servers/7a05be64-c57d-4599-b720-fe15e3f43a6b/tools/refresh/
+..2026-10-19 05:41:30,185 WARNING django.request — Forbidden: /api/v1/mcp-servers/3d17fcf2-ebc0-4e7c-b0c6-d2fe712eec40/tools/refresh/
 .....................................
 ----------------------------------------------------------------------
-Ran 457 tests in 918.353s
+Ran 456 tests in 926.191s
 
 OK
 Destroying test database for alias 'default'...
-Found 457 test(s).
+Found 456 test(s).
 [authn.0005] removed 0 agent.* right(s) [] and 0 role link(s)
 [authn.0005] renamed ai_model.* -> model_config.* (grants preserved)
 [0012] carried generation settings onto 0 persona row(s)

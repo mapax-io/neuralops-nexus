@@ -24,3 +24,25 @@ create unique index if not exists device_requests_pending_code
 
 alter table public.device_requests enable row level security;
 -- No policies on purpose: service-role-only access.
+
+-- ---------------------------------------------------------------------------
+-- phone-home (added 2026-10-18) — Step 6 ruling 5's collector table.
+-- ONE value ever leaves a customer's server: its total token count, sent on
+-- app open and app close. Each report is one row here; nothing else arrives.
+-- Same security stance: RLS on, NO policies — only the phone-home edge
+-- function (service role) can write, and nobody can read via the anon key.
+
+create table if not exists public.phone_home_events (
+  id            bigint generated always as identity primary key,
+  install_token text not null,                       -- which install reported
+  event         text not null check (event in ('open', 'close')),
+  total_tokens  bigint not null check (total_tokens >= 0),
+  received_at   timestamptz not null default now()
+);
+
+-- Fast "latest reports per install" lookups for the future portal dashboard.
+create index if not exists phone_home_events_by_install
+  on public.phone_home_events (install_token, received_at desc);
+
+alter table public.phone_home_events enable row level security;
+-- No policies on purpose: service-role-only access.

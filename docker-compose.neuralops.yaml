@@ -341,6 +341,12 @@ services:
       # no separate port in use).
       - NEURALOPS_SERVER_URL=https://node-3.tail9ed39a.ts.net
       - NEURALOPS_VERSION=dev
+      # Where create_owner's printed link sends the person to type the claim
+      # code. The image default is the public app (neuralopsnexus.ai/add_code
+      # — see neuralops/Dockerfile); dev points at the locally running web
+      # app instead. Change the host/port here if you run `npm run dev`
+      # somewhere else.
+      - NEURALOPS_PORTAL_URL=http://192.168.1.90:3000/add_code
       # Step 4 posture: DEBUG now defaults OFF in settings.py. Dev says so
       # explicitly — this also unlocks the dev-only SECRET_KEY fallback
       # (production gets SECRET_KEY from secrets.env via init-secrets).

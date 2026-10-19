@@ -878,7 +878,15 @@ polling with the CODE instead of the request_id is refused (the code alone
 can never fetch a token). Legacy functions (device-request/poll/verify v2.x)
 archived in portal/supabase/_archive/ before overwriting.
 Still open: end-to-end test B (fresh install shows the code itself and
-creates the owner) — runs when the install flow is wired next.
+creates the owner). First attempt 2026-10-18 evening: the dev database was
+WIPED (manage.py flush --noinput + container restart) and the claim page
+was up, but the session stopped before confirming what the app shows on an
+empty database — resume here: open the app, check whether the setup screen
+appears and shows a code (if it shows a login page or no code, that is the
+bug to chase — likely the frontend's setup screen, see FRONTEND-REVAMP.md).
+NOTE: the dev database is now EMPTY — users/chats/personas from before are
+gone; recreate dev data or finish test B before expecting the app to behave
+as before.
 
 Lessons from this verification:
 - **Supabase will not serve web pages from edge functions.** The gateway
@@ -902,6 +910,83 @@ image** (one Python 3.13, two venvs, no baked code, bind-mounted modules):
 `Ran 457 tests in 918.353s … OK`. With the engine's 110-passed run already
 on record, both suites are green on the image as it now stands — the Step 8a
 dev switch-over chapter is fully closed.
+
+**RULING (owner, 2026-10-18 evening) — ownership starts ONLY from the
+server's own terminal.** The web setup roads are gone: with /setup/start/
+and /setup/poll/ public, anyone who could reach a fresh install's address
+(same LAN, a scanner) could race the real owner for the claim. Now the only
+way to begin: `python manage.py create_owner` IN the server's terminal —
+which only the installer has. The command runs the whole code flow itself
+(asks the portal for a code → prints the code + the portal link → the
+person signs in there and types the code → the command polls, verifies the
+token, and creates the owner). Same shape as Docker's and GitHub's terminal
+login: the code travels terminal → web, carried by eyes; no password ever
+touches the terminal. `create_owner --manual` keeps the old email/password/
+pasted-token road for when the portal is unreachable. Both roads end in
+authn.services.claim_install — ONE creation path (company, owner, RBAC role,
+groups, seed_permissions runs inside, display name, avatar).
+Built: create_owner rewritten (claim flow default, --manual fallback, no
+duplicate creation code); authn/api.py setup_start+setup_poll endpoints and
+their schemas REMOVED (setup/status stays — harmless read the app uses for
+its "run the setup command" message); tests_step4 SetupFlowTests rewritten —
+claim_install tested at service level, plus a new test pinning the web roads
+CLOSED (404) so they can't quietly come back. The frontend's setup dialog
+(built earlier the same evening) was withdrawn to the app repo's _attic/;
+the servers screen shows the plain "run the setup command" message.
+BASELINE CHANGE: the nucleus suite loses the removed endpoint tests and
+gains the service-level ones — the next full run prints the new total
+(was 457); record it.
+VERIFY (owner): (1) nucleus suite green with the new total; (2) on the wiped
+dev server: `docker exec -it neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python
+manage.py create_owner` → code + link appear → claim on the portal page →
+command finishes with you as owner; (3) curl POST /api/v1/auth/setup/start/
+through nginx answers 404/405 (the road is gone); (4) the app connects you
+straight into the workspace.
+
+**VERIFIED (owner, 2026-10-18 night) — the full first-install experience,
+end to end (this closes test B).** On a wiped dev database: create_owner in
+the server's terminal printed the code + the /add_code link (the dev
+override URL) → the owner, in a SIGNED-OUT browser, opened the link, got
+the sign-in form ON the page, signed in, typed the code → the terminal
+finished setup → the owner connected through the app and is inside the
+workspace. Everything in the chain is the real code path: create_owner →
+portal functions → /add_code page → claim_install.
+VERIFIED (owner, 2026-10-19): nucleus suite `Ran 456 tests … OK` — the NEW
+BASELINE is 456 (was 457; endpoint tests became service-level ones), and the
+run's own log shows both old setup roads answering Not Found. Still open
+(tiny): the closed-door curl through nginx (POST /auth/setup/start/ →
+404/405) — the suite already proves it at the Django layer.
+Also agreed: the only remaining attack on the public /add_code page is code
+GUESSING — to be closed with a brake in the device-claim function (a few
+wrong codes per account → wait), like local sign-in's 10-per-5-minutes
+brake. TODO, next portal touch.
+
+**BUILT (2026-10-18) — phone-home collector (the last portal function).**
+The nucleus side has been done since Step 6 (core/phone_home.py, wired in
+core/asgi.py: 'open' on boot, 'close' at exit, fails silently offline, only
+the server process fires it). The portal side is now built:
+`phone_home_events` table appended to portal/supabase/schema.sql (RLS on,
+no policies — service-role only, same stance as device_requests) and
+`portal/supabase/functions/phone-home/index.ts` (validates the exact
+contract — install_token string, event 'open'|'close', total_tokens
+non-negative integer — refuses anything else with 400, stores one row,
+answers {ok:true}). Deploy with JWT verify ON, like the other APIs.
+VERIFY (owner): run the new table SQL, deploy the function, then README
+test C — a good report answers {ok:true} and appears as one row in
+phone_home_events; a garbage report (event 'reboot') answers 400 and
+stores nothing.
+
+**VERIFIED (owner, 2026-10-18) — phone-home live.** A real report
+({install_token, event:'open', total_tokens:1234}) answered {"ok":true}
+(the function only says ok after the row is stored — a failed insert
+answers 500); a garbage report (event 'reboot', negative tokens) was
+refused with the exact contract error. Lesson: the function was first
+created with a one-letter typo in its name (phone-name) — the URL is
+built from the name and names can't be edited, so the fix is create the
+correctly named function and delete the typo. The retired claim-page
+function and the typo twin are deleted from the dashboard; still listed
+and awaiting deletion: legacy `device-verify` (4 months old, nothing
+calls it — the new flow verifies the token inside nucleus itself).
 
 ## 5. DISTRIBUTION (owner, 2026-10-14) — one app image, compiled files only
 

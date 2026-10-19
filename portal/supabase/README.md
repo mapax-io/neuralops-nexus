@@ -30,10 +30,10 @@ shell-only air-gapped fallback.
 ## Deploy — four steps in the Supabase dashboard
 
 1. **The table.** SQL Editor → New query → paste `schema.sql` → Run.
-2. **Three functions with JWT verification ON** (the default):
+2. **Four functions with JWT verification ON** (the default):
    Edge Functions → Deploy new function → name it EXACTLY as the folder —
-   `device-request`, then `device-poll`, then `device-claim` — pasting each
-   folder's `index.ts`. The names are nucleus's contract (core/settings.py
+   `device-request`, then `device-poll`, then `device-claim`, then
+   `phone-home` — pasting each folder's `index.ts`. The names are nucleus's contract (core/settings.py
    defaults point at `/functions/v1/device-request` and `/device-poll`).
    Note: the editor's Save is NOT Deploy — the live function only changes
    when the Deploy button is pressed.
@@ -71,6 +71,25 @@ refused (denied) — by design.
 Test A ran green against the live project on 2026-10-18 (see
 docs/NUCLEUS-REVAMP.md).
 
+**C — phone-home (any terminal):**
+
+```bash
+# a report, exactly as nucleus sends it (core/phone_home.py)
+curl -s https://xgfsxikypxjhqlutiepw.supabase.co/functions/v1/phone-home \
+  -H "Authorization: Bearer <ANON_KEY>" -H "Content-Type: application/json" \
+  -d '{"install_token":"test-install-1","event":"open","total_tokens":1234}'
+# → {"ok":true}
+
+# garbage is refused, not stored
+curl -s https://xgfsxikypxjhqlutiepw.supabase.co/functions/v1/phone-home \
+  -H "Authorization: Bearer <ANON_KEY>" -H "Content-Type: application/json" \
+  -d '{"install_token":"test-install-1","event":"reboot","total_tokens":-5}'
+# → {"error":"event must be 'open' or 'close'"}
+```
+
+Then Dashboard → Table Editor → `phone_home_events` should show the one row.
+Delete the test row after checking.
+
 **B — the real thing (dev stack):** with a fresh install (no users), open the
 app's setup screen → it shows a code → claim it on the page → the setup
 screen finishes with you as owner. The second claim attempt answers 409.
@@ -83,5 +102,6 @@ screen finishes with you as owner. The second claim attempt answers 409.
 | `functions/device-request/` | install asks for a code | ON |
 | `functions/device-poll/` | install polls; token handed out once | ON |
 | `functions/device-claim/` | the page claims with the person's session | ON |
+| `functions/phone-home/` | installs report their one token total (open/close) | ON |
 | `../claim-page/index.html` | the browser page (sign in + type the code) — static, hosted anywhere | — |
 | `functions/claim-page/` | RETIRED — Supabase won't render HTML from functions; kept for history | — |

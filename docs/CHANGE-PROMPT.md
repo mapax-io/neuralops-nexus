@@ -1,11 +1,12 @@
 # NeuralOps Nexus — the change prompt
 
-**Document version: 1.6 (2026-10-17).**
+**Document version: 1.7 (2026-10-19).**
 This file is VERSIONED: every session that changes the system must also
 update this file (status, counts, new pieces) and add a row here.
 
 | Version | Date | What changed |
 |---|---|---|
+| 1.7 | 2026-10-19 | Terminal-only setup (owner's ruling): /auth/setup/start|poll REMOVED from the API (a public start/poll let anyone race the owner for a fresh install); create_owner now runs the whole code flow itself (prints code + /add_code link, polls, claims via authn.services.claim_install — the ONE creation path; --manual = old email/password/token fallback); portal live — device-request/poll/claim functions + phone-home verified, claim page = /add_code in the web app (NEURALOPS_PORTAL_URL); nucleus BASELINE 457 → **456** |
 | 1.6 | 2026-10-17 | Real-model smoke suite added (`tests/test_real_smoke.py`, marker `live`, `--real` flag in conftest): 5 shape-asserted tests against real providers, keys from env only, evidence printed + git-ignored REPORT-live.md; the 110 fake baseline untouched |
 | 1.5 | 2026-10-15 | Step 8a CLOSED — dev runs the NEW engine only: legacy module + chromadb deleted, vectors in `nexus_vectors` (pgvector on postgres-dev), engine image self-contained (lock regenerated; `duckduckgo` extra added — ddgs is the web-search tool, losable only by regenerating the lock without it); engine suite 110 passed 0 skipped in `neuralops-nexus-ai-new`, nucleus 457 OK |
 | 1.4 | 2026-10-15 | Added `docs/FRONTEND-CHANGE-PROMPT.md` (v0.1 — the frontend's own brief; its §6 fills once the react repo is cloned locally) |
@@ -41,8 +42,9 @@ the node3-neuralops-forked file tools):
   TriggerJob, builds the prompt and toolsets, runs the model, streams events
   back. The legacy engine ("0.8.0", `nexus-ai-legacy`) is GONE — deleted at
   Step 8a along with chromadb; dev runs the new engine only (container
-  `neuralops-nexus-ai-new`, image `nexus-ai:new-dev`, built from
-  `modules/nexus-ai/docker/Dockerfile`). Vectors live in the `nexus_vectors`
+  `neuralops-nexus-ai-new`, running the UNIFIED image `neuralops:dev-local`
+  built from `neuralops/Dockerfile` — one image for nucleus + engine +
+  centrifugo, owner's ruling 2026-10-15). Vectors live in the `nexus_vectors`
   database on the same postgres (pgvector). The production profile is redone
   in Step 8's distribution half.
 
@@ -119,10 +121,14 @@ that bends one of these needs the owner to re-rule first.
    gateway, schedules and chains are thin front doors over existing roads,
    never new business logic. An invisible thing answers like a nonexistent
    one. Rights fences FAIL CLOSED.
-5. **No shell steps for customers.** Setup is the portal code flow; tokens
-   are minted in the UI by the four roles; `create_owner` stays only as the
-   named air-gapped fallback. ("The four roles" = company owner/admin +
-   project owner/admin, via project-scoped rights.)
+5. **One shell step, on purpose; no others.** (Re-ruled 2026-10-18.)
+   Claiming a fresh install is `manage.py create_owner` in the SERVER's own
+   terminal — deliberately, so only the installer can ever start ownership
+   (it prints a code + the /add_code link; the claim happens on the web;
+   `--manual` is the no-portal fallback). Everything else is UI: tokens are
+   minted in the UI by the four roles, models added in the UI. ("The four
+   roles" = company owner/admin + project owner/admin, via project-scoped
+   rights.)
 6. **Nucleus orchestrates; the engine thinks.** Nucleus never resolves
    models/prompts/history — the engine pulls those itself through the
    internal API. The wire names are kept byte-for-byte from 0.8.0 so the
@@ -254,7 +260,7 @@ Dev stack is docker compose; the containers the owner actually has:
 | Container | What |
 |---|---|
 | `neuralops-nucleus-dev` | Django backend (venv at `/opt/venv/nucleus-env`, code at `/nexus/nucleus`) |
-| `neuralops-nexus-ai-new` | the REBUILT engine (image `nexus-ai:new-dev` from `modules/nexus-ai/docker/Dockerfile`, bind-mounted live source at `/nexus/ai`) — since Step 8a this is the ONLY engine; the old hand-made `nexus-ai-debug` is retired |
+| `neuralops-nexus-ai-new` | the REBUILT engine — runs the UNIFIED image `neuralops:dev-local` (engine venv `/opt/venv/nexus-ai-env`, bind-mounted live source at `/nexus/ai`); since Step 8a the ONLY engine. NOTE: currently idle on purpose (compose command = tail — debug mode for VSCode); swap the comment marks in compose to run uvicorn normally |
 | `neuralops-postgres-dev` | `pgvector/pgvector:0.8.7-pg17` — app data in `neuralops`, vectors in `nexus_vectors` (one postgres, two databases) |
 | redis, centrifugo (`centrifugo-dev`), celery worker + beat | the usual |
 
@@ -280,18 +286,21 @@ docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev
 docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py test -v 1 --noinput > test-output.txt 2>&1; tail -5 test-output.txt
 ```
 
-**Engine suite** (pytest is NOT in the image — install once per fresh
-container, then run; the test run also wipes the `vx_*` schemas in
-`nexus_vectors`, fine while there is no real data):
+**Engine suite** (pytest is BAKED into the unified image since Step 8a — no
+install step; the run wipes the `vx_*` schemas in `nexus_vectors`, fine while
+there is no real data):
 
 ```
-docker exec -w /nexus/ai neuralops-nexus-ai-new sh -c "pip install --user -q -r requirements-dev.txt && python -m pytest -q 2>&1 | tail -5"
+docker exec -w /nexus/ai neuralops-nexus-ai-new /opt/venv/nexus-ai-env/bin/python -m pytest tests/ -q
 ```
 
-Current green baselines (2026-10-15, after Step 8a): **nucleus 457 tests
-OK**, rights registry **49**, migrations through **0036**; **engine 110
-passed, 0 skipped** in `neuralops-nexus-ai-new` — the vector tests run for
-real against pgvector now. Any change must end at ≥ these numbers, all
+Current green baselines (2026-10-19; TESTS.md is the authority): **nucleus
+456 tests OK** (was 457 until the terminal-only setup ruling — endpoint
+tests became service-level ones), rights registry **49**, migrations through
+**0036**; **engine 110 passed, 0 skipped** in `neuralops-nexus-ai-new` (the
+vector tests run for real against pgvector; the 5 `live` tests skipping
+without `--real` + keys is expected). Any change must end at ≥ these
+numbers, all
 green, and a skip of a BASELINE test is a regression. (The 5 `live`
 real-model tests showing as skipped WITHOUT `--real` is expected — see
 TESTS.md's real-model section.)

@@ -1,6 +1,6 @@
 # NeuralOps Nexus — the test catalog
 
-**Document version: 1.2 (2026-10-17).** Baselines: **nucleus 457 tests OK**,
+**Document version: 1.3 (2026-10-19).** Baselines: **nucleus 456 tests OK**,
 **engine 110 passed / 0 skipped** (in `neuralops-nexus-ai-new`, since
 Step 8a — the vector-db tests run for real against pgvector; a skip of a
 BASELINE test is a regression. The 5 `live` tests showing as skipped in a
@@ -8,6 +8,7 @@ plain run is EXPECTED — they only run with `--real` + keys).
 
 | Version | Date | What changed |
 |---|---|---|
+| 1.3 | 2026-10-19 | Terminal-only setup ruling: nucleus baseline 457 → **456** — SetupFlowTests rewritten (claim_install tested at service level; the removed /setup/start|poll roads pinned CLOSED by a new test; dead-portal endpoint test gone with the endpoint — that path now lives in create_owner, verified by hand) |
 | 1.2 | 2026-10-17 | Added the REAL-model smoke suite (`test_real_smoke.py`, 5 tests, marker `live`): runs only with `--real` + keys in the environment; OUT of the 110 baseline; evidence in git-ignored REPORT-live.md |
 | 1.1 | 2026-10-15 | Step 8a: engine baseline 90+20skip → **110/0** — the 20 vector tests run against `nexus_vectors` (pgvector); engine container renamed to `neuralops-nexus-ai-new` |
 | 1.0 | 2026-10-15 | First catalog, at the close of Step 7 |

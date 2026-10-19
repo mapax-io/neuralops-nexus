@@ -1,9 +1,13 @@
 """
 Step 4 — login + posture (docs/NUCLEUS-REVAMP.md).
 
-The device-code claim: a fresh install shows a code, the person signs in at
-the portal and types it there, and the first VERIFIED person becomes the
-owner — with real RBAC rights the moment the claim returns. Local passwords:
+The device-code claim: the person who installed the server runs
+`manage.py create_owner` in ITS terminal — it shows a code, the person signs
+in at the portal and types it there, and the first VERIFIED person becomes
+the owner — with real RBAC rights the moment the claim returns. RULING
+(owner, 2026-10-18): the terminal is the ONLY way to start setup — the old
+web roads (/setup/start/ and /setup/poll/) are gone, and a test below pins
+them closed. Local passwords:
 anyone sets their own, admins reset others', sign-in is braked against
 guessing, and the local token is accepted by the same bearer check every
 endpoint uses (that check is exercised for real here — nothing is patched
@@ -22,16 +26,17 @@ GOOD_PASSWORD = "orbit-paper-lamp-42"
 
 
 class SetupFlowTests(TestCase):
-    """Fresh install — no company, no owner (so NOT the Mention fixture)."""
+    """Fresh install — no company, no owner (so NOT the Mention fixture).
 
-    def poll(self, request_id="req-1", workspace_name=None, portal=None):
-        payload = {"request_id": request_id}
-        if workspace_name:
-            payload["workspace_name"] = workspace_name
-        with patch("authn.api.poll_device_code", return_value=portal or {"status": "pending"}), \
-             patch("authn.api.verify_supabase_token", return_value=CLAIMS):
-            return Client().post("/api/v1/auth/setup/poll/", data=payload,
-                                 content_type="application/json")
+    The claim logic lives in authn.services.claim_install — the ONE creation
+    path both create_owner roads end in — so it is tested there. The web
+    roads that used to drive it are gone (ruling 2026-10-18), and the last
+    test pins them closed.
+    """
+
+    def claim(self, workspace_name=None):
+        from authn.services import claim_install
+        return claim_install(CLAIMS, workspace_name)
 
     def test_status_says_a_fresh_install_needs_an_owner(self):
         r = Client().get("/api/v1/auth/setup/status/")
@@ -40,29 +45,9 @@ class SetupFlowTests(TestCase):
         self.assertTrue(body["needs_owner"])
         self.assertTrue(body["portal_url"])
 
-    def test_start_hands_out_the_portal_code(self):
-        with patch("authn.api.request_device_code",
-                   return_value={"code": "ABC-123", "request_id": "req-1", "expires_in": 900}):
-            r = Client().post("/api/v1/auth/setup/start/")
-        self.assertEqual(r.status_code, 200, r.content)
-        body = r.json()
-        self.assertEqual((body["code"], body["request_id"]), ("ABC-123", "req-1"))
-        self.assertTrue(body["portal_url"])
-
-    def test_poll_waits_while_nobody_typed_the_code(self):
-        r = self.poll()
-        self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(r.json()["status"], "pending")
-        self.assertFalse(Company.objects.exists())
-
     def test_the_first_verified_person_becomes_the_owner(self):
-        r = self.poll(workspace_name="Acme",
-                      portal={"status": "claimed", "access_token": "sb-token"})
-        self.assertEqual(r.status_code, 200, r.content)
-        body = r.json()
-        self.assertEqual((body["status"], body["email"], body["workspace"]),
-                         ("claimed", "founder@acme.test", "Acme"))
-        self.assertEqual(body["access_token"], "sb-token")
+        user, company = self.claim(workspace_name="Acme")
+        self.assertEqual((user.email, company.name), ("founder@acme.test", "Acme"))
 
         company = Company.objects.get()
         user = User.objects.get(email="founder@acme.test")
@@ -80,23 +65,29 @@ class SetupFlowTests(TestCase):
         self.assertTrue(PermissionChecker.can(user, "company.local_password", company=company))
 
     def test_a_second_claim_is_refused_and_setup_closes(self):
-        self.poll(portal={"status": "claimed", "access_token": "sb-token"})
-        r = self.poll(portal={"status": "claimed", "access_token": "sb-token"})
-        self.assertEqual(r.status_code, 409)
+        from authn.services import SetupError
+        self.claim()
+        with self.assertRaises(SetupError):
+            self.claim()
         self.assertEqual(Company.objects.count(), 1)
-        with patch("authn.api.request_device_code") as asked:
-            r = Client().post("/api/v1/auth/setup/start/")
-        self.assertEqual(r.status_code, 409)
-        asked.assert_not_called()
         r = Client().get("/api/v1/auth/setup/status/")
         self.assertFalse(r.json()["needs_owner"])
 
-    def test_a_dead_portal_names_the_terminal_fallback(self):
-        from authn.portal import PortalError
-        with patch("authn.api.request_device_code", side_effect=PortalError("Could not reach the sign-in portal.")):
-            r = Client().post("/api/v1/auth/setup/start/")
-        self.assertEqual(r.status_code, 502)
-        self.assertIn("create_owner", r.json()["detail"])
+    def test_a_claim_with_no_email_is_refused(self):
+        from authn.services import SetupError, claim_install
+        with self.assertRaises(SetupError):
+            claim_install({"sub": "sb-1"})
+        self.assertFalse(Company.objects.exists())
+
+    def test_the_web_setup_roads_are_closed(self):
+        """RULING (owner, 2026-10-18): nobody can start a claim from the
+        network — only the server's own terminal (create_owner). These roads
+        existing again would reopen the takeover race; this test is the lock
+        on the door."""
+        for road in ("/api/v1/auth/setup/start/", "/api/v1/auth/setup/poll/"):
+            r = Client().post(road, data={}, content_type="application/json")
+            self.assertIn(r.status_code, (404, 405), f"{road} answered {r.status_code}")
+        self.assertFalse(Company.objects.exists())
 
 
 class LocalAuthTests(MentionRightFixture):

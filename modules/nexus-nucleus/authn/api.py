@@ -13,13 +13,12 @@ from .schema import (
     SetRoleRightsIn, SetRoleRightsOut, SignInRequest, SignInResponse,
 )
 from .services import (
-    AvatarError, LocalSignInError, RoleEditError, SetupError, SignInError,
-    auth_verify, claim_install, clear_profile_photo, list_roles, local_signin,
+    AvatarError, LocalSignInError, RoleEditError, SignInError,
+    auth_verify, clear_profile_photo, list_roles, local_signin,
     my_permissions, server_needs_owner, set_local_password, set_role_rights,
     set_profile_photo, signin_with_supabase_token,
 )
-from .portal import PortalError, poll_device_code, request_device_code
-from .supabase import SupabaseTokenError, verify_supabase_token
+from .supabase import SupabaseTokenError
 from .versions import read_module_versions
 from authn.auth import SupabaseBearer
 from authn.permissions.checker import PermissionChecker
@@ -298,25 +297,6 @@ class SetupStatusOut(Schema):
     portal_url: str
 
 
-class SetupStartOut(Schema):
-    code: str          # what the install shows; the person types it at the portal
-    request_id: str    # what the app passes back to /setup/poll/
-    portal_url: str
-    expires_in: int    # seconds the code stays valid
-
-
-class SetupPollIn(Schema):
-    request_id: str
-    workspace_name: Optional[str] = None
-
-
-class SetupPollOut(Schema):
-    status: str                          # "pending" | "claimed"
-    email: Optional[str] = None
-    workspace: Optional[str] = None
-    access_token: Optional[str] = None   # the Supabase token — the app's session
-
-
 class LocalSignInIn(Schema):
     email: str
     password: str
@@ -356,69 +336,23 @@ def _too_many_attempts(request, email: str) -> bool:
     return count > SIGNIN_ATTEMPT_LIMIT
 
 
-# ── First-run setup: the install claims its owner ────────────────────────
+# ── First-run setup ──────────────────────────────────────────────────────
+# RULING (owner, 2026-10-18): ownership starts ONLY from this server's own
+# terminal — `python manage.py create_owner` runs the whole code flow (shows
+# the code, polls the portal, creates the owner). The web roads that used to
+# live here (/setup/start/ and /setup/poll/) are REMOVED on purpose: with
+# them, anyone who could reach a fresh install's address could race the real
+# owner for the claim. Only /setup/status/ remains — a harmless read the app
+# uses to say "ask whoever installed this server to run the setup command".
 
 @router.get("/setup/status/", response=SetupStatusOut, auth=None)
 def setup_status(request):
-    """Public: is this a fresh, unclaimed install? The app shows the setup screen on true."""
+    """Public: is this a fresh, unclaimed install? The app shows the
+    'run the setup command on the server' message on true."""
     return {
         "needs_owner": server_needs_owner(),
         "local_login_enabled": bool(getattr(settings, "LOCAL_LOGIN_ENABLED", True)),
         "portal_url": settings.NEURALOPS_PORTAL_URL,
-    }
-
-
-@router.post("/setup/start/", response=SetupStartOut, auth=None)
-def setup_start(request):
-    """
-    Public, but only answers while the server has no owner. Asks the portal
-    for a short code; the person signs in at portal_url and types the code
-    there; the installer/app then polls /setup/poll/ until it is claimed.
-    """
-    if not server_needs_owner():
-        raise HttpError(409, "This server already has an owner.")
-    try:
-        out = request_device_code()
-    except PortalError as exc:
-        raise HttpError(
-            502,
-            f"{exc} You can still claim this server from its terminal: "
-            "python manage.py create_owner",
-        )
-    return {**out, "portal_url": settings.NEURALOPS_PORTAL_URL}
-
-
-@router.post("/setup/poll/", response=SetupPollOut, auth=None)
-def setup_poll(request, payload: SetupPollIn):
-    """
-    One poll of the portal. "pending" while nobody typed the code; once the
-    portal hands back a token, the token is VERIFIED (same check as every
-    sign-in) and that person becomes the owner — first verified claim wins.
-    """
-    if not server_needs_owner():
-        raise HttpError(409, "This server already has an owner.")
-    try:
-        result = poll_device_code(payload.request_id)
-    except PortalError as exc:
-        raise HttpError(502, str(exc))
-    if result["status"] != "claimed":
-        return {"status": "pending"}
-    try:
-        claims = verify_supabase_token(result["access_token"])
-    except SupabaseTokenError as exc:
-        raise HttpError(401, f"The portal returned a token this server can't verify: {exc}")
-    try:
-        user, company = claim_install(claims, payload.workspace_name)
-    except SetupError as exc:
-        raise HttpError(409, str(exc))
-    return {
-        "status": "claimed",
-        "email": user.email,
-        "workspace": company.name,
-        # The same Supabase token the person signed in with at the portal —
-        # handed back so the app keeps it as its session, exactly as if they
-        # had gone through /auth/signin.
-        "access_token": result["access_token"],
     }
 
 
