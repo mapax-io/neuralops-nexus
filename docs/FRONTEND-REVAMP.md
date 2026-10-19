@@ -185,6 +185,112 @@ diagram, form, terminal, code, preflight, choice.
 
 ## 2b. Built so far (frontend side)
 
+**BUILT (2026-10-19) — chunks 3+4: the screens.** In the web app repo:
+1. **Models — the explicit "Check model" button** (owner: "there must be some
+   test button"). Both dialogs (Register + Edit) now carry a standalone Check
+   button beside Save: it tries the provider/id/key/base through the worker
+   WITHOUT saving; in Edit a blank key field means the STORED key is tried
+   (config_id), so an already-saved model can be tested as it stands. A pass
+   shows "The model answered in N ms. Nothing saved yet." and the note
+   disappears the moment any checked field changes (a stale pass vouches for
+   nothing). The old check-before-save stays; a server without the check
+   (404) saves as before, and the standalone button says the server is too
+   old rather than claiming a pass. models-tab.tsx + 4 new tests.
+2. **Personas — gap check only, NOTHING built:** the builder already carries
+   everything the server offers (fallback seats 0..3 in order with attach &
+   use, advisor, tool approvals, proposes-first, recall, register-a-model
+   inline). Verified against intelligence/schema.py — no router/deep seats
+   exist server-side.
+3. **Usage (item 3) — NEW:** src/lib/api/usage.ts + src/hooks/use-usage.ts +
+   the Intelligence **Usage** section (nav + page): the project rollup
+   (usage.view_project; by persona and by model) and the company rollup
+   (usage.view_company; by project and by model), tokens compacted, est.
+   cost with **≥** whenever unpriced_rows > 0, the server's note shown
+   VERBATIM, persona/project names resolved ("a removed persona" for an id
+   whose row is gone — billing has no FKs), 404 → "older than the usage
+   ledger". The topic spend ticker (chunk 2) now SEEDS from GET
+   …/topics/{t}/usage/ on open (topic-view), and live usage_totals events
+   take over from there. usage-tab.test.tsx (6 tests);
+   usage.view_project/company added to the test rights fixture.
+4. **Gateway tokens (item 7) — NEW:** src/lib/api/gateway.ts +
+   src/hooks/use-gateway.ts + the Intelligence **Gateway** section: the MCP
+   endpoint URL + what a client can do; mint (gateway.token — company-wide
+   or through any project); the raw nxg_… token shown EXACTLY ONCE in the
+   mint dialog with a copy button and a paste-ready client config snippet
+   (url + Authorization header); the token list (name, acts-as email,
+   created, last used) with confirm-first revoke; 404 → "older than the
+   gateway". No toast ever carries the token. gateway-tab.test.tsx (6 tests).
+5. **The configure topic (item 6):** the Topics pane marks a topic titled
+   "configure" with a gear icon and a title tooltip — nothing gated (the
+   server only lists it to owners/admins; the flag never reaches the API).
+6. **Chains (item 5, Step 7) — BUILT:** runbooks.ts learned the whole
+   contract (step kind persona|checkpoint + question; supervisor_id/_name,
+   redo_limit, has_checkpoint; run status "waiting" is ACTIVE; run.checkpoint
+   {index, question, asked_at}; step results answered|expired + redos +
+   verdict; clear_supervisor on patch) + answerRunbookCheckpoint (POST
+   …/runs/{id}/checkpoint/ {answer}). The topic banner shows a waiting
+   chain's question with an inline answer box for the starter or a
+   project.update holder (everyone else reads who it waits for; Stop stays;
+   409/403 arrive as the server's own words, and the run list refetches
+   either way). The builder gained **Add checkpoint** rows (question +
+   stop/skip after 24h) and a **Review** section (supervisor persona + redos
+   0..2). Cards chip "waits for a person" / "reviewed by @x"; the run
+   history names checkpoint entries, who answered, and reviewer verdicts.
+   The schedule dialog GREYS a has_checkpoint chain ("waits for a person —
+   run it by hand", ruling 5). The live runbook_run event now parses
+   started_by_id + checkpoint. Tests: 3 new banner, 2 new tab, parse pin
+   updated.
+7. **Removals (§3 CLOSED, 2026-10-19):** the Terminal pane and the
+   server-side Browser pane are gone — files retired to the app repo's
+   `_attic/removed-panes/` (tsconfig/eslint now exclude `_attic`); pane
+   ids/defs, browser-pane store, lib/api/terminal + live-browser removed from
+   the app; openBeside() now always uses the WEB pane (the client-side
+   page-beside-the-chat, which STAYS); /terminal left the composer; the LAST
+   swarm UI left with it (/swarm command + the composer's swarm button —
+   chunk 2 had already retired the events). A persisted dock still holding
+   "terminal"/"browser" drops them silently on hydration (isPaneId filters).
+8. **File viewer (item 4): DEFERRED** — owner: "if not now, later".
+VERIFY (owner): see the one consolidated list at the end of this section.
+
+**BUILT (2026-10-19) — chunk 2: the live-chat events.** The app now speaks
+the whole §1 contract. In the web app repo:
+- `src/lib/realtime/events.ts` — new events parsed: `message_paused`,
+  `question_asked` / `question_answered` (Question type), `context_retrieved`
+  (RetrievedRef), `deep_escalation`, `usage_totals` (TopicUsageTotals —
+  parsed BEFORE the id guard: it carries no message id); message_done now
+  also carries `used_tools` + `retrieved_sources`; history rows parse
+  `questions`/`used_tools`/`retrieved_sources`; swarm_transition REMOVED
+  (ruling: the swarm road is gone).
+- `src/lib/realtime/message-store.ts` — isPaused state (parked ≠ stalled;
+  a delta on the same id is the RESUME, same bubble); questions upserted by
+  call id, expired on done; new statuses mapped (pending|streaming →
+  streaming, cancelled → stopped, paused → parked); stall clock holds for
+  pending questions and paused replies; topic usageTotals on the state; the
+  swarm transitions machinery deleted.
+- `src/components/chat/question-row.tsx` — NEW: the QUESTION card (option
+  buttons + free text; options are suggestions; read-only for everyone but
+  the caller, naming who it waits for; folds to one line once answered;
+  "nobody answered in time" on expiry). + question-row.test.tsx.
+- `src/lib/api/chat.ts` answerQuestion → POST …/questions/{call_id}/ {text};
+  `src/hooks/use-chat.ts` wires it (held controls while in flight, 409 →
+  refetch) and exposes usageTotals.
+- `message-item.tsx` — renders question cards, the "Paused — it continues
+  right here…" line, the "Handed to <model>" note (deep_escalation), and the
+  "Searched project memory — used N items" chip (sources listed on hover).
+- `chat-header-bar.tsx` — the SpendTicker (usage_totals): tokens in/out +
+  cost with a visible "est." and the verbatim "Estimated — prices not
+  confirmed" on hover; ≥ when unpriced rows exist. Rendered in the topic
+  header per the owner's placement ruling.
+- Store/compat tests updated (swarm tests retired — one test now PINS
+  swarm_transition as ignored); new suites: questions + pause/resume, new
+  statuses + done extras, usage totals.
+VERIFY (owner): (1) `npm run test:run` — all green; (2) `npm run lint`;
+(3) live: dev stack + app → chat with a persona → after its reply the spend
+ticker appears in the header; give a persona instructions like "ALWAYS ask
+one clarifying question before answering, using your ask-the-user tool" →
+its reply shows the QUESTION card and parks ("Paused…"), answering resumes
+THE SAME bubble; a second account sees the card read-only.
+
 **BUILT (2026-10-18) — the /add_code claim page (the portal page moves INTO
 this app).** `src/app/add_code/page.tsx` + `src/lib/api/claim.ts`: signed in
 → code box (auto-formats 483291 → 483-291) → claims via the portal's
@@ -213,10 +319,53 @@ backend's (NUCLEUS-REVAMP: create_owner code flow + closed web roads + the
 app connecting the new owner straight into the workspace — that last step is
 still this app's test, and still closes end-to-end test B).
 
+## 2c. The ONE owner test session (chunks 2+3+4 together)
+
+All in the web app repo (`neuralops-nexus-web-app`), dev stack up
+(`http://192.168.1.90:8096`), app on `http://192.168.1.90:3000`:
+
+1. `npm run test:run` — every suite green (chunk 2's suites + the new
+   models-check / usage / gateway / runbooks-chains / banner suites).
+2. `npm run lint` — clean.
+3. Live walkthrough, in this order:
+   a. **Chat basics (chunk 2):** @mention a persona → after its reply the
+      spend ticker shows in the header. Re-open the same topic (reload) —
+      the ticker is seeded at once from the usage read, before any new reply.
+   b. **Question card (chunk 2):** a persona instructed to "ALWAYS ask one
+      clarifying question before answering, using your ask-the-user tool" →
+      its reply shows the QUESTION card and parks ("Paused…"); answering
+      resumes THE SAME bubble; a second account sees the card read-only.
+   c. **Check model:** Intelligence → AI models → Edit a saved model → Check
+      model with the key field blank → "The model answered in N ms." Then
+      Register → fill a WRONG key → Check model → the server's reason, red,
+      nothing saved.
+   d. **Usage:** Intelligence → Usage → project + company cards with by-
+      persona/model/project tables; the label "Estimated — prices not
+      confirmed." verbatim; ≥ appears if any call is unpriced.
+   e. **Gateway:** Intelligence → Gateway → New token → the nxg_… value +
+      config snippet show ONCE; paste the snippet into Claude Desktop/Cursor
+      and call a tool if you want the full loop; revoke → the client stops
+      reaching the server.
+   f. **Configure topic:** in a project's general channel the "configure"
+      topic shows a gear in the Topics pane for you (owner) and is absent for
+      a plain member.
+   g. **Chains:** Runbooks → New → one persona step + Add checkpoint (a
+      question) → the card chips "waits for a person"; Run now → after step 1
+      the banner shows the question with an answer box → answer → the run
+      continues in the same chat; the run history names the checkpoint and
+      you. In a chat's Schedules → New schedule → A runbook: the checkpoint
+      chain is greyed ("run it by hand"). Optional: set a Supervisor on a
+      2-step runbook and watch the verdicts land as ordinary replies.
+   h. **Removals:** the pane rail shows no Terminal and no Browser; /terminal
+      and /swarm are unknown commands; the Web pane still opens pages beside
+      the chat (activity-trail links).
+
 ## 3. Removals
 
 Terminal pane and browser pane screens (items 41/42, dropped), and any UI for
 the swarm road. Message search stays (nucleus keeps it as plain DB search).
+**DONE (2026-10-19)** — see §2b chunks 3+4 item 7. The WEB pane (client-side
+"open a page beside the chat") is NOT part of the removal and stays.
 
 ## 4. Order
 

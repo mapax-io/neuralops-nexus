@@ -953,9 +953,9 @@ workspace. Everything in the chain is the real code path: create_owner →
 portal functions → /add_code page → claim_install.
 VERIFIED (owner, 2026-10-19): nucleus suite `Ran 456 tests … OK` — the NEW
 BASELINE is 456 (was 457; endpoint tests became service-level ones), and the
-run's own log shows both old setup roads answering Not Found. Still open
-(tiny): the closed-door curl through nginx (POST /auth/setup/start/ →
-404/405) — the suite already proves it at the Django layer.
+run's own log shows both old setup roads answering Not Found. The outside
+check too: curl POST through nginx → 404 (owner, 2026-10-18 23:59). The
+terminal-only setup chapter is fully VERIFIED, inside and out.
 Also agreed: the only remaining attack on the public /add_code page is code
 GUESSING — to be closed with a brake in the device-claim function (a few
 wrong codes per account → wait), like local sign-in's 10-per-5-minutes
