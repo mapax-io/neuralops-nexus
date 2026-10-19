@@ -847,6 +847,62 @@ stays in the helper for later.) Lesson applied live: the owner's keys
 appeared in a terminal paste during verification — rotated; the
 keys-never-in-files rule stands.
 
+**Portal — claim-code pieces BUILT (2026-10-18; owner's installer-only
+ruling recorded):** new repo folder `portal/supabase/` with `schema.sql`
+(the `device_requests` table, RLS enabled with NO policies — service-role
+only) and four edge functions: `device-request` (install → {code,
+request_id, expires_in}; 6-digit code, 15-min expiry, pending-code unique
+index), `device-poll` (install polls by the unguessable request_id; the
+person's token is handed out EXACTLY once — consumed and erased on read),
+`device-claim` (the page's road: verifies the signed-in person via Supabase
+auth, matches a pending unexpired code, first-writer-wins), and
+`claim-page` (the browser page: Supabase email sign-up/sign-in + the code
+box; the only function deployed with JWT verification OFF). Names and
+response keys match authn/portal.py byte-for-byte; nucleus's settings
+defaults already point at this project's /functions/v1/ URLs, so the server
+needs NO configuration. The ruling in force: only the person at the
+install's screen can claim — the code lives only on that screen, the portal
+is a witness that can never push, one claim ever (409 after, tested), and
+`create_owner` stays shell-only. Deploy guide: portal/supabase/README.md.
+VERIFY (owner): deploy the 5 pieces per the README, run its curl test A,
+then the end-to-end test B (fresh dev install → code on setup screen →
+claim on the page → owner created; second claim 409).
+
+**VERIFIED (owner, 2026-10-18) — portal functions + page, live test A.**
+Against the live Supabase project: device-request returned a fresh
+{code, request_id, expires_in:900}; device-poll with the request_id said
+pending; the owner signed up on the claim page, typed the code, got "Done!";
+poll #1 then returned status claimed WITH the access token; poll #2 returned
+status denied — the one-time handover proven. Also proven along the way:
+polling with the CODE instead of the request_id is refused (the code alone
+can never fetch a token). Legacy functions (device-request/poll/verify v2.x)
+archived in portal/supabase/_archive/ before overwriting.
+Still open: end-to-end test B (fresh install shows the code itself and
+creates the owner) — runs when the install flow is wired next.
+
+Lessons from this verification:
+- **Supabase will not serve web pages from edge functions.** The gateway
+  force-rewrites responses to content-type text/plain + CSP sandbox +
+  nosniff (anti-phishing rule on *.supabase.co), so a browser shows raw
+  HTML text no matter what the function sends. The claim page therefore
+  became a STATIC file: `portal/claim-page/index.html` (project URL +
+  publishable key hardcoded — public by design). Host it anywhere
+  (`python3 -m http.server 8899` for testing; the real portal domain
+  later). The claim-page EDGE FUNCTION is dead weight → delete it from the
+  dashboard (test-then-remove). The other three functions are APIs and are
+  untouched by this rule.
+- **The dashboard editor's Save is not Deploy** — the live function only
+  changes when Deploy is pressed.
+- The project now uses the new publishable key (`sb_publishable_...`) in
+  the page; the legacy JWT anon key still works for curl. An invalid or
+  truncated key shows up as "Invalid JWT" / UNAUTHORIZED_LEGACY_JWT.
+
+**VERIFIED (owner, 2026-10-18) — nucleus regression on the FINAL unified
+image** (one Python 3.13, two venvs, no baked code, bind-mounted modules):
+`Ran 457 tests in 918.353s … OK`. With the engine's 110-passed run already
+on record, both suites are green on the image as it now stands — the Step 8a
+dev switch-over chapter is fully closed.
+
 ## 5. DISTRIBUTION (owner, 2026-10-14) — one app image, compiled files only
 
 How the product ships once nucleus is done:
