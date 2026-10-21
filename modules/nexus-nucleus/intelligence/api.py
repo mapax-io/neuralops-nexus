@@ -86,6 +86,9 @@ def _model_config_out(config, utility_id: str | None = None) -> ModelConfigOut:
         description=config.description,
         licence_accepted=config.licence_accepted,
         context_window=config.context_window,
+        max_output_tokens=config.max_output_tokens,
+        temperature=config.temperature,
+        routing_notes=config.routing_notes,
         supports_tools=config.supports_tools,
         supports_streaming=config.supports_streaming,
         supports_vision=config.supports_vision,
@@ -188,6 +191,10 @@ def _mcp_ref(server) -> MCPServerRef:
 
 def _persona_out(persona) -> PersonaOut:
     from .schema import PromptOut
+    # The deep BENCH (smart router): read through the ordered through rows;
+    # deep_model stays the bench's first entry for clients built against the
+    # single seat.
+    deep_bench = svc.deep_models_of(persona)
     prompt = None
     if hasattr(persona, "prompt") and persona.prompt:
         p = persona.prompt
@@ -205,6 +212,9 @@ def _persona_out(persona) -> PersonaOut:
         project_id=str(persona.project_id),
         model=_model_config_ref(persona.model),
         advisor_model=_model_config_ref(persona.advisor_model) if persona.advisor_model_id else None,
+        router_model=_model_config_ref(persona.router_model) if persona.router_model_id else None,
+        deep_models=[_model_config_ref(m) for m in deep_bench],
+        deep_model=_model_config_ref(deep_bench[0]) if deep_bench else None,
         fallback_models=[_model_config_ref(m) for m in svc.fallback_models_of(persona)],
         mcp_servers=[_mcp_ref(s) for s in persona.mcp_servers.all() if s.is_active],
         temperature=persona.temperature,

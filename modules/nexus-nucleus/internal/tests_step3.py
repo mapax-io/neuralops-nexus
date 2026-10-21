@@ -85,17 +85,36 @@ class PersonaSeatsTests(MentionRightFixture):
         self.persona_sara.save()
         p = self.payload()
         self.assertEqual(p["router_model"]["model_id"], "gpt-cheap")
+        # Smart router: the deep FK alone (no bench rows — this test writes the
+        # ORM directly) still serves as a one-item bench, and deep_model
+        # mirrors its first entry for an older engine image.
         self.assertEqual(p["deep_model"]["model_id"], "gpt-test")
+        self.assertEqual([m["model_id"] for m in p["deep_models"]], ["gpt-test"])
         self.assertTrue(p["delegation_enabled"])
         self.assertEqual((p["tool_access"], p["approval_scope"]), ("selected", "requester_only"))
 
-    def test_the_company_default_fills_an_empty_router_seat(self):
-        """Change 3, owner's rule: the default lives in company settings and is
-        resolved INTO router_model before the persona is served."""
-        CompanyAIConfig.objects.create(company=self.company, default_router_model=self.cheap)
+    def test_the_project_default_fills_an_empty_router_seat(self):
+        """Seats ruling (2026-10-19 23:43): the default router is a PROJECT
+        setting, resolved INTO router_model before the persona is served. A
+        persona's own seat wins; a default equal to the persona's STANDARD
+        model is skipped (screening with the same model saves nothing); the
+        dormant company-wide column is not read any more."""
+        self.p1.default_router_model = self.cheap
+        self.p1.save(update_fields=["default_router_model"])
         p = self.payload()
         self.assertEqual(p["router_model"]["model_id"], "gpt-cheap")
         # A persona's OWN seat beats the default.
         self.persona_sara.router_model = self.model_config
         self.persona_sara.save(update_fields=["router_model"])
         self.assertEqual(self.payload()["router_model"]["model_id"], "gpt-test")
+        # A default equal to the persona's standard model is skipped.
+        self.persona_sara.router_model = None
+        self.persona_sara.save(update_fields=["router_model"])
+        self.p1.default_router_model = self.persona_sara.model
+        self.p1.save(update_fields=["default_router_model"])
+        self.assertIsNone(self.payload()["router_model"])
+        # The company-wide column is dormant: setting it fills nothing.
+        self.p1.default_router_model = None
+        self.p1.save(update_fields=["default_router_model"])
+        CompanyAIConfig.objects.get_or_create(company=self.company, defaults={"default_router_model": self.cheap})
+        self.assertIsNone(self.payload()["router_model"])

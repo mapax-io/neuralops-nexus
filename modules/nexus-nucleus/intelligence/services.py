@@ -194,7 +194,8 @@ def detach_model_config_from_project(company, config_id: str, project_id: str) -
         return False
 
     in_use = Persona.objects.filter(
-        Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config),
+        Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config)
+        | Q(router_model_id=config.id) | Q(deep_models=config),
         project_id=project_id,
         is_active=True,
     ).distinct().values_list("name", flat=True)
@@ -226,7 +227,9 @@ def delete_model_config(company, config_id: str) -> bool:
 
     in_use = list(
         Persona.objects.filter(
-            Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config), is_active=True
+            Q(model_id=config.id) | Q(advisor_model_id=config.id) | Q(fallback_models=config)
+            | Q(router_model_id=config.id) | Q(deep_models=config),
+            is_active=True,
         ).distinct().values_list("name", flat=True)
     )
     if in_use:
@@ -449,10 +452,14 @@ def delete_mcp_server_standalone(company, server_id: str) -> bool:
 
 # ── Persona ───────────────────────────────────────────────────────────────────
 
-def _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks=()):
+def _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks=(), router=None, deeps=()):
     """
     Every cross-object rule the database cannot express, in one place.
     Raises ValueError, which the API layer turns into a 400.
+
+    `deeps` is the deep BENCH (smart router, 2026-10-20): 0..N models, each
+    validated like a seat — same company, attached to the project, and
+    different from the standard model.
     """
     if model_config is None:
         raise ValueError("A model config is required.")
@@ -460,7 +467,10 @@ def _validate_persona_wiring(company, project, model_config, advisor, servers, f
     if any(f.id == model_config.id for f in fallbacks):
         raise ValueError("A fallback must be a different model from the primary -- it is what answers when the primary cannot.")
 
-    for label, config in (("model", model_config), ("advisor model", advisor), *(("fallback model", f) for f in fallbacks)):
+    for label, config in (("model", model_config), ("advisor model", advisor),
+                          ("router model", router),
+                          *(("deep model", d) for d in deeps),
+                          *(("fallback model", f) for f in fallbacks)):
         if config is None:
             continue
         if config.company_id != company.id:
@@ -475,6 +485,19 @@ def _validate_persona_wiring(company, project, model_config, advisor, servers, f
         raise ValueError(
             "The advisor must be a different model from the primary -- "
             "otherwise it just asks the same model twice."
+        )
+
+    # Seats ruling (2026-10-19): a seat only earns its place by being a
+    # DIFFERENT model from the standard one.
+    if router is not None and router.id == model_config.id:
+        raise ValueError(
+            "The router must be a different (cheaper) model from the standard "
+            "one -- screening with the same model saves nothing."
+        )
+    if any(d.id == model_config.id for d in deeps):
+        raise ValueError(
+            "The deep model must be a different (stronger) model from the "
+            "standard one -- handing over to itself goes nowhere."
         )
 
     if servers:
@@ -528,6 +551,36 @@ def _set_fallback_models(persona, configs) -> None:
     )
 
 
+# ── The deep BENCH (smart router, ruled 2026-10-20) ──────────────────────
+# Same machinery as the fallbacks: ordered through rows. No cap on purpose
+# (the ruling is 0..N — the router picks, so a longer bench costs nothing
+# per turn). The first bench model is the DEFAULT hand-over pick.
+
+def _resolve_deep_models(company, config_ids):
+    """The persona's deep bench as ModelConfig rows, in the order given; repeats collapse."""
+    ids = list(dict.fromkeys(config_ids or []))
+    return [_resolve_model_config(company, config_id) for config_id in ids]
+
+
+def deep_models_of(persona) -> list:
+    """The persona's deep bench in order, skipping any that were retired."""
+    return [link.model for link in persona.deep_links.select_related("model").order_by("position") if link.model.is_active]
+
+
+def _set_deep_models(persona, configs) -> None:
+    """Replace the bench AND keep the legacy single FK mirroring its first
+    entry (an older engine image reads PersonaInternal.deep_model)."""
+    from nucleus.models import PersonaDeepModel
+    persona.deep_links.all().delete()
+    PersonaDeepModel.objects.bulk_create(
+        [PersonaDeepModel(persona=persona, model=config, position=position) for position, config in enumerate(configs)]
+    )
+    first = configs[0] if configs else None
+    if persona.deep_model_id != (first.id if first else None):
+        persona.deep_model = first
+        persona.save(update_fields=["deep_model"])
+
+
 def _resolve_mcp_servers(company, server_ids):
     from nucleus.models import MCPServer
     ids = list(dict.fromkeys(server_ids or []))
@@ -548,7 +601,7 @@ def get_persona_by_mention(project, mention_name: str):
     from nucleus.models import Persona
     return (
         Persona.objects.filter(project=project, is_active=True)
-        .select_related("prompt", "model", "advisor_model", "identity_user")
+        .select_related("prompt", "model", "advisor_model", "router_model", "deep_model", "identity_user")
         .prefetch_related("mcp_servers")
         .filter(name__iexact=mention_name)
         .first()
@@ -559,7 +612,7 @@ def list_personas(project, user):
     from authn.permissions.row_rules import visible_personas
     return (
         visible_personas(user, project)
-        .select_related("prompt", "model", "advisor_model", "identity_user")
+        .select_related("prompt", "model", "advisor_model", "router_model", "deep_model", "identity_user")
         .prefetch_related("mcp_servers")
     )
 
@@ -568,7 +621,7 @@ def get_persona(company, persona_id: str):
     from nucleus.models import Persona
     return (
         Persona.objects.filter(company=company, id=persona_id, is_active=True)
-        .select_related("prompt", "model", "advisor_model", "identity_user", "project")
+        .select_related("prompt", "model", "advisor_model", "router_model", "deep_model", "identity_user", "project")
         .prefetch_related("mcp_servers")
         .first()
     )
@@ -600,8 +653,18 @@ def create_persona(company, user, data: dict):
 
     prompt_data = data.pop("prompt")
     project_id = data.pop("project_id")
+    # 7b (2026-10-20): generation settings live on the MODEL card now — a
+    # value sent here is an old caller's habit, accepted and ignored.
+    data.pop("temperature", None)
+    data.pop("max_tokens", None)
     model_config_id = data.pop("model_config_id", None)
     advisor_id = data.pop("advisor_model_config_id", None)
+    router_id = data.pop("router_model_config_id", None)
+    # The deep BENCH; the legacy single id still works as a one-item bench.
+    deep_ids = data.pop("deep_model_config_ids", None) or []
+    deep_id = data.pop("deep_model_config_id", None)
+    if not deep_ids and deep_id:
+        deep_ids = [deep_id]
     fallback_ids = data.pop("fallback_model_config_ids", None)
     server_ids = data.pop("mcp_server_ids", None)
 
@@ -611,9 +674,11 @@ def create_persona(company, user, data: dict):
 
     model_config = _resolve_model_config(company, model_config_id)
     advisor = _resolve_model_config(company, advisor_id)
+    router = _resolve_model_config(company, router_id)
+    deeps = _resolve_deep_models(company, deep_ids)
     fallbacks = _resolve_fallback_models(company, fallback_ids)
     servers = _resolve_mcp_servers(company, server_ids)
-    _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks)
+    _validate_persona_wiring(company, project, model_config, advisor, servers, fallbacks, router=router, deeps=deeps)
 
     if Persona.objects.filter(project=project, name=data.get("name"), is_active=True).exists():
         raise ValueError(
@@ -639,10 +704,19 @@ def create_persona(company, user, data: dict):
         identity_user=shadow_user,
         model=model_config,
         advisor_model=advisor,
+        router_model=router,
+        # The legacy single FK mirrors the bench's first entry (see
+        # _set_deep_models); set here so one save covers the create path.
+        deep_model=deeps[0] if deeps else None,
         **data,
     )
     if servers:
         persona.mcp_servers.set(servers)
+    if deeps:
+        from nucleus.models import PersonaDeepModel
+        PersonaDeepModel.objects.bulk_create(
+            [PersonaDeepModel(persona=persona, model=config, position=position) for position, config in enumerate(deeps)]
+        )
     if fallbacks:
         _set_fallback_models(persona, fallbacks)
 
@@ -672,16 +746,26 @@ def patch_persona(company, persona_id: str, data: dict):
 
     persona = (
         Persona.objects.filter(company=company, id=persona_id, is_active=True)
-        .select_related("prompt", "project", "model", "advisor_model")
+        .select_related("prompt", "project", "model", "advisor_model", "router_model", "deep_model")
         .first()
     )
     if not persona:
         return None
 
     prompt_data = data.pop("prompt", None)
+    # 7b (2026-10-20): accepted-but-ignored — the model card owns these.
+    data.pop("temperature", None)
+    data.pop("max_tokens", None)
     model_config_id = data.pop("model_config_id", None)
     advisor_id = data.pop("advisor_model_config_id", None)
     clear_advisor = data.pop("clear_advisor", False)
+    router_id = data.pop("router_model_config_id", None)
+    clear_router = data.pop("clear_router", False)
+    # The deep BENCH: the list wins when sent ([] clears); the two legacy
+    # fields below keep old callers working (an id = a one-item bench).
+    deep_ids = data.pop("deep_model_config_ids", None)           # None: not sent; []: clear
+    deep_id = data.pop("deep_model_config_id", None)             # LEGACY
+    clear_deep = data.pop("clear_deep", False)                   # LEGACY
     fallback_ids = data.pop("fallback_model_config_ids", None)   # None: not sent; []: clear
     server_ids = data.pop("mcp_server_ids", None)
 
@@ -694,6 +778,23 @@ def patch_persona(company, persona_id: str, data: dict):
         advisor = _resolve_model_config(company, advisor_id)
     else:
         advisor = persona.advisor_model
+    # Router and deep follow the advisor's exact dance: clear wins, an id
+    # swaps, silence keeps what is there.
+    if clear_router:
+        router = None
+    elif router_id:
+        router = _resolve_model_config(company, router_id)
+    else:
+        router = persona.router_model
+    deep_bench_sent = deep_ids is not None or clear_deep or bool(deep_id)
+    if deep_ids is not None:
+        deeps = _resolve_deep_models(company, deep_ids)
+    elif clear_deep:
+        deeps = []
+    elif deep_id:
+        deeps = [_resolve_model_config(company, deep_id)]
+    else:
+        deeps = deep_models_of(persona)
 
     servers = (
         _resolve_mcp_servers(company, server_ids)
@@ -704,10 +805,12 @@ def patch_persona(company, persona_id: str, data: dict):
     fallbacks = (
         _resolve_fallback_models(company, fallback_ids) if fallback_ids is not None else fallback_models_of(persona)
     )
-    _validate_persona_wiring(company, persona.project, model_config, advisor, servers, fallbacks)
+    _validate_persona_wiring(company, persona.project, model_config, advisor, servers, fallbacks, router=router, deeps=deeps)
 
     persona.model = model_config
     persona.advisor_model = advisor
+    persona.router_model = router
+    persona.deep_model = deeps[0] if deeps else None
     if data.get("tool_levels") is not None:
         data["tool_levels"] = validate_tool_levels(data["tool_levels"])
     for field, value in data.items():
@@ -717,6 +820,8 @@ def patch_persona(company, persona_id: str, data: dict):
 
     if server_ids is not None:
         persona.mcp_servers.set(servers)
+    if deep_bench_sent:
+        _set_deep_models(persona, deeps)
     if fallback_ids is not None:
         _set_fallback_models(persona, fallbacks)
 
@@ -919,6 +1024,8 @@ def utility_model_of(company):
 def update_ai_config(company, user, data: dict):
     from nucleus.models import CompanyAIConfig
     config, _ = CompanyAIConfig.objects.get_or_create(company=company)
+    # Seats ruling (2026-10-19 23:43): the default router is a PROJECT
+    # setting — nothing company-wide to set here (MISSING.md item 1).
     for field, value in data.items():
         setattr(config, field, value)
     config.updated_by = user

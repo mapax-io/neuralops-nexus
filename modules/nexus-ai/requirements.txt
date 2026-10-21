@@ -4,7 +4,11 @@
 # duckduckgo extra = the ddgs package, the engine's local web-search tool
 # (WebSearch capability, local strategy). Learned the hard way at Step 8:
 # a lock regenerated without it loses web search and 3 tests fail.
-pydantic-ai-slim[openai,anthropic,google,mcp,duckduckgo]==2.55.0
+# web-fetch extra = bs4 + markdownify for the WebFetch capability's local
+# strategy. Learned the hard way 2026-10-19 (owner's first live persona):
+# without it, ANY persona with the web_fetch capability crashes at toolset
+# build ("No module named 'bs4'") before the model is even called.
+pydantic-ai-slim[openai,anthropic,google,mcp,duckduckgo,web-fetch]==2.55.0
 pydantic-ai-harness==0.55.0
 pydantic==2.14.0
 fastapi[standard]==0.143.0

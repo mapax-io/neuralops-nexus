@@ -21,6 +21,7 @@ from .intelligence import (
     ModelConfig,
     MCPServer,
     Persona,
+    PersonaDeepModel,
     PersonaFallbackModel,
     Routine,
     RecallEntry,

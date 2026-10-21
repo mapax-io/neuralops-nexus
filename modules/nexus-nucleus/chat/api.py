@@ -394,6 +394,16 @@ async def _trigger_personas(
     if getattr(project, "reindex_status", "") == "building":
         return _refuse(personas, "reindexing",
                        "This project's memory is being rebuilt right now; personas are back once it finishes.")
+    # Spend limit (owner's ruling 2026-10-21: per-project monthly cap, BLOCK).
+    # The human message already posted — only the AI reply is withheld. One
+    # aggregate query, and only for projects that actually set a cap.
+    if getattr(project, "spend_limit_monthly", None) is not None:
+        over, spent = await sync_to_async(ws_svc.spend_limit_reached)(project)
+        if over:
+            return _refuse(personas, "spend_limit",
+                           "This project reached its monthly spend limit (≈ $%.2f of $%.2f, estimated). "
+                           "Raise the limit on the project overview, or wait for next month."
+                           % (spent, project.spend_limit_monthly))
     # (The /swarm road is gone — Step 2 ruling 1. Several mentions simply
     # trigger several replies, and the relay's queue-per-topic runs them in
     # order, gates intact.)

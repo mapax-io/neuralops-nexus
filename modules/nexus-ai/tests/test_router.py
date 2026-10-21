@@ -154,6 +154,93 @@ async def test_r5_standard_escalates_when_no_router_seat(harness):
     assert [r["role"] for r in records] == ["STANDARD", "DEEP"]
 
 
+def _bench_models(harness) -> list[dict]:
+    """Two deep models with their own names and strengths notes — the smart
+    router's bench (make_model names every model 'Fake openai', so the names
+    are overridden to make the pick observable)."""
+    return [
+        {**openai_model(harness, config_id="m-deep1", model_id="fake-deep1"),
+         "name": "Deep One", "routing_notes": "general reasoning"},
+        {**openai_model(harness, config_id="m-deep2", model_id="fake-deep2"),
+         "name": "Deep Two", "routing_notes": "best for code"},
+    ]
+
+
+async def test_r7_the_router_picks_from_the_bench_by_name(harness):
+    """Smart router (ruled 2026-10-20) — the deep seat is a BENCH and the
+    router NAMES its pick. The router's request carries the bench listing
+    (names + routing_notes); Escalate.target_model='Deep Two' → the SECOND
+    bench model runs the deep turn, is announced, and bills under its own
+    model_id."""
+    harness.nucleus.persona = make_persona(
+        openai_model(harness),
+        router_model=openai_model(harness, config_id="m-router", model_id="fake-router"),
+        deep_models=_bench_models(harness),
+    )
+    harness.provider.script.steps = [
+        {"kind": "tool_call", "call_id": "call_esc", "name": "final_result",
+         "args": {"task": "write the code", "target_model": "Deep Two"}},
+        {"kind": "text", "text": "Code from the named pick."},
+    ]
+    events = await harness.trigger()
+
+    [esc] = [e for e in events if e["type"] == "deep_escalation"]
+    assert esc["escalated_to"] == "Deep Two"
+    [done] = [e for e in events if e["type"] == "message_done"]
+    assert done["answered_by_model"] == "Deep Two"
+    assert harness.provider.requests[-1]["model"] == "fake-deep2"
+    # the router was TOLD the bench — both names and the notes ride its request
+    import json as _json
+    router_blob = _json.dumps(harness.provider.requests[0])
+    assert "Deep One" in router_blob and "best for code" in router_blob
+    records = await harness.wait_for_usage(2)
+    assert records[1]["role"] == "DEEP" and records[1]["model_id"] == "fake-deep2"
+
+
+async def test_r8_an_invalid_pick_falls_back_to_the_benchs_first(harness):
+    """Smart router — a garbage (or missing) target_model never breaks the
+    hand-over: the bench's FIRST model is the default pick."""
+    harness.nucleus.persona = make_persona(
+        openai_model(harness),
+        router_model=openai_model(harness, config_id="m-router", model_id="fake-router"),
+        deep_models=_bench_models(harness),
+    )
+    harness.provider.script.steps = [
+        {"kind": "tool_call", "call_id": "call_esc", "name": "final_result",
+         "args": {"task": "something hard", "target_model": "No Such Model"}},
+        {"kind": "text", "text": "The default pick answered."},
+    ]
+    events = await harness.trigger()
+    [done] = [e for e in events if e["type"] == "message_done"]
+    assert done["answered_by_model"] == "Deep One"
+    assert harness.provider.requests[-1]["model"] == "fake-deep1"
+
+
+async def test_r9_bench_mapping_pick_rules_and_older_nucleus_compat(harness):
+    """The unit half of the smart router: an OLDER nucleus (single deep_model,
+    no deep_models key) maps to a one-item bench; a bench of one gets the
+    plain instructions (nothing to choose); picks match by name or model_id,
+    case-insensitively, and fall back to the first."""
+    from ai_engine.core.nucleus_client import persona_from
+    from ai_engine.core.specs import ModelRole
+    from ai_engine.pydantic_ai_system.escalation import Escalate, pick_deep_model, router_instructions
+
+    old = make_persona(openai_model(harness),
+                       deep_model=openai_model(harness, config_id="m-deep", model_id="fake-deep"))
+    old.pop("deep_models")  # exactly what an older nucleus sends
+    bench = persona_from(old, company_id="c", project_id="p").models_for(ModelRole.DEEP)
+    assert [m.model_id for m in bench] == ["fake-deep"]
+    assert "bench" not in router_instructions(bench)  # one model: no listing
+
+    two = make_persona(openai_model(harness), deep_models=_bench_models(harness))
+    bench2 = persona_from(two, company_id="c", project_id="p").models_for(ModelRole.DEEP)
+    assert "Deep One: general reasoning" in router_instructions(bench2)
+    assert pick_deep_model(Escalate(task="t", target_model="FAKE-DEEP2"), bench2).name == "Deep Two"
+    assert pick_deep_model(Escalate(task="t", target_model="deep two"), bench2).name == "Deep Two"
+    assert pick_deep_model(Escalate(task="t"), bench2).name == "Deep One"
+    assert pick_deep_model(Escalate(task="t"), []) is None
+
+
 async def test_r6_no_seats_means_yesterdays_behaviour(harness):
     """Item 13 — a persona with neither seat is untouched Layer 0/1.
     One STANDARD call, no escalation machinery on the wire: no Escalate tool in

@@ -98,9 +98,14 @@ class NucleusClient:
 # ── mapping ────────────────────────────────────────────────────────────────────
 
 
-def model_spec_from(data: dict, role: ModelRole) -> ModelSpec:
+def model_spec_from(data: dict, role: ModelRole,
+                    fallback_max_output: int = 16000,
+                    fallback_temperature: float = 0.7) -> ModelSpec:
     """ModelInternal → ModelSpec. context_window arrives from nucleus and is
-    kept apart from the persona's output limit, always."""
+    kept apart from the model's output limit, always.
+    7b (2026-10-20): max_output_tokens/temperature are the MODEL's own now;
+    an older nucleus doesn't send them, so the persona-level legacy numbers
+    are passed in as the stand-ins."""
     return ModelSpec(
         role=role,
         config_id=str(data["id"]),
@@ -113,21 +118,36 @@ def model_spec_from(data: dict, role: ModelRole) -> ModelSpec:
         supports_tools=bool(data.get("supports_tools", True)),
         supports_streaming=bool(data.get("supports_streaming", True)),
         supports_vision=bool(data.get("supports_vision", False)),
+        max_output_tokens=int(data.get("max_output_tokens") or fallback_max_output),
+        temperature=(float(data["temperature"]) if data.get("temperature") is not None
+                     else fallback_temperature),
+        routing_notes=str(data.get("routing_notes") or ""),
     )
 
 
 def persona_from(data: dict, company_id: str, project_id: str) -> PersonaSpec:
     """PersonaInternal → PersonaSpec. Every field nucleus sends has a place."""
     prompt = data.get("prompt") or {}
-    models = [model_spec_from(data["model"], ModelRole.STANDARD)]
+    # 7b: the persona-level numbers are the LEGACY stand-ins for an older
+    # nucleus whose ModelInternal doesn't carry per-model generation fields.
+    legacy_max = int(data.get("max_tokens") or 16000)
+    legacy_temp = float(data.get("temperature") or 0.7)
+
+    def spec(payload: dict, role: ModelRole) -> ModelSpec:
+        return model_spec_from(payload, role, fallback_max_output=legacy_max, fallback_temperature=legacy_temp)
+
+    models = [spec(data["model"], ModelRole.STANDARD)]
     # Item 13 (nucleus change 3, concrete shape): the optional ROUTER and DEEP
     # seats arrive as router_model / deep_model; absent = the seat is empty and
     # the behaviour falls back (no routing / no escalation target beyond STANDARD).
     if data.get("router_model"):
-        models.append(model_spec_from(data["router_model"], ModelRole.ROUTER))
-    if data.get("deep_model"):
-        models.append(model_spec_from(data["deep_model"], ModelRole.DEEP))
-    models += [model_spec_from(m, ModelRole.FALLBACK) for m in data.get("fallback_models") or []]
+        models.append(spec(data["router_model"], ModelRole.ROUTER))
+    # Smart router (ruled 2026-10-20): the deep seat is a BENCH — nucleus
+    # sends deep_models in order (first = the default pick). An OLDER nucleus
+    # sends only the single deep_model, which becomes a one-item bench.
+    deep_payloads = data.get("deep_models") or ([data["deep_model"]] if data.get("deep_model") else [])
+    models += [spec(m, ModelRole.DEEP) for m in deep_payloads]
+    models += [spec(m, ModelRole.FALLBACK) for m in data.get("fallback_models") or []]
     advisor = data.get("advisor_model")
     utility = data.get("utility_model")
     return PersonaSpec(
@@ -139,12 +159,12 @@ def persona_from(data: dict, company_id: str, project_id: str) -> PersonaSpec:
         project_brief=data.get("project_brief"),
         output_type=prompt.get("output_type", "text"),
         context_scope=prompt.get("context_scope"),
-        temperature=float(data.get("temperature", 0.7)),
-        max_output_tokens=int(data.get("max_tokens", 4096)),
+        temperature=legacy_temp,
+        max_output_tokens=legacy_max,
         max_steps=int(data.get("max_steps", 0)),
         models=tuple(models),
-        advisor_model=model_spec_from(advisor, ModelRole.STANDARD) if advisor else None,
-        utility_model=model_spec_from(utility, ModelRole.STANDARD) if utility else None,
+        advisor_model=spec(advisor, ModelRole.STANDARD) if advisor else None,
+        utility_model=spec(utility, ModelRole.STANDARD) if utility else None,
         tool_levels=data.get("tool_levels") or {},
         mcp_servers=tuple(data.get("mcp_servers") or []),
         capabilities=tuple(data.get("capabilities") or []),

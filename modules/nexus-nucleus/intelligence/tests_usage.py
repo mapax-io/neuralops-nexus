@@ -206,3 +206,31 @@ class UsageReadApiTests(UsageFixture):
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.json()["by_project"][0]["project_id"], str(self.p1.id))
         self.assertTrue(r.json()["price_estimated"])
+
+    def test_cached_tokens_and_the_by_kind_split_ride_every_rollup(self):
+        """Owner's asks (2026-10-20): the cache slice is visible, and the
+        rollups say what KIND of work the money went to. seed_rows gives one
+        reply with 500k cache reads and one with none; a router call joins."""
+        self.seed_rows()
+        self.post_usage([
+            self.record(message_id="msg-3", kind="router", role="ROUTER",
+                        uncached_input_tokens=10_000, cache_read_tokens=0,
+                        cache_write_5m_tokens=0, input_tokens=10_000,
+                        output_tokens=1_000),
+        ])
+        # Topic totals: cached_tokens is the sum of cache reads.
+        body = self.call("get", self.topic_path(), self.sara).json()
+        self.assertEqual(body["cached_tokens"], 500_000)
+        # Project rollup: by_kind groups the work, each slice carrying the
+        # same money shape (chat replies + the router's screening).
+        r = self.call("get", f"/api/v1/projects/{self.p1.id}/usage/", self.owner).json()
+        self.assertEqual(r["cached_tokens"], 500_000)
+        kinds = {k["kind"]: k for k in r["by_kind"]}
+        self.assertEqual(set(kinds), {"chat_reply", "router"})
+        self.assertEqual(kinds["chat_reply"]["rows"], 2)
+        self.assertEqual(kinds["router"]["rows"], 1)
+        self.assertEqual(kinds["router"]["input_tokens"], 10_000)
+        self.assertEqual(kinds["chat_reply"]["cached_tokens"], 500_000)
+        # Company rollup carries the split too.
+        c = self.call("get", "/api/v1/usage/company/", self.owner).json()
+        self.assertEqual({k["kind"] for k in c["by_kind"]}, {"chat_reply", "router"})

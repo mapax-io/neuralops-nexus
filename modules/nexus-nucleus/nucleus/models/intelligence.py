@@ -126,11 +126,12 @@ class ModelConfig(TenantBaseModel):
     """
     Credentials + identity for ONE model endpoint. Was `AIModel`.
 
-    Deliberately narrow: this row answers "which model, and how do I reach
-    it" and nothing else. Generation settings (temperature, max_tokens) are
-    NOT here -- they live on Persona, because two personas sharing one API
-    key routinely want different settings, which the old design made
-    impossible.
+    Deliberately narrow: this row answers "which model, how do I reach it,
+    and how does IT generate". Generation settings came BACK here in 7b
+    (owner's ruling 2026-10-20): each model has its own output ceiling and
+    its own sensible temperature, and one persona-wide number never fits a
+    bench of models (seats). Known trade, accepted: two personas sharing a
+    config share its temperature -- register the model twice for two.
 
     ── provider / model_id are stored SEPARATELY, on purpose ──────────────
     Calls used to route through LiteLLM, whose model string is
@@ -227,6 +228,24 @@ class ModelConfig(TenantBaseModel):
 
     context_window = models.PositiveIntegerField(default=8192)
 
+    # -- Generation (7b, owner's ruling 2026-10-20) ----------------------------
+    # Moved here FROM Persona: the model card owns HOW it generates; the
+    # persona owns what it is and does (prompt, tools, max steps).
+    max_output_tokens = models.PositiveIntegerField(
+        default=16000,
+        help_text="The most this model writes in one reply; its provider's own ceiling still applies.",
+    )
+    temperature = models.FloatField(
+        default=0.7,
+        help_text="0 = steady and repeatable, higher = more varied.",
+    )
+    # Smart router (same ruling thread): what the router reads when choosing
+    # a hand-over target from the persona's bench.
+    routing_notes = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="Short strengths/weaknesses note, e.g. 'best for code, expensive'. The router reads this to pick.",
+    )
+
     supports_tools = models.BooleanField(
         default=False,
         help_text=(
@@ -272,9 +291,9 @@ class ModelConfig(TenantBaseModel):
     ),
     )
 
-    # REMOVED (were on AIModel):
-    #   temperature, max_tokens  -> moved to Persona
-    #   secret_ref               -> never read by any code path
+    # REMOVED (were on AIModel): secret_ref -- never read by any code path.
+    # temperature/max_tokens moved to Persona in the AIAgent collapse, then
+    # BACK here as temperature/max_output_tokens in 7b (2026-10-20).
 
     @property
     def qualified_id(self) -> str:
@@ -474,13 +493,31 @@ class Persona(TenantBaseModel):
         help_text="The cheap screening seat. Blank = the company default router, else the engine's fall-through rule.",
     )
 
+    # SMART ROUTER (owner's ruling 2026-10-20: "the router will select …
+    # based on pros and cons of every model"): the deep seat is a BENCH now
+    # (0..N models, ordered — see PersonaDeepModel below). The router reads
+    # each bench model's ModelConfig.routing_notes and picks the hand-over
+    # target; the FIRST bench model is the default pick. This FK is LEGACY:
+    # services keep it synced to the bench's first entry so older readers
+    # (an older engine image's PersonaInternal.deep_model) keep working, but
+    # nothing new should read it — read the bench.
     deep_model = models.ForeignKey(
         ModelConfig,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="deep_personas",
-        help_text="The escalation seat for hard turns. Blank = no escalation.",
+        help_text="LEGACY mirror of the deep bench's first model — read deep_models instead.",
+    )
+
+    # The deep BENCH, in order (through rows carry the position). Empty = no
+    # escalation. The router picks ONE of these per hand-over, by their
+    # routing_notes; an invalid or missing pick falls back to the first.
+    deep_models = models.ManyToManyField(
+        ModelConfig,
+        through="PersonaDeepModel",
+        related_name="deep_bench_personas",
+        blank=True,
     )
 
     # Models to answer with when `model` cannot (its key revoked, no credit,
@@ -591,6 +628,24 @@ class Persona(TenantBaseModel):
 
     def __str__(self):
         return self.name
+
+
+class PersonaDeepModel(models.Model):
+    """One deep-bench model of a persona and its place in the order (smart
+    router, ruled 2026-10-20). The first row is the default hand-over pick;
+    the router chooses among all of them by each model's routing_notes."""
+
+    persona = models.ForeignKey(Persona, on_delete=models.CASCADE, related_name="deep_links")
+    model = models.ForeignKey(ModelConfig, on_delete=models.CASCADE, related_name="deep_links")
+    position = models.PositiveSmallIntegerField()
+
+    class Meta:
+        db_table = "intelligence_persona_deep_model"
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(fields=["persona", "model"], name="uniq_persona_deep_model"),
+            models.UniqueConstraint(fields=["persona", "position"], name="uniq_persona_deep_position"),
+        ]
 
 
 class PersonaFallbackModel(models.Model):

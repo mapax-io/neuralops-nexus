@@ -44,4 +44,13 @@ class ModelFactory:
                 spec.model_id,
                 provider=OllamaProvider(api_key=spec.api_key or "ollama", base_url=spec.base_url),
             )
+        if provider == "deepseek":
+            # DeepSeek speaks the OpenAI wire protocol — their own docs call it
+            # through the OpenAI client pointed at api.deepseek.com. The default
+            # base_url makes the dropdown's deepseek entry work out of the box;
+            # an explicit base_url still wins (a proxy, a regional endpoint).
+            return OpenAIChatModel(
+                spec.model_id,
+                provider=OpenAIProvider(api_key=spec.api_key, base_url=spec.base_url or "https://api.deepseek.com/v1"),
+            )
         raise UnsupportedProviderError(f"unsupported provider: {provider!r}")

@@ -111,8 +111,12 @@ class ModelInternal(Schema):
     the current model library expects, and that knowledge should not leak
     across the boundary either.
 
-    temperature/max_tokens are NOT here -- they are per-persona now, not per
-    model row, and live on PersonaInternal.
+    7b (owner's ruling 2026-10-20): generation settings are MODEL properties
+    again -- each spec carries its own max_output_tokens and temperature, so
+    the engine budgets and generates per CANDIDATE (a fallback with a smaller
+    ceiling gets its own right numbers). PersonaInternal keeps its legacy
+    temperature/max_tokens fields so an older engine image keeps working.
+    routing_notes is the strengths line the smart router reads (next build).
     """
     id: str
     name: str
@@ -122,6 +126,9 @@ class ModelInternal(Schema):
     api_base: Optional[str] = None
     api_key: Optional[str] = None  # decrypted — only sent over internal network
     context_window: int
+    max_output_tokens: int = 16000
+    temperature: float = 0.7
+    routing_notes: str = ""
     supports_tools: bool
     supports_streaming: bool
     supports_vision: bool
@@ -165,6 +172,11 @@ class PersonaInternal(Schema):
     # router_model arrives RESOLVED — the persona's own seat, else the
     # company default (CompanyAIConfig.default_router_model).
     router_model: Optional[ModelInternal] = None
+    # Smart router (ruled 2026-10-20): the deep BENCH, in order — the router
+    # picks ONE by each model's routing_notes; the FIRST is the default pick.
+    # deep_model stays as the bench's first entry so an OLDER engine image
+    # (built against the single seat) keeps escalating.
+    deep_models: list[ModelInternal] = Field(default_factory=list)
     deep_model: Optional[ModelInternal] = None
     delegation_enabled: bool = False
     # Step 3 (change 7): tool mounting + who decides held calls.
@@ -263,6 +275,9 @@ def _model_internal(model) -> ModelInternal:
         api_base=model.api_base,
         api_key=model.get_api_key(),
         context_window=model.context_window,
+        max_output_tokens=model.max_output_tokens,
+        temperature=model.temperature,
+        routing_notes=model.routing_notes or "",
         supports_tools=model.supports_tools,
         supports_streaming=model.supports_streaming,
         supports_vision=model.supports_vision,
@@ -354,21 +369,30 @@ def get_persona_internal(request, persona_id: str):
 
     # Step 3 (change 3): the seats degrade like the advisor — a deleted model
     # empties the seat rather than failing the persona. An empty router seat
-    # is filled by the company default; the engine's fall-through covers the
-    # rest (no router + a deep seat → STANDARD screens).
+    # is filled by the PROJECT default (ruled project-wide 2026-10-19 23:43;
+    # this replaced the dormant company-wide fallback — that column is no
+    # longer read). The persona's own seat always wins; a default equal to
+    # the persona's STANDARD model is skipped (screening with the same model
+    # saves nothing — the same rule the persona API enforces on its own seat).
+    # The engine's fall-through covers the rest (no router + a deep seat →
+    # STANDARD screens).
     router = persona.router_model
     if router is not None and not router.is_active:
         router = None
     if router is None:
-        try:
-            company_default = persona.company.ai_config.default_router_model
-        except Exception:  # noqa: BLE001 — no ai_config row yet
-            company_default = None
-        if company_default is not None and company_default.is_active:
-            router = company_default
-    deep = persona.deep_model
-    if deep is not None and not deep.is_active:
-        deep = None
+        project_default = persona.project.default_router_model
+        if (project_default is not None and project_default.is_active
+                and project_default.id != persona.model_id):
+            router = project_default
+    # The deep BENCH replaces the single seat here: deep_models_of() keeps
+    # the order and drops retired rows, so the degrade rule comes for free.
+    from intelligence.services import deep_models_of
+    deep_bench = deep_models_of(persona)
+    if not deep_bench and persona.deep_model is not None and persona.deep_model.is_active:
+        # Belt and braces: a row whose FK was set WITHOUT bench rows (a direct
+        # ORM write, or data imported past 0038's seeding) still escalates —
+        # it reads as a one-item bench. The services always write both.
+        deep_bench = [persona.deep_model]
 
     # Per-server, in a loop -- this is the code path that was capped at one
     # entry by AIAgent.mcp_server being a single FK. refresh_if_needed()
@@ -399,7 +423,8 @@ def get_persona_internal(request, persona_id: str):
         model=_model_internal(persona.model),
         advisor_model=_model_internal(advisor) if advisor else None,
         router_model=_model_internal(router) if router else None,
-        deep_model=_model_internal(deep) if deep else None,
+        deep_models=[_model_internal(m) for m in deep_bench],
+        deep_model=_model_internal(deep_bench[0]) if deep_bench else None,
         delegation_enabled=persona.delegation_enabled,
         tool_access=persona.tool_access or "all",
         approval_scope=persona.approval_scope or "topic",

@@ -45,6 +45,19 @@ async def test_mc2_unsupported_provider_is_named(harness):
     assert result["error_code"] == "unsupported_provider"
 
 
+async def test_mc4_deepseek_rides_the_openai_wire(harness):
+    """Walkthrough finding (2026-10-19) — nucleus offers 'deepseek' as a
+    provider, so the worker must run it: DeepSeek speaks the OpenAI protocol,
+    and the factory routes it through the OpenAI client (api.deepseek.com by
+    default; an explicit api_base — here the fake provider — wins)."""
+    result = await _check(harness, {
+        "provider": "deepseek", "model_id": "deepseek-chat",
+        "api_key": "k", "api_base": harness.provider_url + "/v1",
+    })
+    assert result["ok"] is True
+    assert isinstance(result["latency_ms"], int) and result["latency_ms"] >= 0
+
+
 async def test_mc3_dead_endpoint_is_a_model_failure(harness):
     """Item 40 — an unreachable endpoint reports model_failure, never a 500.
     The check answers 200 with ok=false and the raw error for nucleus to word —

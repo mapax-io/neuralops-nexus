@@ -28,7 +28,7 @@ from ai_engine.pydantic_ai_system.model_factory import ModelFactory
 log = logging.getLogger(__name__)
 
 CHECK_PROMPT = "Reply with the single word OK."
-SUPPORTED_PROVIDERS = {"openai", "anthropic", "google", "ollama", "openai_compatible"}
+SUPPORTED_PROVIDERS = {"openai", "anthropic", "google", "ollama", "openai_compatible", "deepseek"}
 
 
 def _spec_for_check(provider: str, model_id: str, api_key: str | None,

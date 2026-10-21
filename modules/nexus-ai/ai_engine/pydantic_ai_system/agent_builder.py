@@ -37,8 +37,14 @@ class AgentBuilder:
             model=self._models.build(spec),
             instructions=instructions,
             output_type=output_type,
+            # 7b (owner's ruling 2026-10-20): the CANDIDATE's own numbers — a
+            # fallback or seat with a smaller ceiling generates within it
+            # (deepseek-chat's 8K never borrows the primary's 16K). An older
+            # nucleus fills these from the persona's legacy values upstream
+            # (nucleus_client.model_spec_from), so this is never a behaviour
+            # break, only a sharpening.
             model_settings={
-                "temperature": persona.temperature,
-                "max_tokens": persona.max_output_tokens,  # the OUTPUT cap, never the window
+                "temperature": spec.temperature,
+                "max_tokens": spec.max_output_tokens,  # the OUTPUT cap, never the window
             },
         )

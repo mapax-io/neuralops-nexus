@@ -29,6 +29,13 @@ class ChannelOut(Schema):
     description: Optional[str] = None
 
 
+class ModelRefOut(Schema):
+    """Just enough of a model config to show and pick — the full card lives on
+    the intelligence API."""
+    id: str
+    name: str
+
+
 class ProjectOut(Schema):
     id: str
     name: str
@@ -39,11 +46,26 @@ class ProjectOut(Schema):
     # app can say "Brief: 1,200 chars" without shipping every project's text.
     brief: Optional[str] = None
     brief_length: int = 0
+    # The project-wide default ROUTER (seats ruling 2026-10-19): fills the
+    # router seat of personas that have none of their own. None = no default.
+    default_router_model: Optional[ModelRefOut] = None
+    # The monthly spend cap (ruling 2026-10-21), USD as a decimal STRING
+    # (money is never a float). None = no limit. spent_this_month rides only
+    # the DETAIL route (one aggregate query) and is ESTIMATED by design.
+    spend_limit_monthly: Optional[str] = None
+    spent_this_month: Optional[str] = None
 
 
 class ProjectUpdateRequest(Schema):
     brief: Optional[str] = None
     description: Optional[str] = None
+    # The default router: an id sets it, clear_default_router removes it
+    # (None just means "not sent" — same dance as the persona's seats).
+    default_router_model_id: Optional[str] = None
+    clear_default_router: bool = False
+    # The monthly spend cap: a number sets it, the flag clears it.
+    spend_limit_monthly: Optional[float] = None
+    clear_spend_limit: bool = False
 
 
 class ChannelCreateRequest(Schema):

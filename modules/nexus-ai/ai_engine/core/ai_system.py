@@ -57,6 +57,7 @@ from ai_engine.core.specs import (
 from ai_engine.prompts.layout import PromptLayout
 from ai_engine.prompts.templates import PromptTemplates
 from ai_engine.pydantic_ai_system.agent_builder import AgentBuilder
+from ai_engine.pydantic_ai_system.escalation import pick_deep_model
 from ai_engine.pydantic_ai_system.message_converter import MessageConverter
 from ai_engine.pydantic_ai_system.model_factory import ModelFactory
 from ai_engine.pydantic_ai_system.reply_generator import ReplyGenerator
@@ -170,16 +171,19 @@ class PydanticAISystem:
                                     poll=lambda: self._nucleus.get_nudges(job.msg_id))
                           if job.interactive else None)
 
-            def build_caps(loaded_set, role: ModelRole):
+            def build_caps(loaded_set, role: ModelRole, run_spec=None):
                 if not catalog:
                     return []
                 # item 16: mid-run growth is COMPACTION's job — tiers 1→2→3
                 # with the run model's budget target (§4.1's one-line far-end fix)
-                spec = persona.model_for(role)
+                # run_spec: the smart router's bench pick on a DEEP run — the
+                # budget follows the model that actually runs, not the seat's first.
+                spec = run_spec or persona.model_for(role)
+                # 7b (2026-10-20): the run model's OWN output cap, per spec.
                 target = budget_for(
                     spec, self._settings.budget_loop_headroom,
                     self._settings.budget_target_pct, self._settings.budget_trigger_pct,
-                    persona.max_output_tokens,
+                    spec.max_output_tokens,
                 ).target
                 caps = self._toolsets.build(loaded_set, catalog, persona,
                                             interactive=job.interactive, clearances=clearances,
@@ -307,10 +311,15 @@ class PydanticAISystem:
                 escalate = self._generator.escalation()
                 reply_done = escalate is None  # it answered (or paused) itself
 
+            deep_pick = None
             if escalate is not None:
                 # ── the hand-over (trial G): a second ordinary run ──────────
-                reply_role = ModelRole.DEEP if deep_spec is not None else ModelRole.STANDARD
-                answered_by = persona.model_for(reply_role).name
+                # Smart router: the DEEP seat is a BENCH — the run goes to the
+                # model the router NAMED (Escalate.target_model); an invalid or
+                # missing pick is the bench's first. No bench → STANDARD.
+                deep_pick = pick_deep_model(escalate, persona.models_for(ModelRole.DEEP))
+                reply_role = ModelRole.DEEP if deep_pick is not None else ModelRole.STANDARD
+                answered_by = (deep_pick or persona.model_for(ModelRole.STANDARD)).name
                 yield AgentEvent(
                     type=AgentEventType.ESCALATION,
                     id=job.msg_id, persona_id=persona.id, persona_name=persona.name,
@@ -325,9 +334,9 @@ class PydanticAISystem:
                 loaded_for_done = loaded.tool_ids
                 request = ReplyRequest(job=job, persona=persona, role=reply_role, plan=plan)
                 async for event in self._generator.generate(
-                    request, capabilities=build_caps(loaded, reply_role),
+                    request, capabilities=build_caps(loaded, reply_role, deep_pick),
                     catalog_hash=loaded.catalog_hash, handover=escalate,
-                    nudges=nudge_gate, delegate=delegate,
+                    nudges=nudge_gate, delegate=delegate, primary=deep_pick,
                 ):
                     yield event
             elif not reply_done:
@@ -402,9 +411,14 @@ class PydanticAISystem:
                 answered_by_model=answered_by,
                 prompt_tokens=last.input_tokens if last else None,
                 output_tokens=last.output_tokens if last else None,
-                context_window=persona.model_for(
-                    reply_role if persona.model_for_or_none(reply_role) else ModelRole.STANDARD
-                ).context_window,
+                # Smart router: on a bench hand-over the window is the PICKED
+                # model's, which need not be the seat's first.
+                context_window=(
+                    deep_pick.context_window if deep_pick is not None and reply_role is ModelRole.DEEP
+                    else persona.model_for(
+                        reply_role if persona.model_for_or_none(reply_role) else ModelRole.STANDARD
+                    ).context_window
+                ),
                 # items 13 + Layer 3 bridge: the topic's cache courier + what ran
                 loaded_tools=list(loaded_for_done) if loaded_for_done is not None else None,
                 used_tools=used or None,

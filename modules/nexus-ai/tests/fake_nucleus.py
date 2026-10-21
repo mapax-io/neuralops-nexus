@@ -34,10 +34,15 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
                  max_tokens: int = 777, capabilities: list | None = None,
                  tool_levels: dict | None = None, mcp_servers: list | None = None,
                  router_model: dict | None = None, deep_model: dict | None = None,
+                 deep_models: list | None = None,
                  fallback_models: list | None = None, max_steps: int = 8,
                  utility_model: dict | None = None, persona_id: str = "p1",
                  delegation_enabled: bool = False) -> dict:
-    """A PersonaInternal-shaped dict."""
+    """A PersonaInternal-shaped dict. Smart router: `deep_models` is the BENCH
+    (today's nucleus always sends it); a lone `deep_model` mirrors into a
+    one-item bench the way nucleus does, and the single field is kept as the
+    bench's first for an older engine image."""
+    bench = deep_models if deep_models is not None else ([deep_model] if deep_model else [])
     return {
         "id": persona_id,
         "name": "NeuralBot",
@@ -56,7 +61,9 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
         "recall_enabled": True,
         # item 13 (nucleus change 3): the optional seats
         "router_model": router_model,
-        "deep_model": deep_model,
+        # smart router: the bench, first entry mirrored into the legacy field
+        "deep_models": bench,
+        "deep_model": deep_model or (bench[0] if bench else None),
         # item 46 (Layer 6, handoff change 14): the supervisor checkbox
         "delegation_enabled": delegation_enabled,
     }

@@ -9,7 +9,9 @@ between nucleus and the frontend. Any change lands HERE first, then in code —
 the frontend never discovers a new event at runtime.
 
 **Companions:** `docs/NUCLEUS-REVAMP.md` (the steps), `docs/NUCLEUS-HANDOFF.md`
-(changes 1–14), `docs/NEXUS-AI-REVAMP.md` (the engine, done).
+(changes 1–14), `docs/NEXUS-AI-REVAMP.md` (the engine, done), and
+`docs/MISSING.md` — the living list of known gaps, to run later (owner's
+ask, 2026-10-19).
 
 ---
 
@@ -250,6 +252,17 @@ diagram, form, terminal, code, preflight, choice.
    chunk 2 had already retired the events). A persisted dock still holding
    "terminal"/"browser" drops them silently on hydration (isPaneId filters).
 8. **File viewer (item 4): DEFERRED** — owner: "if not now, later".
+9. **BUILT (engine, same evening) — deepseek runs for real.** Walkthrough
+   finding: nucleus offered `deepseek` but the engine's ModelFactory had no
+   branch, so the check rightly refused ("cannot run deepseek models yet" —
+   the Register gate working as designed). Owner's ruling: a provider in the
+   list must work. Fix: DeepSeek speaks the OpenAI wire protocol, so
+   model_factory.py routes provider "deepseek" through the OpenAI client
+   with base_url defaulting to https://api.deepseek.com/v1 (an explicit
+   api_base still wins); model_check.py's SUPPORTED_PROVIDERS gained
+   "deepseek"; + test_mc4 in tests/test_model_check.py (engine baseline
+   110 → 111). The dev engine runs uvicorn --reload on a bind mount, so the
+   change was live without a container restart.
 VERIFY (owner): see the one consolidated list at the end of this section.
 
 **BUILT (2026-10-19) — chunk 2: the live-chat events.** The app now speaks
@@ -356,16 +369,224 @@ All in the web app repo (`neuralops-nexus-web-app`), dev stack up
       you. In a chat's Schedules → New schedule → A runbook: the checkpoint
       chain is greyed ("run it by hand"). Optional: set a Supervisor on a
       2-step runbook and watch the verdicts land as ordinary replies.
-   h. **Removals:** the pane rail shows no Terminal and no Browser; /terminal
-      and /swarm are unknown commands; the Web pane still opens pages beside
-      the chat (activity-trail links).
+   h. **Removals:** the pane rail shows no Terminal, no Browser and no Web
+      pane (six panes total); /terminal and /swarm are unknown commands; an
+      activity-trail link's "Open" opens the page in a new browser tab.
+
+## 2d. Walkthrough rulings (2026-10-19, live session)
+
+- **Default max_tokens is 16000** (owner: "so it should 16000" — 4096 cut
+  long answers short). Changed in BOTH places that hold the default: the
+  create-persona dialog's starting value (`personas-tab.tsx`, useState +
+  reset) and the API default (`intelligence/schema.py` PersonaIn). The
+  Django model default stays 4096 on purpose — changing it would mean a
+  migration for a default the API layer already supplies; every create goes
+  through PersonaIn, so the model default is never used. A model whose own
+  output ceiling is lower (gpt-4o-mini tops out around 16K) simply stops
+  there — the field hint now says so. Max steps stays 10 (tool-call rounds
+  per reply; the engine enforces it via UsageLimits).
+  **Superseded minutes later:** the owner then ruled max_tokens belongs on
+  the MODEL, not the persona (MISSING.md item 7b) — the 16000 default above
+  is the interim shape until 7b is built.
+- **Chart guard made tolerant of model slips** (live find: @AR's bubble chart
+  refused over `axes.x.prefix: ""`): a BLANK string on an optional field now
+  reads as absent (prefix/suffix/axis label/subtitle/source), and a `time`
+  scale on a scatter/bubble x axis coerces to `linear` instead of refusing.
+  lib/chart/description.ts + two pinned tests. The fallback (show the data
+  with the reason) behaved exactly as designed. **VERIFIED live (owner,
+  2026-10-19 23:01): the same bubble chart renders.**
+
+## 2e. BUILT (2026-10-19, late) — the persona SEATS (MISSING item 1, ruled
+road A the same evening)
+
+Router + deep become settable end to end. Nucleus: schema/services/serializer
+(details in MISSING.md item 1's BUILT block) — no migration. Frontend:
+`lib/api/intelligence.ts` types; `personas-tab.tsx` useBacking gained
+routerId/deepId (primary takeover clears them, clearAll resets, attach-&-use
+covers every seat); BOTH dialogs render pickers in the ruled order Model →
+Router → Deep → Fallbacks → Advisor, each with inline register; cards chip
+the seats. The engine side was already built (router answers trivial
+messages itself or returns Escalate; deep runs second with the hand-over
+note — escalation.py), so NOTHING engine-side changed.
+The default ROUTER is ruled PROJECT-wide (23:43) — the company knob was
+removed again the same night; the project version is specced in MISSING
+item 1.
+VERIFY (owner): (1) nucleus suite — `docker exec -w /nexus/nucleus -e
+PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev
+/opt/venv/nucleus-env/bin/python manage.py test -v 1 --noinput` — expect the
+old 456 + 7 new PersonaSeatTests = 463 OK; (2) frontend — `npm run test:run
+&& npm run lint` — expect 125 files / 1126 tests; (3) live — reload the app,
+**NUCLEUS VERIFIED (owner, 2026-10-20 19:00): 464 OK in 906s** — the 464
+includes the usage-rollup test added 2026-10-20 (cached_tokens + by_kind).
+**FRONTEND VERIFIED (owner, 2026-10-21 07:08): 125 files / 1128 tests, lint
+clean** — the seat tests ride inside the 1128. Live checks still pending.
+Edit a persona: Router and Deep pickers sit between Model and Fallbacks;
+give a persona Model gpt-4o + Router gpt-4o-mini, ask something trivial →
+answered cheap; ask something hard with a Deep set → "Handed to …" in the
+chat.
+
+## 2f. BUILT (2026-10-20) — release plan #1 + #2
+
+**#1 Usage, finished.** `cached_tokens` on every totals/breakdown shape and a
+`by_kind` split on the project + company rollups (usage_api.py). The Usage
+page shows a "From cache" stat with its share, a Cached column in every
+table, and a "By kind of work" table in plain words (Chat replies / Router
+screening / Memory passes / Embeddings). An older server without the fields
+renders clean. +1 nucleus test, +1 frontend test.
+
+**#2 Model selection (7b).** Generation settings moved to the MODEL card —
+max_output_tokens, temperature and routing_notes, with ONE migration
+(0037_model_generation). The engine now generates and budgets per CANDIDATE,
+so a fallback with a smaller ceiling (deepseek-chat ~8K) uses its own number
+instead of borrowing the primary's. Both persona dialogs lost Temperature
+and Max tokens; both model dialogs gained a Generation section. Full detail
+in MISSING.md item 7b.
+
+VERIFY (owner): (1) `docker compose … exec`-free migration first —
+`docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus
+neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py migrate`
+(expect 0037_model_generation OK); (2) the nucleus suite — expect 464 OK
+still; (3) the engine suite — `docker exec -w /nexus/ai neuralops-nexus-ai-new
+/opt/venv/nexus-ai-env/bin/python -m pytest tests/ -q` — expect 113 passed
+(111 + the 2 new 7b cases); (4) frontend — `npm run test:run && npm run lint`
+— expect 1128 tests; (5) live — Edit a model: a Generation section with Max
+reply tokens / Temperature / Strengths; set deepseek-chat to 8000 and ask a
+persona that falls back to it — no more "max_tokens is too large".
+
+**ALL FOUR SUITES VERIFIED (owner):** migration 0037 applied OK (2026-10-20);
+nucleus 464 OK (2026-10-20); engine 113 passed / 5 skipped incl. test_7b1 +
+test_7b2 (2026-10-21); frontend 125 files / 1128 tests + lint clean
+(2026-10-21 07:08 — the first run that morning failed 4 tests, all one
+cause: my seat tests queried labels with exact strings but ModelPicker
+renders "… model (optional)"; house style is regex queries, fixed in
+personas-tab.test.tsx). Release plan #1 and #2 are code-complete and
+suite-verified; only the LIVE checks in (5) remain.
+
+## 2g. BUILT (2026-10-21) — release plan #2 remainder: the SMART ROUTER bench
+
+The deep seat is a BENCH (0..N ordered models); the router reads each bench
+model's strengths note (ModelConfig.routing_notes, Models tab → Generation)
+and NAMES its pick per hand-over; an invalid or missing pick falls back to
+the bench's first; "Handed to <model>" names whoever ran. Full build detail
+in MISSING.md item 1's SMART ROUTER block. Compatibility both ways: the old
+single deep field still works on the API, and an older engine image still
+gets a single deep_model (= the bench's first).
+
+VERIFY (owner):
+1. migrate — `docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus
+   neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py migrate`
+   — expect **0038_deep_bench OK** (it also copies an existing deep seat
+   into the bench, so nothing set is lost);
+2. nucleus suite (same command as always) — expect **467 OK** (464 + 3 new
+   PersonaSeatTests);
+3. engine suite — `docker exec -w /nexus/ai neuralops-nexus-ai-new
+   /opt/venv/nexus-ai-env/bin/python -m pytest tests/ -q` — expect
+   **116 passed, 5 skipped** (113 + r7/r8/r9);
+4. frontend — `cd /data/code/neuralops-nexus-web-app && npm run test:run &&
+   npm run lint` — expect **125 files / 1131 tests** (1128 + 3) + lint clean;
+5. live — restart the nucleus + engine containers so the new code loads,
+   then: Edit a persona → "Deep models" is a list like the fallbacks (add,
+   reorder, first row says "default pick"); add two deep models with
+   different strengths notes on their model cards; ask something hard →
+   "Handed to …" names the model whose note fits the question.
+
+**VERIFIED so far (owner, 2026-10-21):** (1) migration 0038_deep_bench
+applied OK; (3) engine **116 passed, 5 skipped in 40.5s** — r7/r8/r9 all
+PASS; (4) frontend **125 files / 1131 tests + lint clean** (14:59).
+(2) nucleus first run 14:59: **467 ran, 1 error** — internal/tests_step3
+PersonaSeatsTests sets the deep FK by direct ORM write (no bench rows), and
+the internal API read only the bench → deep_model came back null. Fixed in
+CODE, not just the test: a bare FK without bench rows now serves as a
+one-item bench (belt-and-braces for direct writers/imports), and the old
+test also pins deep_models.
+**NUCLEUS VERIFIED (owner, 2026-10-21 15:21): 467 OK in 906s** — all four
+suite gates green. Only (5) the live check remains (restart the engine
+container first).
+
+## 2h. BUILT (2026-10-21) — release plan #3: the two missing frontend things
+
+**(a) Project-wide DEFAULT ROUTER** (MISSING item 1's last open piece — full
+detail there). One migration (**0039_project_default_router**); the setting
+lives on the PROJECT OVERVIEW PANE (Claude's pick — say the word to move it
+to the configure topic): a "Default router" select of the project's attached
+models, saved on change, under project.update. Serve-time: an empty persona
+router seat fills from it; the persona's own seat wins; a default equal to a
+persona's standard model is skipped; the dormant company column is dead.
+
+**(b) MCP stored tool list + Refresh** (MISSING item 2 — frontend half).
+External HTTP/SSE server cards sum their stored tools ("3 tools · 1 read /
+2 write") with a Refresh tools button; a failed dial's 502 reason shows
+verbatim beside it; the edit dialog lists every stored tool with its
+read/write badge (unlabeled = write).
+
+VERIFY (owner):
+1. migrate — same command as always — expect **0039_project_default_router OK**;
+2. nucleus suite — expect **468 OK** (467 + ProjectDefaultRouterTests);
+3. frontend — `npm run test:run && npm run lint` — expect **125 files /
+   1138 tests** (1131 + 3 pane + 4 mcp) + lint clean;
+4. engine — UNCHANGED (116 passed stands; nothing engine-side moved);
+5. live — open a project's overview pane → "Default router" select; set your
+   cheap model there, give a persona NO router seat, ask something trivial →
+   answered cheap (usage says router); MCP screen → an external server's card
+   shows "N tools · …" + Refresh tools; break the URL and Refresh → the
+   reason appears beside the button.
+
+**ALL GATES VERIFIED (owner, 2026-10-21):** migrations through 0039 applied
+on the live DB ("No migrations to apply" at 16:19); nucleus **468 OK**
+(16:08); engine **116 passed, 5 skipped** (14:07); frontend **125 files /
+1138 tests + lint clean** (16:16). Every build in §2e–§2h is code-complete
+and suite-verified. What remains is the owner's ONE live test pass
+(walkthrough list) and the release chores (commits, key rotation, Supabase
+cleanups).
+
+## 2i. BUILT (2026-10-21, 16:25 ruling) — spend limit + capabilities ruling
+
+**Default project capabilities: RULED — keep all four** (filesystem, shell,
+web_search, web_fetch). Nothing changed; item 9's leftover is CLOSED.
+
+**Monthly SPEND LIMIT: RULED per-project, BLOCK at the cap — and BUILT**
+(full detail in MISSING item 9's spend-limits entry). A dollar cap per
+project per calendar month; at the cap, personas in that project stop
+answering with a worded refusal (the person's message still posts). Money is
+ESTIMATED everywhere — the UI and refusal both say so. The setting lives on
+the project overview pane under the Default router, with "≈ $X spent this
+month" beside it.
+
+VERIFY (owner):
+1. migrate — expect **0040_spend_limit OK**;
+2. nucleus suite — expect **469 OK** (468 + SpendLimitTests);
+3. frontend — expect **125 files / 1140 tests** (1138 + 2) + lint clean;
+4. engine — UNCHANGED (116 stands);
+5. live — project overview → "Monthly spend limit": set it to $0.01 → ask a
+   persona anything → the refusal names ≈spent and the cap; clear the field
+   → Remove limit → personas answer again.
+
+**ALL GATES VERIFIED (owner, 2026-10-21 17:03):** migration 0040 applied OK;
+nucleus **469 OK in 910s**; frontend **125 files / 1140 tests + lint clean**;
+engine unchanged at 116. NOTHING is left to build or suite-verify anywhere —
+every section §2e–§2i is done. Final targets for any future re-run:
+**nucleus 469 · engine 116 · frontend 1140 · migrations through 0040.**
+Remaining: the owner's one live walkthrough and the release chores.
 
 ## 3. Removals
 
 Terminal pane and browser pane screens (items 41/42, dropped), and any UI for
 the swarm road. Message search stays (nucleus keeps it as plain DB search).
-**DONE (2026-10-19)** — see §2b chunks 3+4 item 7. The WEB pane (client-side
-"open a page beside the chat") is NOT part of the removal and stays.
+**DONE (2026-10-19)** — see §2b chunks 3+4 item 7.
+**The WEB pane followed the same evening (owner's ruling, 2026-10-19,
+"it should not be there"):** pane id "web" retired (persisted docks drop it on
+load); web-pane.tsx / web-pane.store.ts / lib web-pane.ts → _attic/removed-panes;
+`openBeside()` stays as the one choke point and now opens a NEW TAB
+(noopener,noreferrer); trail rows say "Open" ("Open … in a new tab").
+**Chromium dependency removed in the same ruling:** @playwright/test + the e2e
+script + the 5 e2e specs → _attic/e2e-playwright; the @xterm/* packages
+(terminal-pane leftovers) left package.json. Owner verify: `npm install`,
+then `npm run test:run && npm run lint`, restart `npm run dev`, hard reload —
+the rail shows six panes and a trail link opens a browser tab.
+**VERIFIED (owner, 2026-10-19 23:00): 125 files / 1122 tests green, lint
+clean** (the suite shrank from 128/1128 by the three retired web-pane suites;
+the chart-guard fixes' new tests ride inside description.test.ts). Live rail
++ new-tab check pending in the walkthrough's step h.
 
 ## 4. Order
 

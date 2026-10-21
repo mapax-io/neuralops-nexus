@@ -40,6 +40,30 @@ class Project(TenantOperationModel):
     # rebuilt; the old one stays active underneath, so a crash is safe).
     reindex_status = models.CharField(max_length=10, blank=True, default="")
 
+    # DEFAULT ROUTER — ruled PROJECT-wide (owner, 2026-10-19 23:43: "models
+    # can be company wide, but it will be used as project persona router").
+    # Fills a persona's EMPTY router seat at serve time (internal/api.py);
+    # a persona's own seat always wins, and a default equal to a persona's
+    # standard model is skipped for that persona (screening with the same
+    # model saves nothing). The dormant CompanyAIConfig.default_router_model
+    # column is NOT read any more.
+    default_router_model = models.ForeignKey(
+        "nucleus.ModelConfig", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+        help_text="Fills the router seat of this project's personas that have none of their own.",
+    )
+
+    # SPEND LIMIT (owner's ruling 2026-10-21: per-project monthly cap, BLOCK
+    # when reached). USD per calendar month, compared against the sum of this
+    # project's UsageRecord.cost — which is ESTIMATED by design (prices not
+    # confirmed; unpriced rows count as 0). Null = no limit. Enforced where
+    # persona triggers fire (chat/api.py _trigger_personas, same road as the
+    # reindex lock); the human message still posts — only the AI reply is
+    # withheld, with a worded refusal.
+    spend_limit_monthly = models.DecimalField(
+        max_digits=9, decimal_places=2, null=True, blank=True,
+        help_text="USD per calendar month; personas here stop answering once the month's estimated spend reaches it.",
+    )
+
     members = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         through="ProjectMember",

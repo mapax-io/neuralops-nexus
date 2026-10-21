@@ -972,3 +972,106 @@ class DeliverableTests(_MentionRightFixture):
             metadata={"render_as": "chart"},
         )
         self.assertEqual(self.keep(self.owner, "Elsewhere", elsewhere).status_code, 404)
+
+
+class ProjectDefaultRouterTests(InviteGrantsFixture):
+    """The PROJECT-wide default router (seats ruling 2026-10-19 23:43): set
+    and cleared through update_project (the PATCH project route, under
+    project.update); must be an attached, active model of this company; rides
+    ProjectOut as {id, name}. The serve-time fill is proven in
+    internal/tests_step3.py."""
+
+    def setUp(self):
+        super().setUp()
+        from nucleus.models import ModelConfig
+        self.cheap = ModelConfig.objects.create(
+            company=self.company, name="Cheap", provider="openai", model_id="gpt-cheap",
+        )
+        self.cheap.projects.add(self.p1)
+
+    def out(self):
+        from workspace.api import _project_out
+        self.p1.refresh_from_db()
+        return _project_out(self.p1)
+
+    def test_set_clear_validation_and_the_out_shape(self):
+        from nucleus.models import ModelConfig
+        from workspace.services import update_project
+        # An unattached model is refused with the attach wording; an unknown
+        # id with not-found — and neither write anything.
+        stray = ModelConfig.objects.create(
+            company=self.company, name="Stray", provider="openai", model_id="gpt-stray",
+        )
+        with self.assertRaisesRegex(ValueError, "not attached"):
+            update_project(self.p1, self.owner, default_router_model_id=str(stray.id))
+        with self.assertRaisesRegex(ValueError, "not found"):
+            update_project(self.p1, self.owner, default_router_model_id="00000000-0000-0000-0000-000000000000")
+        self.assertIsNone(self.out()["default_router_model"])
+        # Set; an unrelated edit keeps it (silence keeps, like the seats).
+        update_project(self.p1, self.owner, default_router_model_id=str(self.cheap.id))
+        self.assertEqual(self.out()["default_router_model"], {"id": str(self.cheap.id), "name": "Cheap"})
+        update_project(self.p1, self.owner, description="still here")
+        self.assertEqual(self.out()["default_router_model"]["name"], "Cheap")
+        # A retired model reads as none; clear removes it for good.
+        self.cheap.soft_delete()
+        self.assertIsNone(self.out()["default_router_model"])
+        self.cheap.is_active = True
+        self.cheap.save(update_fields=["is_active"])
+        self.assertEqual(self.out()["default_router_model"]["name"], "Cheap")
+        update_project(self.p1, self.owner, clear_default_router=True)
+        self.assertIsNone(self.out()["default_router_model"])
+
+
+class SpendLimitTests(InviteGrantsFixture):
+    """The per-project monthly spend cap (ruled 2026-10-21: block at the cap).
+    Set and cleared through update_project; the month's spend sums only THIS
+    month's PRICED rows (cost null = unpriced = 0, money is estimated by
+    design); spend_limit_reached is what the chat trigger road refuses on —
+    the wiring in chat/api.py mirrors the reindex lock line for line."""
+
+    def rec(self, project, cost, days_ago=0):
+        from datetime import timedelta
+        from django.utils import timezone
+        from nucleus.models import UsageRecord
+        return UsageRecord.objects.create(
+            company_id=str(self.company.id), project_id=str(project.id),
+            topic_id="t", persona_id="p", message_id="m",
+            kind="chat_reply", provider="openai", model_id="gpt-4o",
+            cost=cost, called_at=timezone.now() - timedelta(days=days_ago),
+        )
+
+    def test_the_cap_validates_sums_this_month_only_and_blocks_at_the_line(self):
+        from decimal import Decimal
+        from workspace.api import _project_out
+        from workspace.services import spend_limit_reached, spend_this_month, update_project
+        # Validation before anything is written.
+        with self.assertRaisesRegex(ValueError, "more than 0"):
+            update_project(self.p1, self.owner, spend_limit_monthly=0)
+        with self.assertRaisesRegex(ValueError, "more than 0"):
+            update_project(self.p1, self.owner, spend_limit_monthly=2_000_000)
+        # No cap set: never reached.
+        self.assertEqual(spend_limit_reached(self.p1), (False, Decimal("0")))
+        # The sum is THIS month's priced rows only.
+        self.rec(self.p1, Decimal("0.40"))
+        self.rec(self.p1, Decimal("0.35"))
+        self.rec(self.p1, None)                           # unpriced → counts 0
+        self.rec(self.p1, Decimal("9.99"), days_ago=40)   # last month → ignored
+        self.assertEqual(spend_this_month(self.p1), Decimal("0.75"))
+        # Set the cap; the out shape carries decimal STRINGS, spent on detail.
+        update_project(self.p1, self.owner, spend_limit_monthly=1.5)
+        self.p1.refresh_from_db()
+        out = _project_out(self.p1, with_brief=True)
+        self.assertEqual(out["spend_limit_monthly"], "1.50")
+        self.assertEqual(Decimal(out["spent_this_month"]), Decimal("0.75"))
+        self.assertIsNone(_project_out(self.p1)["spent_this_month"])  # lists skip the aggregate
+        # Below the cap: open; AT the cap: blocked (>= rule).
+        over, spent = spend_limit_reached(self.p1)
+        self.assertEqual((over, spent), (False, Decimal("0.75")))
+        self.rec(self.p1, Decimal("0.75"))
+        over, spent = spend_limit_reached(self.p1)
+        self.assertEqual((over, spent), (True, Decimal("1.50")))
+        # Clearing removes the cap for good.
+        update_project(self.p1, self.owner, clear_spend_limit=True)
+        self.p1.refresh_from_db()
+        self.assertIsNone(self.p1.spend_limit_monthly)
+        self.assertEqual(spend_limit_reached(self.p1), (False, Decimal("0")))

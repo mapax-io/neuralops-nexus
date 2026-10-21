@@ -426,8 +426,8 @@ services:
     image: neuralops:dev-local   # built once by nucleus-dev above
     profiles: ["dev"]
     container_name: neuralops-nexus-ai-new
-    # command: ["nexus-ai-env", "python3", "-m", "uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-    command: ["nexus-ai-env", "tail", "-f", "/dev/null"]   # DEBUG: idle — start the engine by hand (VSCode); swap comments to run normally
+    command: ["nexus-ai-env", "python3", "-m", "uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # command: ["nexus-ai-env", "tail", "-f", "/dev/null"]   # DEBUG: idle — start the engine by hand (VSCode); swap comments to run normally
     volumes:
       - ./modules/nexus-ai:/nexus/ai
       # The engine's fastembed/huggingface model cache (the image runs as the

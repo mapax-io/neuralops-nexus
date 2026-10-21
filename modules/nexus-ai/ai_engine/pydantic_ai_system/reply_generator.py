@@ -59,7 +59,7 @@ from ai_engine.core.specs import (
     UsageRecord,
 )
 from ai_engine.pydantic_ai_system.agent_builder import AgentBuilder
-from ai_engine.pydantic_ai_system.escalation import ROUTER_INSTRUCTIONS, Escalate, handover_suffix
+from ai_engine.pydantic_ai_system.escalation import Escalate, handover_suffix, router_instructions
 from ai_engine.pydantic_ai_system.event_mapper import EventMapper
 from ai_engine.pydantic_ai_system.message_converter import MessageConverter
 from ai_engine.pydantic_ai_system.tools.approval_gate import ApprovalGate
@@ -91,7 +91,8 @@ class ReplyGenerator:
     async def generate(self, request: ReplyRequest, capabilities: list | None = None,
                        resume: ResumeBlock | None = None, catalog_hash: str = "",
                        allow_escalation: bool = False, handover: Escalate | None = None,
-                       allow_ask: bool = True, nudges=None, delegate=None):
+                       allow_ask: bool = True, nudges=None, delegate=None,
+                       primary: ModelSpec | None = None):
         """capabilities: harness/pydantic-ai capability objects from
         ToolsetBuilder (Layer 1); None/empty keeps the Layer 0 toolless path.
         resume: the pause state + decisions (item 2) — the run continues
@@ -102,13 +103,15 @@ class ReplyGenerator:
         the router's screening run passes False, and an unattended job never
         gets the tool regardless (nobody can answer).
         delegate: item 46 — the call_persona toolset, when this persona may
-        run others (built by the caller; None = no delegation this run)."""
+        run others (built by the caller; None = no delegation this run).
+        primary: the exact model this run uses — the smart router's BENCH
+        pick on a DEEP run; None = the seat's first model (every other run)."""
         persona = request.persona
         ask = allow_ask and request.job.interactive  # item 5
         toolsets: list = ([ask_user_toolset()] if ask else [])  # item 5
         if delegate is not None:
             toolsets.append(delegate)  # item 46
-        primary = persona.model_for(request.role)
+        primary = primary or persona.model_for(request.role)
         # item 12: the seat's model first, then the persona's fallbacks in order
         candidates = [primary] + [m for m in persona.models if m.role is ModelRole.FALLBACK]
 
@@ -116,14 +119,18 @@ class ReplyGenerator:
         # before anything is sent (a resume continues a stored state untouched)
         plan = request.plan
         if self._fitter is not None and self._settings is not None and resume is None:
+            # 7b (2026-10-20): the PRIMARY CANDIDATE's own output cap — per
+            # model, no longer one persona-wide number.
             budget = budget_for(primary, self._settings.budget_loop_headroom,
                                 self._settings.budget_target_pct, self._settings.budget_trigger_pct,
-                                persona.max_output_tokens)
+                                primary.max_output_tokens)
             plan = self._fitter.fit(plan, budget)
 
         instructions = self._converter.instructions(plan)
         if allow_escalation:
-            instructions += ROUTER_INSTRUCTIONS
+            # Smart router: with a bench of 2+ deep models the instructions
+            # list them with their strengths, so the run can NAME its pick.
+            instructions += router_instructions(persona.models_for(ModelRole.DEEP))
         if handover is not None:
             instructions += handover_suffix(handover)
 

@@ -33,11 +33,14 @@ def _money(qs) -> dict:
     every endpoint returns. cost is a string (JSON has no Decimal) or null
     when NO priced row exists; unpriced_rows says how many rows have no
     price at all, so the UI can say 'at least this much'.
+    cached_tokens = cache READS (the ≈half-price part of input_tokens —
+    input_tokens already INCLUDES them, so it is a slice, not an addition).
     Aggregate aliases must not reuse column names (cost=Sum("cost") makes
     the Q(cost__isnull=...) filter hit the aggregate — FieldError)."""
     agg = qs.aggregate(
         total_in=Sum("input_tokens"),
         total_out=Sum("output_tokens"),
+        total_cached=Sum("cache_read_tokens"),
         total_cost=Sum("cost"),
         row_count=Count("id"),
         unpriced=Count("id", filter=Q(cost__isnull=True)),
@@ -45,6 +48,7 @@ def _money(qs) -> dict:
     return {
         "input_tokens": int(agg["total_in"] or 0),
         "output_tokens": int(agg["total_out"] or 0),
+        "cached_tokens": int(agg["total_cached"] or 0),
         "cost": str(agg["total_cost"]) if agg["total_cost"] is not None else None,
         "rows": int(agg["row_count"] or 0),
         "unpriced_rows": int(agg["unpriced"] or 0),
@@ -58,6 +62,7 @@ def _breakdown(qs, key: str) -> list[dict]:
         .annotate(
             total_in=Sum("input_tokens"),
             total_out=Sum("output_tokens"),
+            total_cached=Sum("cache_read_tokens"),
             total_cost=Sum("cost"),
             row_count=Count("id"),
             unpriced=Count("id", filter=Q(cost__isnull=True)),
@@ -69,6 +74,7 @@ def _breakdown(qs, key: str) -> list[dict]:
             key: r[key],
             "input_tokens": int(r["total_in"] or 0),
             "output_tokens": int(r["total_out"] or 0),
+            "cached_tokens": int(r["total_cached"] or 0),
             "cost": str(r["total_cost"]) if r["total_cost"] is not None else None,
             "rows": int(r["row_count"] or 0),
             "unpriced_rows": int(r["unpriced"] or 0),
@@ -128,6 +134,9 @@ def project_usage(request, project_id: str):
         **_money(qs),
         "by_persona": _breakdown(qs, "persona_id"),
         "by_model": _breakdown(qs, "model_id"),
+        # What KIND of work the money went to — chat_reply / router / memory
+        # (owner's ask, 2026-10-20: "what does the screener cost vs save?").
+        "by_kind": _breakdown(qs, "kind"),
         "price_estimated": True,
         "note": ESTIMATE_NOTE,
     }
@@ -153,6 +162,7 @@ def company_usage(request):
         **_money(qs),
         "by_project": _breakdown(qs, "project_id"),
         "by_model": _breakdown(qs, "model_id"),
+        "by_kind": _breakdown(qs, "kind"),
         "price_estimated": True,
         "note": ESTIMATE_NOTE,
     }

@@ -265,11 +265,47 @@ def create_project(company, user, name: str, description: str = None):
 PROJECT_BRIEF_MAX = 8_000
 
 
-def update_project(project, user, *, brief: str | None = None, description: str | None = None):
+def spend_this_month(project):
+    """The project's recorded cost for the CURRENT CALENDAR MONTH, as a
+    Decimal. ESTIMATED by design (the owner's pricing ruling): rows whose
+    price is unknown carry cost null and count as 0 here."""
+    from decimal import Decimal
+    from django.db.models import Sum
+    from nucleus.models import UsageRecord
+    start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    total = UsageRecord.objects.filter(
+        project_id=str(project.id), called_at__gte=start,
+    ).aggregate(total=Sum("cost"))["total"]
+    return total if total is not None else Decimal("0")
+
+
+def spend_limit_reached(project):
+    """(True, spent) once the month's estimated spend meets the project's cap;
+    (False, spent-or-0) otherwise, including when no cap is set. The chat
+    trigger road calls this (spend ruling 2026-10-21: block at the cap)."""
+    from decimal import Decimal
+    limit = project.spend_limit_monthly
+    if limit is None:
+        return False, Decimal("0")
+    spent = spend_this_month(project)
+    return spent >= limit, spent
+
+
+SPEND_LIMIT_MAX = 1_000_000
+
+
+def update_project(project, user, *, brief: str | None = None, description: str | None = None,
+                   default_router_model_id: str | None = None, clear_default_router: bool = False,
+                   spend_limit_monthly=None, clear_spend_limit: bool = False):
     """
-    Edit a project's brief and/or description. Whitespace around the brief is
-    trimmed; over the cap is refused before anything is written. Caller checks
-    project.update.
+    Edit a project's brief, description and/or default router. Whitespace
+    around the brief is trimmed; over the cap is refused before anything is
+    written. Caller checks project.update.
+
+    The DEFAULT ROUTER (ruled project-wide, 2026-10-19 23:43): clear wins, an
+    id swaps, silence keeps what is there — the persona seats' exact dance.
+    The model must be this company's, active, and attached to this project
+    (the same rule every persona seat follows).
     """
     fields = []
     if brief is not None:
@@ -283,6 +319,38 @@ def update_project(project, user, *, brief: str | None = None, description: str 
     if description is not None:
         project.description = description.strip()
         fields.append("description")
+    if clear_default_router:
+        project.default_router_model = None
+        fields.append("default_router_model")
+    elif default_router_model_id:
+        from nucleus.models import ModelConfig
+        config = ModelConfig.objects.filter(
+            company=project.company, id=default_router_model_id, is_active=True
+        ).first()
+        if config is None:
+            raise ValueError("Model config not found.")
+        if not config.projects.filter(id=project.id).exists():
+            raise ValueError(
+                "The chosen default router ('%s') is not attached to this "
+                "project. Attach it first." % config.name
+            )
+        project.default_router_model = config
+        fields.append("default_router_model")
+    # The monthly spend cap (ruling 2026-10-21): clear wins, a number swaps,
+    # silence keeps — the same dance as the default router above.
+    if clear_spend_limit:
+        project.spend_limit_monthly = None
+        fields.append("spend_limit_monthly")
+    elif spend_limit_monthly is not None:
+        from decimal import Decimal, InvalidOperation
+        try:
+            limit = Decimal(str(spend_limit_monthly)).quantize(Decimal("0.01"))
+        except InvalidOperation:
+            raise ValueError("The spend limit must be a number of dollars.")
+        if limit <= 0 or limit > SPEND_LIMIT_MAX:
+            raise ValueError("The spend limit is dollars per month: more than 0, at most 1,000,000.")
+        project.spend_limit_monthly = limit
+        fields.append("spend_limit_monthly")
     if fields:
         project.save(update_fields=fields + ["updated_at"])
     return project

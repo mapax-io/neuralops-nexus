@@ -59,6 +59,11 @@ def _require_team_manager(user, project):
 
 def _project_out(project, with_brief: bool = False) -> dict:
     channels = project.channel_items.filter(is_active=True).order_by("name")
+    # The project-wide default router; a retired model reads as none (the
+    # internal API skips it the same way — the seat just stays unfilled).
+    router = project.default_router_model
+    if router is not None and not router.is_active:
+        router = None
     return {
         "brief": project.brief if with_brief and project.brief else None,
         "brief_length": len(project.brief or ""),
@@ -66,6 +71,11 @@ def _project_out(project, with_brief: bool = False) -> dict:
         "name": project.name,
         "slug": project.slug,
         "description": project.description,
+        "default_router_model": {"id": str(router.id), "name": router.name} if router else None,
+        # Money is a decimal STRING on the wire, never a float. The month's
+        # spend costs one aggregate query, so it rides the DETAIL route only.
+        "spend_limit_monthly": str(project.spend_limit_monthly) if project.spend_limit_monthly is not None else None,
+        "spent_this_month": str(svc.spend_this_month(project)) if with_brief else None,
         "channels": [
             {"id": str(c.id), "name": c.name, "slug": c.slug, "description": c.description}
             for c in channels
@@ -116,7 +126,13 @@ def update_project(request, project_id: str, payload: ProjectUpdateRequest):
     if not PermissionChecker.can(user, "project.update", obj=project):
         raise HttpError(403, "You don't have permission to edit this project.")
     try:
-        svc.update_project(project, user, brief=payload.brief, description=payload.description)
+        svc.update_project(
+            project, user, brief=payload.brief, description=payload.description,
+            default_router_model_id=payload.default_router_model_id,
+            clear_default_router=payload.clear_default_router,
+            spend_limit_monthly=payload.spend_limit_monthly,
+            clear_spend_limit=payload.clear_spend_limit,
+        )
     except ValueError as exc:
         raise HttpError(400, str(exc))
     return _project_out(project, with_brief=True)

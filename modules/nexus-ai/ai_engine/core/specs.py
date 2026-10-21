@@ -36,6 +36,13 @@ class ModelSpec:
     supports_tools: bool
     supports_streaming: bool
     supports_vision: bool
+    # 7b (owner's ruling 2026-10-20): generation settings are MODEL properties.
+    # Defaults keep an OLDER nucleus (which doesn't send them) working — the
+    # persona-level numbers then stand in (see PersonaSpec.limits_for).
+    max_output_tokens: int = 16000
+    temperature: float = 0.7
+    # The strengths/weaknesses line the smart router reads (next build).
+    routing_notes: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,12 @@ class PersonaSpec:
             if spec.role is role:
                 return spec
         return None
+
+    def models_for(self, role: ModelRole) -> tuple[ModelSpec, ...]:
+        """EVERY model with this role, in order. The DEEP seat is a BENCH
+        (smart router, ruled 2026-10-20): the router picks one by its
+        routing_notes, and the FIRST is the default pick."""
+        return tuple(spec for spec in self.models if spec.role is role)
 
 
 @dataclass(frozen=True)

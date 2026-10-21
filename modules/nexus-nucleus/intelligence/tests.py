@@ -664,3 +664,152 @@ class CatalogueTests(MentionRightFixture):
         self.assign(self.vera, "Bare")
         self.assertEqual(self.call("get", "/api/v1/mcp-catalog/", self.vera).status_code, 403)
         self.assertEqual(self.call("get", "/api/v1/persona-catalog/", self.vera).status_code, 403)
+
+
+class PersonaSeatTests(TestCase):
+    """Item 1 (seats ruling, 2026-10-19) + the smart-router BENCH (ruled
+    2026-10-20): the router seat stays single; the deep seat is an ordered
+    bench of 0..N models the router picks from by their routing_notes. These
+    prove the nucleus half: create, patch, clear, order, the seat-≠-standard
+    rules, the legacy single-seat fields still working, and the worker
+    payload shipping the bench with its first entry mirrored to deep_model
+    for an older engine image."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from intelligence import services as svc
+        self.svc = svc
+        self.company = Company.objects.create(name="Seat Co", slug="seat-co")
+        self.project = Project.objects.create(company=self.company, name="SP", slug="sp")
+        self.user = get_user_model().objects.create(username="seat_owner")
+
+        def mk(name, model_id):
+            config = svc.create_model_config(self.company, self.user, {
+                "name": name, "provider": "openai", "model_id": model_id,
+            })
+            config.projects.add(self.project)
+            return config
+
+        self.standard = mk("Standard", "gpt-4o")
+        self.router = mk("Router", "gpt-4o-mini")
+        self.deep = mk("Deep", "gpt-5")
+        self.deep2 = mk("Deeper", "o3")
+
+    def bench_names(self, persona):
+        return [m.name for m in self.svc.deep_models_of(persona)]
+
+    def _create(self, **over):
+        data = {
+            "name": over.pop("name", "Seaty"),
+            "project_id": str(self.project.id),
+            "model_config_id": str(self.standard.id),
+            "prompt": {"system_prompt": "You answer.", "output_type": "text"},
+            **over,
+        }
+        return self.svc.create_persona(self.company, self.user, data)
+
+    def test_create_with_router_and_deep_fills_both_seats(self):
+        # The LEGACY single deep id still works: it becomes a one-item bench.
+        p = self._create(router_model_config_id=str(self.router.id),
+                         deep_model_config_id=str(self.deep.id))
+        p.refresh_from_db()
+        self.assertEqual(p.router_model_id, self.router.id)
+        self.assertEqual(self.bench_names(p), ["Deep"])
+        self.assertEqual(p.deep_model_id, self.deep.id)  # FK mirrors the first
+
+    def test_seats_are_optional_and_default_empty(self):
+        p = self._create(name="Plain")
+        self.assertIsNone(p.router_model_id)
+        self.assertIsNone(p.deep_model_id)
+        self.assertEqual(self.bench_names(p), [])
+
+    def test_router_must_differ_from_standard(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._create(router_model_config_id=str(self.standard.id))
+        self.assertIn("router", str(ctx.exception).lower())
+
+    def test_deep_must_differ_from_standard(self):
+        # The rule holds for every bench member, not just the first.
+        with self.assertRaises(ValueError) as ctx:
+            self._create(deep_model_config_ids=[str(self.deep2.id), str(self.deep.id)],
+                         model_config_id=str(self.deep.id))
+        self.assertIn("deep", str(ctx.exception).lower())
+
+    def test_a_seat_model_must_be_attached_to_the_project(self):
+        stray = self.svc.create_model_config(self.company, self.user, {
+            "name": "Elsewhere", "provider": "openai", "model_id": "gpt-4.1",
+        })  # deliberately NOT attached to the project
+        with self.assertRaises(ValueError) as ctx:
+            self._create(router_model_config_id=str(stray.id))
+        self.assertIn("not attached", str(ctx.exception))
+
+    def test_patch_sets_swaps_and_clears_each_seat(self):
+        p = self._create(router_model_config_id=str(self.router.id))
+        # set deep via the LEGACY single field, keep router by silence
+        p2 = self.svc.patch_persona(self.company, str(p.id), {"deep_model_config_id": str(self.deep.id)})
+        self.assertEqual(p2.router_model_id, self.router.id)
+        self.assertEqual(self.bench_names(p2), ["Deep"])
+        self.assertEqual(p2.deep_model_id, self.deep.id)
+        # clear router; the bench survives
+        p3 = self.svc.patch_persona(self.company, str(p.id), {"clear_router": True})
+        self.assertIsNone(p3.router_model_id)
+        self.assertEqual(self.bench_names(p3), ["Deep"])
+        # clear the bench via the LEGACY flag
+        p4 = self.svc.patch_persona(self.company, str(p.id), {"clear_deep": True})
+        self.assertIsNone(p4.deep_model_id)
+        self.assertEqual(self.bench_names(p4), [])
+
+    def test_the_deep_bench_holds_order_round_trips_and_clears_with_an_empty_list(self):
+        from intelligence.api import _persona_out
+        p = self._create(deep_model_config_ids=[str(self.deep.id), str(self.deep2.id), str(self.deep.id)])  # a repeat collapses
+        self.assertEqual(self.bench_names(p), ["Deep", "Deeper"])
+        out = _persona_out(self.svc.get_persona(self.company, str(p.id)))
+        self.assertEqual([m.name for m in out.deep_models], ["Deep", "Deeper"])
+        self.assertEqual(out.deep_model.name, "Deep")  # the single field = the first
+        # reorder: the list wins, the FK follows the new first
+        p2 = self.svc.patch_persona(self.company, str(p.id), {"deep_model_config_ids": [str(self.deep2.id), str(self.deep.id)]})
+        p2.refresh_from_db()
+        self.assertEqual(self.bench_names(p2), ["Deeper", "Deep"])
+        self.assertEqual(p2.deep_model_id, self.deep2.id)
+        # untouched by an unrelated patch; cleared by []
+        p3 = self.svc.patch_persona(self.company, str(p.id), {"name": "Seaty"})
+        self.assertEqual(self.bench_names(p3), ["Deeper", "Deep"])
+        p4 = self.svc.patch_persona(self.company, str(p.id), {"deep_model_config_ids": []})
+        p4.refresh_from_db()
+        self.assertEqual(self.bench_names(p4), [])
+        self.assertIsNone(p4.deep_model_id)
+
+    def test_the_worker_payload_ships_the_bench_and_mirrors_its_first_as_deep_model(self):
+        from internal.api import get_persona_internal
+        self.deep.routing_notes = "best for code, expensive"
+        self.deep.save(update_fields=["routing_notes"])
+        p = self._create(deep_model_config_ids=[str(self.deep.id), str(self.deep2.id)])
+        payload = get_persona_internal(None, str(p.id)).model_dump()
+        self.assertEqual([(m["name"], m["routing_notes"]) for m in payload["deep_models"]],
+                         [("Deep", "best for code, expensive"), ("Deeper", "")])
+        self.assertEqual(payload["deep_model"]["name"], "Deep")  # an older engine image reads this
+        # a retired bench model drops; the mirror follows the new first
+        self.deep.soft_delete()
+        payload = get_persona_internal(None, str(p.id)).model_dump()
+        self.assertEqual([m["name"] for m in payload["deep_models"]], ["Deeper"])
+        self.assertEqual(payload["deep_model"]["name"], "Deeper")
+
+    def test_a_router_or_bench_model_cannot_be_deleted_or_detached_while_seated(self):
+        p = self._create(router_model_config_id=str(self.router.id),
+                         deep_model_config_ids=[str(self.deep.id)])
+        for seated in (self.router, self.deep):
+            with self.assertRaisesRegex(ValueError, "Seaty"):
+                self.svc.delete_model_config(self.company, str(seated.id))
+            with self.assertRaisesRegex(ValueError, "Seaty"):
+                self.svc.detach_model_config_from_project(self.company, str(seated.id), str(self.project.id))
+        self.assertTrue(self.svc.delete_model_config(self.company, str(self.deep2.id)))  # unseated: fine
+
+    def test_patch_refuses_a_router_equal_to_the_new_standard(self):
+        p = self._create(router_model_config_id=str(self.router.id))
+        with self.assertRaises(ValueError):
+            self.svc.patch_persona(self.company, str(p.id), {"model_config_id": str(self.router.id)})
+
+    # NOTE (ruling 2026-10-19 23:43): the DEFAULT router is a PROJECT setting,
+    # not a company one — the company-wide knob built minutes earlier was
+    # removed the same night. The project-wide version (Project FK + migration
+    # + internal-API fallback + UI home) is specced in MISSING.md item 1.

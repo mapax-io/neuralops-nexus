@@ -30,13 +30,16 @@ class ModelConfigIn(Schema):
     description: Optional[str] = None
     licence_accepted: bool = False
     context_window: int = 8192
+    # 7b (owner's ruling 2026-10-20): the model card owns HOW it generates.
+    max_output_tokens: int = 16000
+    temperature: float = 0.7
+    routing_notes: str = ""   # strengths/weaknesses the smart router reads
     supports_tools: bool = False
     supports_streaming: bool = True
     supports_vision: bool = False
     supports_audio: bool = False
     config: dict = {}
-    # REMOVED: temperature, max_tokens -> now per-persona
-    # REMOVED: secret_ref              -> never read by any code path
+    # REMOVED: secret_ref -> never read by any code path
 
 
 class ModelConfigPatchIn(Schema):
@@ -55,6 +58,9 @@ class ModelConfigPatchIn(Schema):
     api_base: Optional[str] = None
     description: Optional[str] = None
     context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    routing_notes: Optional[str] = None
     supports_tools: Optional[bool] = None
     supports_streaming: Optional[bool] = None
     supports_vision: Optional[bool] = None
@@ -87,6 +93,9 @@ class ModelConfigOut(Schema):
     description: Optional[str] = None
     licence_accepted: bool
     context_window: int
+    max_output_tokens: int = 16000   # default so an old cached shape validates
+    temperature: float = 0.7
+    routing_notes: str = ""
     supports_tools: bool
     supports_streaming: bool
     supports_vision: bool
@@ -249,12 +258,24 @@ class PersonaIn(Schema):
     name: str
     description: Optional[str] = None
     project_id: str
-    model_config_id: str                            # REQUIRED
-    advisor_model_config_id: Optional[str] = None   # 0..1
+    model_config_id: str                            # REQUIRED — the STANDARD seat
+    advisor_model_config_id: Optional[str] = None   # 0..1 — second opinion, never takes over
+    # Item 1 (seats ruling, 2026-10-19): the router screens every message
+    # (answers trivial ones itself, passes the rest to standard) and the deep
+    # seat takes hand-overs. Both optional; engine roads already built.
+    router_model_config_id: Optional[str] = None    # 0..1 — cheap screener
+    # Smart router (2026-10-20): the deep seat is a BENCH — 0..N models in
+    # order; the router picks one by its routing_notes, the first is the
+    # default pick. The old single field still works (it becomes a one-item
+    # bench) so callers built against the single-seat shape don't 400.
+    deep_model_config_ids: list[str] = Field(default_factory=list)   # 0..N, in order
+    deep_model_config_id: Optional[str] = None      # LEGACY — a one-item bench
     fallback_model_config_ids: list[str] = Field(default_factory=list)   # 0..3, in order
     mcp_server_ids: list[str] = Field(default_factory=list)   # 0..N
-    temperature: float = 0.7
-    max_tokens: int = 4096
+    # 7b (2026-10-20): temperature/max_tokens are MODEL properties now.
+    # Accepted here so old callers don't 400, but IGNORED (services pop them).
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
     max_steps: int = 10
     acts_after_approval: bool = False
     tool_levels: dict[str, str] = Field(default_factory=dict)
@@ -280,8 +301,18 @@ class PersonaPatchIn(Schema):
     model_config_id: Optional[str] = None
     advisor_model_config_id: Optional[str] = None
     clear_advisor: bool = False
+    # Same None-means-not-sent dance as the advisor (see docstring above).
+    router_model_config_id: Optional[str] = None
+    clear_router: bool = False
+    # The deep BENCH: [] clears it, None means not sent. When sent it wins
+    # over the two legacy fields below (a single id = a one-item bench;
+    # clear_deep = an empty one).
+    deep_model_config_ids: Optional[list[str]] = None
+    deep_model_config_id: Optional[str] = None      # LEGACY
+    clear_deep: bool = False                        # LEGACY
     fallback_model_config_ids: Optional[list[str]] = None   # [] clears all; None: not sent
     mcp_server_ids: Optional[list[str]] = None      # [] clears all
+    # 7b: accepted-but-ignored, same as PersonaIn (the model card owns them).
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     max_steps: Optional[int] = None
@@ -299,6 +330,11 @@ class PersonaOut(Schema):
     # Named `model` / `advisor_model`, NOT `model_config` -- see module docstring.
     model: ModelConfigRef
     advisor_model: Optional[ModelConfigRef] = None
+    router_model: Optional[ModelConfigRef] = None
+    # The deep BENCH in order (smart router). deep_model stays as the bench's
+    # FIRST entry so clients built against the single seat keep rendering.
+    deep_models: list[ModelConfigRef] = Field(default_factory=list)
+    deep_model: Optional[ModelConfigRef] = None
     # In order: what answers when `model` cannot (W7).
     fallback_models: list[ModelConfigRef] = Field(default_factory=list)
     mcp_servers: list[MCPServerRef] = Field(default_factory=list)
@@ -389,6 +425,10 @@ class CompanyAIConfigIn(Schema):
     embedding_model: str
     embedding_base_url: str = ""
     default_llm_model: str
+    # NOTE (seats ruling, 2026-10-19 23:43): the DEFAULT ROUTER is a PROJECT
+    # setting, not a company one — deliberately NOT exposed here. The dormant
+    # CompanyAIConfig.default_router_model column stays unused until the
+    # project-wide version lands (MISSING.md item 1).
 
 
 class CompanyAIConfigOut(Schema):
