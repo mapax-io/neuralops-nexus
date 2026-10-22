@@ -568,6 +568,113 @@ every section §2e–§2i is done. Final targets for any future re-run:
 **nucleus 469 · engine 116 · frontend 1140 · migrations through 0040.**
 Remaining: the owner's one live walkthrough and the release chores.
 
+## 2j. BUILT (2026-10-21, live-test ruling) — register-dialog defaults from the catalog DB
+
+**Found during the owner's from-zero test pass** (registering deepseek: "it
+showed me context_window 131072 … these default values must be fetched from
+db"). RULED: the register dialog's Context window and Max reply tokens
+defaults come from the server's price-catalog DB, which the daily refresh
+task updates — never from a hardcoded frontend table.
+
+The build, all three layers:
+- **nucleus** — ModelPrice gained `context_window` + `max_output_tokens`
+  (migration **0041_catalog_windows**); `refresh_model_prices` now stores the
+  litellm catalog's `max_input_tokens` (fallback `max_tokens`) and
+  `max_output_tokens`, and keeps rows that carry sizes but no prices; new
+  endpoint **GET /model-configs/defaults/?provider=&model_id=** (gated like
+  the pre-save check: model_config.create OR .update) answers
+  `{context_window, max_output_tokens, source}` — exact (provider, model_id)
+  match first, bare-id fallback for openai_compatible proxies, nulls when the
+  catalog doesn't know. +3 tests (ModelDefaultsTests in intelligence/tests.py).
+- **nucleus, second ruling same evening ("we must have some default data …
+  setting up server will include this command to push this data into db")** —
+  new management command **`manage.py seed_catalog`**: loads the BUNDLED
+  snapshot `intelligence/data/model_prices_seed.json` into ModelPrice,
+  filling MISSING rows only (source "bundled-seed") — the daily online
+  refresh is always fresher and is never downgraded, so the command is safe
+  to run on every setup. **`seed_catalog --regenerate`** is the release-time
+  half: it downloads the LATEST litellm catalog from GitHub
+  (MODEL_PRICES_URL), trims it to our providers/keys, and rewrites the
+  bundled file one-model-per-line (diffs read like a changelog) — run it,
+  review, commit: that is how the default data updates every release, and
+  the committed file is itself versioned on GitHub with the code. ONE parser
+  (tasks.upsert_catalog) serves the seed, the refresh task, and the
+  regenerate trim, so shapes can never drift. Persona prompts, the persona/
+  MCP catalogues, prompt templates and built-in routines already ship IN
+  CODE and need no seeding. +3 tests (CatalogSeedTests). NOTE: the bundled
+  file is NOT committed yet — the owner generates the first one with
+  --regenerate (verify step 4) so the release tool is proven live.
+- **frontend** — `getModelDefaults()` in lib/api/intelligence.ts; the CREATE
+  dialog fetches on id BLUR and provider change (never per keystroke),
+  prefills only fields the user hasn't typed in (refs guard the async
+  response; a seq ref drops answers a newer lookup outran), and a failed or
+  404 call changes nothing — src/lib/model-context.ts is now only the OFFLINE
+  fallback guess. The EDIT dialog is untouched (stored values rule). +1 test.
+- **frontend, live finding same evening** — the id-suggestions dropdown
+  (OpenRouter catalog) spells Anthropic versions with a DOT
+  ("claude-sonnet-4.5"), and Anthropic's own API answers 404 to that form:
+  the owner hit it three ids in a row mid-TC-pass. Fix in
+  useProviderModels: Anthropic ids are re-hyphenated at the source
+  (dots→hyphens) so every suggestion is registerable as-is; OpenAI
+  ("gpt-4.1") and Google ("gemini-2.0-flash") keep their dots — those are
+  the APIs' real names. +1 test, 2 expectations updated.
+- **TWO MORE LIVE FINDINGS (owner's "2+2" test, 2026-10-21 evening), both
+  fixed the same hour:**
+  (a) frontend — a deep-bench reply showed "Answered by X · fallback" with
+  zero failures: the message-item chip predates the bench and stamped
+  "· fallback" on ANY answered_by_model. Now the "(fallback)" suffix — which
+  the server sends only when a backup truly answered — decides the tag, and
+  a hand-over's answerer (already named by the "Handed to" row) is not
+  repeated. +1 test (message-list).
+  (b) engine — gpt-4o-mini escalated "what's 2+2?": ROUTER_INSTRUCTIONS
+  (escalation.py) gained an explicit keep-it bias (greetings, thanks, quick
+  facts, simple arithmetic are the router's own; a hand-over costs real
+  money). Prompt text only — no engine test count change, but the engine
+  suite must RE-RUN since engine code changed.
+- **THREE-WAY ROUTING (RULED 2026-10-21 20:37, owner):** with a router AND a
+  bench set, two-way routing left the STANDARD seat silent — an ordinary
+  explainer went to the expensive bench. Now the router has three choices:
+  answer trivia itself; `Escalate(lane='standard')` → the persona's everyday
+  model with its full tools (the usual choice); `Escalate(lane='deep')` → the
+  bench pick (hard problems only). Engine: Escalate gained `lane`
+  (default 'deep' — an older router or a standard-run escalation behaves
+  exactly as before); ai_system honors the lane ONLY from the router (a
+  standard run choosing 'standard' would hand work to itself); the UI needs
+  nothing — a standard hand-over shows "Handed to <standard model>" through
+  the existing event. +1 engine test (r10) → **engine 117**.
+
+VERIFY (owner):
+1. migrate — expect **0041_catalog_windows OK**;
+2. nucleus suite — expect **475 OK** (469 + 3 ModelDefaultsTests + 3
+   CatalogSeedTests);
+3. frontend — expect **125 files / 1143 tests** (1140 + 3) + lint clean;
+4. generate the first bundled seed (needs network; also proves the release
+   tool):
+   `docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py seed_catalog --regenerate`
+   — expect "Wrote ~300+ rows"; the file lands in the repo mount at
+   intelligence/data/model_prices_seed.json — COMMIT it with the release;
+5. push the defaults into the DB (the standard setup step from now on,
+   right after migrate):
+   `docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py seed_catalog`
+   — expect "Seeded N new catalog rows"; run it twice — the second says 0;
+6. engine — re-run (three-way routing + prompt changed): expect **117
+   passed, 5 skipped** (116 + r10);
+7. live — register a model → pick DeepSeek, type `deepseek-chat`, click out
+   of the id field → Context window / Max reply tokens snap to the catalog's
+   numbers (131072 / 8192 as of writing); type your own number first and it
+   is never overwritten.
+
+New standing targets once verified: **nucleus 475 · engine 117 · frontend
+1143 · migrations through 0041.**
+
+**PARTIALLY VERIFIED (owner, 2026-10-21 evening):** nucleus **475 OK in
+918s**; `seed_catalog --regenerate` fetched the live catalog and **wrote 322
+rows** to intelligence/data/model_prices_seed.json. Still pending: migrate
+0041 on the live DB (if not already run), the plain `seed_catalog` push,
+frontend 1143 + lint, the ENGINE re-run (escalation.py changed), the live
+prefill check (TC-09a), and the COMMIT — the new seed file, command, tests
+and doc updates are all uncommitted.
+
 ## 3. Removals
 
 Terminal pane and browser pane screens (items 41/42, dropped), and any UI for

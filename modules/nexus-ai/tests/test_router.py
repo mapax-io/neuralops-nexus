@@ -241,6 +241,41 @@ async def test_r9_bench_mapping_pick_rules_and_older_nucleus_compat(harness):
     assert pick_deep_model(Escalate(task="t"), []) is None
 
 
+async def test_r10_lane_standard_sends_ordinary_work_to_the_everyday_model(harness):
+    """Three-way routing (ruled 2026-10-21, after "2+2" and an ordinary
+    explainer both landed on the expensive bench): the router's Escalate with
+    lane='standard' hands the work to the persona's EVERYDAY model — announced
+    like any hand-over, billed under STANDARD — and the bench stays untouched.
+    The router is TOLD the three lanes in its instructions."""
+    harness.nucleus.persona = make_persona(
+        openai_model(harness),
+        router_model=openai_model(harness, config_id="m-router", model_id="fake-router"),
+        deep_models=_bench_models(harness),
+    )
+    harness.provider.script.steps = [
+        {"kind": "tool_call", "call_id": "call_esc", "name": "final_result",
+         "args": {"task": "an ordinary question", "lane": "standard"}},
+        {"kind": "text", "text": "The everyday model answered it."},
+    ]
+    events = await harness.trigger()
+
+    types = [e["type"] for e in events]
+    assert "deep_escalation" in types and types[-1] == "message_done"
+    [esc] = [e for e in events if e["type"] == "deep_escalation"]
+    assert esc["escalated_to"] == "Fake openai"  # the standard model's name, not a bench member's
+    [done] = [e for e in events if e["type"] == "message_done"]
+    assert "everyday model answered" in done["content"]
+    assert done["answered_by_model"] == "Fake openai"
+    # the reply ran on the persona's own model — neither bench member was dialed
+    assert harness.provider.requests[-1]["model"] not in ("fake-deep1", "fake-deep2")
+    # the router was told all three lanes
+    import json as _json
+    router_blob = _json.dumps(harness.provider.requests[0])
+    assert "lane='standard'" in router_blob and "lane='deep'" in router_blob
+    records = await harness.wait_for_usage(2)
+    assert [r["role"] for r in records] == ["ROUTER", "STANDARD"]
+
+
 async def test_r6_no_seats_means_yesterdays_behaviour(harness):
     """Item 13 — a persona with neither seat is untouched Layer 0/1.
     One STANDARD call, no escalation machinery on the wire: no Escalate tool in

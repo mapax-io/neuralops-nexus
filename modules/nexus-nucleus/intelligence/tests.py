@@ -813,3 +813,157 @@ class PersonaSeatTests(TestCase):
     # not a company one — the company-wide knob built minutes earlier was
     # removed the same night. The project-wide version (Project FK + migration
     # + internal-API fallback + UI home) is specced in MISSING.md item 1.
+
+
+class ModelDefaultsTests(MentionRightFixture):
+    """Catalog-served dialog defaults (owner's ruling 2026-10-21, found live
+    while registering deepseek: "these default values must be fetched from
+    db"). Two halves proven here: the daily refresh task now stores each
+    model's context window and max output alongside its prices, and
+    GET /model-configs/defaults/ serves them to the register dialog."""
+
+    CATALOG = {
+        # litellm's real shape: costs per TOKEN, sizes as ints, provider key.
+        "deepseek/deepseek-chat": {
+            "litellm_provider": "deepseek",
+            "input_cost_per_token": 0.00000027,
+            "output_cost_per_token": 0.0000011,
+            "max_input_tokens": 65536,
+            "max_output_tokens": 8192,
+        },
+        # A row with sizes but NO prices must still be kept — the dialog
+        # wants the window even when the price list is silent.
+        "gpt-sizes-only": {
+            "litellm_provider": "openai",
+            "max_input_tokens": 128000,
+            "max_output_tokens": 16384,
+        },
+        "sample_spec": "not a dict — the file's own doc row, skipped",
+    }
+
+    def refresh(self):
+        from unittest.mock import MagicMock, patch
+        from intelligence.tasks import refresh_model_prices
+        response = MagicMock(status_code=200)
+        response.raise_for_status.return_value = None
+        response.json.return_value = self.CATALOG
+        # tasks.py imports httpx INSIDE the function, so the module attribute
+        # is what it uses — patching "httpx.get" is exact, not approximate.
+        with patch("httpx.get", return_value=response):
+            with self.settings(MODEL_PRICES_URL="http://prices.test/catalog.json"):
+                return refresh_model_prices()
+
+    def test_the_refresh_task_stores_sizes_beside_prices(self):
+        from decimal import Decimal
+        from nucleus.models import ModelPrice
+        summary = self.refresh()
+        self.assertEqual(summary, "saved 2 price rows")
+        row = ModelPrice.objects.get(provider="deepseek", model_id="deepseek-chat")
+        self.assertEqual((row.context_window, row.max_output_tokens), (65536, 8192))
+        self.assertEqual(row.input_per_million, Decimal("0.27"))  # per-token → per-million
+        self.assertEqual(row.source, "litellm-catalog")
+        sizes_only = ModelPrice.objects.get(provider="openai", model_id="gpt-sizes-only")
+        self.assertEqual((sizes_only.context_window, sizes_only.max_output_tokens), (128000, 16384))
+        self.assertIsNone(sizes_only.input_per_million)
+
+    def defaults(self, user, provider, model_id):
+        return self.call("get", f"/api/v1/model-configs/defaults/?provider={provider}&model_id={model_id}", user)
+
+    def test_the_endpoint_serves_the_catalog_to_the_dialog(self):
+        self.refresh()
+        r = self.defaults(self.owner, "deepseek", "deepseek-chat")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {"context_window": 65536, "max_output_tokens": 8192,
+                                    "source": "litellm-catalog"})
+        # Bare-id fallback: an openai_compatible proxy of a known model still
+        # gets its sizes, matched by model_id alone.
+        r = self.defaults(self.owner, "openai_compatible", "deepseek-chat")
+        self.assertEqual(r.json()["context_window"], 65536)
+        # Unknown model → nulls; the dialog falls back to its offline guesses.
+        r = self.defaults(self.owner, "openai", "gpt-nonexistent")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {"context_window": None, "max_output_tokens": None, "source": None})
+
+    def test_the_endpoint_needs_the_register_or_edit_right(self):
+        self.refresh()
+        self.assertEqual(self.defaults(self.vera, "deepseek", "deepseek-chat").status_code, 403)
+
+
+class CatalogSeedTests(TestCase):
+    """The bundled default catalog (owner's ruling 2026-10-21: "while setting
+    up server will include this command to push this data into db"). Setup
+    runs `manage.py seed_catalog` after migrate: a fresh or offline install
+    is born with the model list, windows and rates. The seed fills MISSING
+    rows only — the daily online refresh is always fresher and is never
+    downgraded. `--regenerate` rewrites the bundled file from the live
+    catalog at release time ("default data is updated on every release")."""
+
+    ONLINE = {
+        "deepseek/deepseek-chat": {"litellm_provider": "deepseek", "input_cost_per_token": 2.8e-07,
+                                    "output_cost_per_token": 4.2e-07, "max_input_tokens": 131072,
+                                    "max_output_tokens": 8192},
+        "gpt-4o-mini": {"litellm_provider": "openai", "input_cost_per_token": 1.5e-07,
+                         "output_cost_per_token": 6e-07, "max_input_tokens": 128000,
+                         "max_output_tokens": 16384},
+        "1024-x-1024/img-model": {"litellm_provider": "openai"},     # provider-only: dropped from the file
+        "mistral-large": {"litellm_provider": "mistral", "max_input_tokens": 32000},  # unmapped provider: dropped
+        "sample_spec": "not a dict — the file's own doc row, skipped",
+    }
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch as mpatch
+        from intelligence.management.commands import seed_catalog as seed_cmd
+        self.seed_file = Path(tempfile.mkdtemp()) / "model_prices_seed.json"
+        patcher = mpatch.object(seed_cmd, "SEED_PATH", self.seed_file)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_cmd(self, *args):
+        import io
+        from django.core.management import call_command
+        out = io.StringIO()
+        call_command("seed_catalog", *args, stdout=out)
+        return out.getvalue()
+
+    def test_the_seed_fills_missing_rows_and_never_downgrades_fresh_ones(self):
+        import json
+        from nucleus.models import ModelPrice
+        # The online refresh already wrote this row — a release snapshot must not touch it.
+        ModelPrice.objects.create(provider="deepseek", model_id="deepseek-chat",
+                                  context_window=999, source="litellm-catalog")
+        self.seed_file.write_text(json.dumps(self.ONLINE))
+        out = self.run_cmd()
+        self.assertIn("Seeded 1 new catalog rows", out)  # gpt-4o-mini only
+        fresh = ModelPrice.objects.get(provider="deepseek", model_id="deepseek-chat")
+        self.assertEqual((fresh.context_window, fresh.source), (999, "litellm-catalog"))
+        seeded = ModelPrice.objects.get(provider="openai", model_id="gpt-4o-mini")
+        self.assertEqual((seeded.context_window, seeded.max_output_tokens, seeded.source),
+                         (128000, 16384, "bundled-seed"))
+        # Running setup twice is safe: nothing new, nothing changed.
+        self.assertIn("Seeded 0 new catalog rows", self.run_cmd())
+        self.assertEqual(ModelPrice.objects.count(), 2)
+
+    def test_a_missing_seed_file_says_how_to_make_one(self):
+        from django.core.management.base import CommandError
+        with self.assertRaisesRegex(CommandError, "regenerate"):
+            self.run_cmd()
+
+    def test_regenerate_writes_the_file_the_seed_then_loads(self):
+        import json
+        from unittest.mock import MagicMock, patch as mpatch
+        from nucleus.models import ModelPrice
+        response = MagicMock(status_code=200)
+        response.raise_for_status.return_value = None
+        response.json.return_value = self.ONLINE
+        with mpatch("httpx.get", return_value=response):
+            with self.settings(MODEL_PRICES_URL="http://prices.test/catalog.json"):
+                out = self.run_cmd("--regenerate")
+        self.assertIn("Wrote 2 rows", out)  # image row and unmapped provider dropped
+        written = json.loads(self.seed_file.read_text())
+        self.assertEqual(set(written), {"deepseek/deepseek-chat", "gpt-4o-mini"})
+        # The file it wrote is exactly what setup then loads.
+        self.assertIn("Seeded 2 new catalog rows", self.run_cmd())
+        row = ModelPrice.objects.get(provider="deepseek", model_id="deepseek-chat")
+        self.assertEqual((row.context_window, row.max_output_tokens), (131072, 8192))

@@ -317,7 +317,15 @@ class PydanticAISystem:
                 # Smart router: the DEEP seat is a BENCH — the run goes to the
                 # model the router NAMED (Escalate.target_model); an invalid or
                 # missing pick is the bench's first. No bench → STANDARD.
-                deep_pick = pick_deep_model(escalate, persona.models_for(ModelRole.DEEP))
+                # Three-way routing (ruled 2026-10-21): lane 'standard' sends
+                # the work to the persona's everyday model instead. Only the
+                # ROUTER may choose that lane — a STANDARD run that escalated
+                # (case B) IS that model, so its lane is forced deep rather
+                # than handing the work back to itself.
+                lane = (getattr(escalate, "lane", "deep") or "deep").strip().lower() \
+                    if router_spec is not None else "deep"
+                deep_pick = (None if lane == "standard"
+                             else pick_deep_model(escalate, persona.models_for(ModelRole.DEEP)))
                 reply_role = ModelRole.DEEP if deep_pick is not None else ModelRole.STANDARD
                 answered_by = (deep_pick or persona.model_for(ModelRole.STANDARD)).name
                 yield AgentEvent(

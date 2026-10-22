@@ -260,7 +260,9 @@ lesson 14) and rebuild the image — fold into the next image build.
   (7c): re-run `docker exec neuralops-nexus-ai-new
   /opt/venv/nexus-ai-env/bin/pip install "pydantic-ai-slim[web-fetch]"`.
 - Rotate the OpenAI/Anthropic keys that appeared in earlier terminal pastes.
-- Git commits in BOTH repos for chunks 2–4 + the deepseek engine fix.
+- Git commits in BOTH repos — **DONE 2026-10-21 17:11**: backend 581d21b
+  (step8-switchover), frontend 79bcef4 (noamanfaisal) — the whole revamp
+  through the spend limit, suites 469/116/1140 all green at commit time.
 
 ## 9. Later / nice-to-have
 
@@ -306,6 +308,24 @@ lesson 14) and rebuild the image — fold into the next image build.
 - **gpt-4o-mini showed "no price known"** (2026-10-19, first live run): the
   daily refresh_model_prices task should fill it from the litellm catalog.
   If it still shows after a day, investigate the catalog fetch/key matching.
+- **Register-dialog defaults from the catalog DB — RULED (owner, 2026-10-21,
+  during the from-zero test pass: "these default values must be fetched from
+  db"), BUILT the same hour.** ModelPrice gained context_window +
+  max_output_tokens (migration **0041_catalog_windows**), filled by the same
+  daily litellm refresh that fills prices (rows with sizes but no prices are
+  now kept too); GET /model-configs/defaults/ serves them to the register
+  dialog, which prefills on id blur / provider change and never overwrites a
+  hand-typed value; the frontend's hardcoded table (src/lib/model-context.ts)
+  is now only the offline fallback. PLUS the owner's follow-up ruling the
+  same evening: setup pushes DEFAULT DATA into the DB — `manage.py
+  seed_catalog` loads the bundled snapshot (fills missing rows only, never
+  downgrades the online refresh), `seed_catalog --regenerate` re-downloads
+  the latest catalog from GitHub and rewrites the bundled file at release
+  time (the file is committed, so it is versioned on GitHub with the code).
+  Persona prompts / catalogues / templates already ship in code — no seed
+  needed. Full detail + VERIFY block: FRONTEND-REVAMP §2j. Targets after
+  this: nucleus 475 · frontend 1141 · migrations through 0041 (engine
+  unchanged).
 
 - MCP connector toggles ship WITH the bundled connectors (scope ruling: no
   dead switches) — MCP track.

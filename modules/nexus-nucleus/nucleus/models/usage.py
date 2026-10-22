@@ -40,6 +40,13 @@ class ModelPrice(models.Model):
     cached_per_million = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
     output_per_million = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
 
+    # Catalog-known SIZES (owner's ruling 2026-10-21: the register dialog's
+    # defaults come from a DB the refresh task updates, not a hardcoded
+    # table). Null = the source doesn't say; the dialog then falls back to
+    # its built-in offline guesses. Served by GET /model-configs/defaults/.
+    context_window = models.PositiveIntegerField(null=True, blank=True)
+    max_output_tokens = models.PositiveIntegerField(null=True, blank=True)
+
     source = models.CharField(
         max_length=100, default="catalog",
         help_text="Where this row came from, e.g. the online catalog's name.",

@@ -44,23 +44,26 @@ def _per_million(value) -> Decimal | None:
         return None
 
 
-@shared_task(name="intelligence.tasks.refresh_model_prices")
-def refresh_model_prices() -> str:
-    """Fetch + upsert. Returns a one-line summary (shows up in celery logs)."""
-    import httpx
-
-    from nucleus.models import ModelPrice
-
-    url = getattr(settings, "MODEL_PRICES_URL", "")
-    if not url:
-        return "skipped: MODEL_PRICES_URL not set"
+def _tokens(value) -> int | None:
+    """A token COUNT from the source (context window / max output): a positive
+    int or None — the catalog file mixes ints, floats and absent keys."""
     try:
-        response = httpx.get(url, timeout=30.0, follow_redirects=True)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as exc:  # noqa: BLE001 — offline installs stay silent
-        logger.info("[prices] refresh skipped (offline or source down): %s", exc)
-        return f"skipped: {exc}"
+        count = int(value)
+        return count if count > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def upsert_catalog(data: dict, *, source: str = "litellm-catalog", only_missing: bool = False) -> int:
+    """
+    Parse a litellm-shaped catalog dict and write ModelPrice rows. ONE parser
+    for both roads into the DB: the daily online refresh, and the bundled
+    seed a new install loads (owner's ruling 2026-10-21: setup pushes default
+    data — models, windows, rates — into the DB). With only_missing=True a
+    row that already exists is left alone, so the seed never downgrades what
+    the fresher online refresh wrote.
+    """
+    from nucleus.models import ModelPrice
 
     saved = 0
     for raw_id, row in data.items():
@@ -73,14 +76,45 @@ def refresh_model_prices() -> str:
         inp = _per_million(row.get("input_cost_per_token"))
         out = _per_million(row.get("output_cost_per_token"))
         cached = _per_million(row.get("cache_read_input_token_cost"))
-        if inp is None and out is None:
+        # Sizes too (ruling 2026-10-21): the register dialog's defaults come
+        # from here. max_input_tokens is the context window; older source
+        # rows carry only max_tokens, which stands in.
+        ctx = _tokens(row.get("max_input_tokens")) or _tokens(row.get("max_tokens"))
+        max_out = _tokens(row.get("max_output_tokens"))
+        if inp is None and out is None and ctx is None and max_out is None:
             continue
-        ModelPrice.objects.update_or_create(
-            provider=provider, model_id=model_id,
-            defaults={"input_per_million": inp, "cached_per_million": cached,
-                      "output_per_million": out, "source": "litellm-catalog"},
-        )
+        values = {"input_per_million": inp, "cached_per_million": cached,
+                  "output_per_million": out, "context_window": ctx,
+                  "max_output_tokens": max_out, "source": source}
+        if only_missing:
+            _, created = ModelPrice.objects.get_or_create(
+                provider=provider, model_id=model_id, defaults=values)
+            if not created:
+                continue
+        else:
+            ModelPrice.objects.update_or_create(
+                provider=provider, model_id=model_id, defaults=values)
         saved += 1
+    return saved
+
+
+@shared_task(name="intelligence.tasks.refresh_model_prices")
+def refresh_model_prices() -> str:
+    """Fetch + upsert. Returns a one-line summary (shows up in celery logs)."""
+    import httpx
+
+    url = getattr(settings, "MODEL_PRICES_URL", "")
+    if not url:
+        return "skipped: MODEL_PRICES_URL not set"
+    try:
+        response = httpx.get(url, timeout=30.0, follow_redirects=True)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:  # noqa: BLE001 — offline installs stay silent
+        logger.info("[prices] refresh skipped (offline or source down): %s", exc)
+        return f"skipped: {exc}"
+
+    saved = upsert_catalog(data)
     logger.info("[prices] catalog refreshed: %d rows", saved)
     return f"saved {saved} price rows"
 

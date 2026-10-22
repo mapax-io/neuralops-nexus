@@ -112,7 +112,18 @@ class Command(BaseCommand):
 
         # ── Workspace name ──────────────────────────────────────────────────
         default_name = verified_email.split("@")[0].capitalize() + "'s Workspace"
-        workspace_name = input(f"  Enter workspace name [{default_name}]: ").strip()
+        try:
+            workspace_name = input(f"  Enter workspace name [{default_name}]: ").strip()
+        except EOFError:
+            # No keyboard on stdin — `docker exec` without -it (found live,
+            # TC-03 2026-10-21). The code flow already proved who is claiming,
+            # so dying here would waste a confirmed claim; take the default
+            # and say so. The name is editable later in the app.
+            workspace_name = ""
+            self.stdout.write(self.style.WARNING(
+                f"\n  (No terminal attached — run `docker exec` with -it to type a name.\n"
+                f"   Using the default: {default_name})\n"
+            ))
 
         # ── Create everything (ONE shared path — authn.services.claim_install:
         #    company, owner, RBAC role, groups, seed_permissions, name, avatar)

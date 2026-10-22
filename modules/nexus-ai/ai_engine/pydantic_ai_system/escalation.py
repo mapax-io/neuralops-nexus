@@ -19,11 +19,11 @@ from ai_engine.core.specs import ModelSpec
 
 
 class Escalate(BaseModel):
-    """Hand this question to the persona's deeper model.
+    """Hand this question onward instead of answering it yourself.
 
-    Call this instead of answering whenever the question needs deep reasoning,
-    multi-step tool work, or more capability than you have. Fill every field
-    from what you already know — the deeper model starts from this note.
+    Call this whenever the question needs tools, real work, or more capability
+    than you have. Fill every field from what you already know — the model
+    that takes over starts from this note.
     """
 
     task: str = Field(description="What needs to be done, in one or two sentences.")
@@ -39,15 +39,36 @@ class Escalate(BaseModel):
     target_model: str = Field(default="", description="Which of the listed "
                               "deeper models should take this — copy its name "
                               "exactly. Leave blank when no list was given.")
+    # Three-way routing (ruled 2026-10-21, after "2+2" and an ordinary
+    # explainer both landed on the expensive bench): 'standard' sends the
+    # work to the persona's everyday model with its full tools — the right
+    # lane for most real questions; 'deep' is for the genuinely hard ones.
+    lane: str = Field(default="deep", description="'standard' to hand this "
+                      "to the persona's everyday model (ordinary questions "
+                      "and work — the usual choice), or 'deep' for the "
+                      "deeper model (genuinely hard reasoning or long-form "
+                      "work only).")
 
 
 # Appended to the ROUTING run's instructions (stable text — same every turn).
 ROUTER_INSTRUCTIONS = (
-    "\n\nRouting stage: you are the first, fast pass over this question. "
-    "EITHER answer it directly (when it is simple and needs no tools or deep "
-    "work) OR hand it over by returning an Escalate — never both, and never "
-    "a partial answer followed by a hand-over. When you escalate, fill "
-    "tool_hints with the tool ids from the catalog the deeper model will need."
+    "\n\nRouting stage: you are the first, fast pass over this question, and "
+    "you have three choices — pick exactly one, never answer AND escalate. "
+    "(1) Answer it yourself when it is trivial: greetings, thanks, quick "
+    "facts, simple arithmetic, one-line clarifications. You have no tools, so "
+    "answer only what you can answer correctly from what you see. "
+    "(2) Return an Escalate with lane='standard' for ordinary questions and "
+    "work — the persona's everyday model takes it with its full tools. This "
+    "is the usual choice for anything real. "
+    "(3) Return an Escalate with lane='deep' ONLY when it genuinely needs "
+    "deep reasoning or long-form work — the deeper model is the expensive "
+    "one, so reserve it for the hard problems. "
+    "When you escalate, fill tool_hints with the tool ids from the catalog "
+    "the next model will need."
+    # Three-way ruled 2026-10-21 after live tests: gpt-4o-mini escalated
+    # "what's 2+2?" and an ordinary explainer straight to the expensive
+    # bench; the standard seat never spoke. Lane 'standard' gives the
+    # cheap→medium→expensive ladder the seats were bought for.
 )
 
 
@@ -64,9 +85,9 @@ def router_instructions(bench: Sequence[ModelSpec]) -> str:
         for spec in bench
     )
     return ROUTER_INSTRUCTIONS + (
-        "\n\nDeeper models on the bench — when you escalate, weigh their pros "
-        "and cons below and set target_model to the NAME of the best fit "
-        "(the first is the default when none stands out):\n" + lines
+        "\n\nDeeper models on the bench — when you escalate with lane='deep', "
+        "weigh their pros and cons below and set target_model to the NAME of "
+        "the best fit (the first is the default when none stands out):\n" + lines
     )
 
 

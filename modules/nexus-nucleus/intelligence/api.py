@@ -279,6 +279,34 @@ def check_model_config(request, payload: ModelCheckIn):
         raise HttpError(e.status, str(e))
 
 
+@router.get("/model-configs/defaults/", response=dict)
+def model_defaults(request, provider: str, model_id: str):
+    """
+    What the price catalog knows about a model BEFORE it is registered — the
+    register dialog prefills Context window and Max reply tokens from this
+    (owner's ruling 2026-10-21: defaults live in a DB the daily catalog
+    refresh updates, never in a hardcoded table). Unknown → nulls; the dialog
+    then falls back to its built-in offline guesses. Exact (provider,
+    model_id) first; a bare-id match covers openai_compatible proxies of a
+    known model. Same right as the pre-save model check.
+    """
+    from nucleus.models import ModelPrice
+    company = _company(request)
+    if not (PermissionChecker.can(request.auth, "model_config.create", company=company)
+            or PermissionChecker.can(request.auth, "model_config.update", company=company)):
+        raise HttpError(403, "You don't have permission to register models.")
+    bare = (model_id or "").strip()
+    row = None
+    if bare:
+        row = (ModelPrice.objects.filter(provider=provider, model_id=bare).first()
+               or ModelPrice.objects.filter(model_id=bare).first())
+    return {
+        "context_window": row.context_window if row else None,
+        "max_output_tokens": row.max_output_tokens if row else None,
+        "source": row.source if row else None,
+    }
+
+
 @router.patch("/model-configs/{config_id}/", response=ModelConfigOut)
 def patch_model_config(request, config_id: str, payload: ModelConfigPatchIn):
     company = _company(request)

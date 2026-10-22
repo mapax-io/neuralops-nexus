@@ -267,6 +267,12 @@ chroma_data/
 postgres_data/
 data/chroma_data
 data/postgres_data
+# The bundled default catalog (ruling 2026-10-21: setup seeds the DB from
+# this committed file; `seed_catalog --regenerate` refreshes it each release)
+# -- carved out of the bare data/ rule above, which is for local infra data.
+# Same pattern as the committed avatar pool below.
+!modules/nexus-nucleus/intelligence/data/
+!modules/nexus-nucleus/intelligence/data/**
 
 \[nexus-ai
 \[nexus-ai]
