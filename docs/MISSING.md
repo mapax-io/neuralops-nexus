@@ -8,6 +8,55 @@ strike it here with the date.
 
 ---
 
+## ROADMAP TO RELEASE (consolidated 2026-10-22, owner + Claude)
+
+**Stage 1 — finish the acceptance pass (now).** The live list is in
+TEST-CASES.md §Progress: suites (engine 117 / frontend 1143), seed push +
+TC-09a, default-router @Plain test, fallback (broken key) or defer, fresh
+web_search + web_fetch + Web approval knob, TC-12 shell guard, external MCP
+tiles TC-13/14, chains, team/invites, recall-pane inspection, gateway, UI
+sweep, TC-38 embedder check. Plus the two pending git commits.
+
+**Stage 2 — fix round.** Owner hands over the comments file keyed by TC id;
+Claude fixes by id, re-running the three suites after each batch. PLUS the
+REMOVALS the owner ruled 2026-10-22 15:50: strip DELIVERABLES (the "Keep as
+deliverable" button, keep-dialog, lib/api/deliverables, and its backend
+routes/rows) and RECALL (the pane, the recall API + RecallEntry storage, the
+engine's recall context source and vectors, RecallTests) from BOTH repos —
+"remove every install from front or backend". Done here, after the pass, so
+suite targets move once. This also VOIDS the recall-writer half of the
+memory-pass hardening entry (parts 2/5 — no pane, no writer needed); parts
+1 and 3 (don't store tool transcripts; retrieval text never poses as this
+turn's output) still stand, and the "Remembered" chip relay fix stays.
+
+**Stage 3 — release chores.** Rotate the exposed OpenAI/Anthropic keys
+(if not already done for the fresh start); Supabase cleanups (legacy
+device-verify function, test-install-1 phone_home_events row); regenerate
+engine requirements.lock at next image build (7c); `seed_catalog
+--regenerate` + commit as the release's catalog snapshot.
+
+**Stage 4 — post-release build queue (details in "Post-test build queue"
+below; order = Claude's suggestion, owner may reorder):**
+1. Connector tiles with icons (GitHub, graph-DB context, Atlassian, AWS,
+   Google, draw.io/charts) — smallest, most visible; OAuth2 flow exists.
+2. AI audit log — owner/admin opens any reply's full anatomy (query,
+   retrieval hits, prompt, history, response, cost) + "investigate with a
+   model" from inside the viewer.
+3. Setup copilot (internal ADMIN MCP) — personas get tools to register
+   models, create personas, add MCP servers, invite users; approval-gated,
+   caller's-rights-only. Benefits from 2 existing (every AI-made change is
+   auditable).
+4. Backup & restore — one-command dump (DB + media, secrets.env excluded)
+   and restore onto a fresh install.
+5. File viewer pane — browse/download/upload + "run as HTML server"
+   (security ruling first).
+
+Still parked (unchanged): local login UI, gateway mint-for-others,
+delegation/tool_access/approval_scope toggles, portal guess-brake,
+cached-tokens column on the usage rollups, usage by-kind split UI.
+
+---
+
 ## 1. Persona seats the UI cannot set (found 2026-10-19, walkthrough)
 
 **BUILT (2026-10-19, same night, straight after the ruling):** PersonaIn/
@@ -326,6 +375,64 @@ lesson 14) and rebuild the image — fold into the next image build.
   needed. Full detail + VERIFY block: FRONTEND-REVAMP §2j. Targets after
   this: nucleus 475 · frontend 1141 · migrations through 0041 (engine
   unchanged).
+
+## Post-test build queue (owner, 2026-10-22 morning — build AFTER the
+## acceptance pass; design details to be ruled when each starts)
+
+- **MEMORY-PASS HARDENING — REQUIRED BEFORE RELEASE (promoted 2026-10-22
+  after the fabricated-terminal finding).** Three parts: (1) the pass must
+  stop recording trivia and must NEVER store tool/terminal transcripts as
+  facts — a fabricated transcript got stored and was replayed verbatim in
+  its topic; (2) VISIBILITY: "Remembered N things" rows live only in the
+  vector store with NO UI — the owner found the Recall pane empty while the
+  chip counted away; either show memory-pass rows somewhere curatable or
+  stop the chip implying they're inspectable; (3) retrieval-echo: text served
+  from memory must not be presentable as THIS turn's tool output. Mitigating
+  facts: memory rows are same-topic-scoped, so poison is contained to its
+  topic (archiving the topic buries it). FOUND 2026-10-22 15:15 while the
+  owner chased the empty pane, TWO MORE PARTS: (4) the "Remembered N things"
+  chip was a MISWIRE — chat/relay.py published len(retrieved_sources) as the
+  recall count, so every memory SEARCH claimed a memory WRITE (fixed same
+  hour: relay publishes no count until real recording exists; nucleus suite
+  must re-run — if a chat test asserted the old count, that test asserted the
+  bug and gets fixed too); (5) RECALL HAS NO WRITER — storage, internal route
+  (/internal/recall/), pane, editing all exist and are tested, but no persona
+  tool or engine path ever records an entry; "remember this decision: we
+  deploy on Fridays only" was acknowledged in words and stored nowhere. The
+  hardening build adds the writer: a record_recall tool (or the memory pass
+  writing decision/fact/preference entries) through the existing route, and
+  the chip counts THOSE writes only.
+
+- **AI audit log ("log for all chats").** Project owner/admin can open any AI
+  reply and see the whole anatomy: the user's query, what retrieval fetched
+  (vector DB hits — and graph DB once that exists), the exact prompt and
+  history sent, the model's raw response, model/seat/lane, tokens and cost.
+  Plus "investigate with a model": ask a model questions ABOUT the log from
+  inside it. Foundations already exist: AIRequestLog rows, UsageRecord,
+  retrieved_sources on message_done — the build is capturing the full prompt
+  /retrieval payload per reply, a permission-gated API (owner/admin only —
+  this is reading people's chats, needs its own right), and the viewer UI.
+- **Connector tiles with icons.** The add-MCP screen shows ready-made tiles
+  (icon + one click to configure) for: GitHub, a graph-DB context MCP,
+  Atlassian, AWS, Google, draw.io/charts — OAuth2 flow already built, the
+  mcp_catalog already pre-fills dialogs; the build is catalog entries with
+  icons + tile UI + per-service oauth_config defaults, each entry TESTED
+  against the real service.
+- **Backup & restore.** Owner's scope to confirm at build time (proposed:
+  one command dumps DB + uploaded media; secrets.env stays out by the
+  append-only rule; one command restores onto a fresh install).
+- **File viewer pane (un-parked).** Browse project files with: download,
+  upload, and "run as HTML server" (serve a folder/file as a live preview —
+  security ruling needed: who may run it, same-origin isolation).
+- **Setup copilot — internal ADMIN MCP (owner asked 2026-10-22: "ai can help
+  me setting up models, mcps, users, personas" — NOT yet developed; the
+  neuralops-mcp repo is only a shopping-tools demo).** A new built-in
+  capability (like filesystem/shell) exposing nucleus admin APIs as tools:
+  register/check models, create/edit personas, add MCP servers, invite
+  users. Rides the existing approval gate (writes ask first). HARD RULE to
+  design in: the persona acts with the ASKING USER's rights, never more —
+  tool calls carry the caller's identity through the internal API and are
+  permission-checked exactly like the person clicking the dialog would be.
 
 - MCP connector toggles ship WITH the bundled connectors (scope ruling: no
   dead switches) — MCP track.

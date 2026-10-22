@@ -648,8 +648,10 @@ class RelayTests(RelayFixture):
 
     async def test_the_new_done_extras_land_on_the_row_and_the_wire(self):
         """Step 2: loaded_tools / used_tools / retrieved_sources /
-        embed_description from the engine's message_done are stored, and
-        recalled is their count (the chip's number)."""
+        embed_description from the engine's message_done are stored. recalled
+        is NOT their count any more — that was a miswire (found live
+        2026-10-22: every memory SEARCH claimed a memory WRITE); no count is
+        published until real recall recording exists."""
         refs = [{"id": "r1", "kind": "recall", "label": "schema decision", "score": 0.91, "topic_id": None},
                 {"id": "r2", "kind": "message", "label": "earlier reply", "score": 0.84, "topic_id": str(self.t1.id)}]
         await self.run_single(FakeResponse(sse(
@@ -663,11 +665,11 @@ class RelayTests(RelayFixture):
         self.assertEqual(row.metadata["used_tools"], ["web_search"])
         self.assertEqual(row.metadata["loaded_tools"], ["web_search", "ask_user"])
         self.assertEqual([r["id"] for r in row.metadata["retrieved_sources"]], ["r1", "r2"])
-        self.assertEqual(row.metadata["recalled"], 2)
+        self.assertNotIn("recalled", row.metadata)  # searching is not remembering
         self.assertEqual(self.events("context_retrieved")[0]["count"], 2)
         self.assertEqual(self.events("deep_escalation")[0]["escalated_to"], "Deep (o4)")
         done = self.events("message_done")[0]
-        self.assertEqual((done["used_tools"], done["recalled"]), (["web_search"], 2))
+        self.assertEqual((done["used_tools"], done["recalled"]), (["web_search"], 0))
         out = await sync_to_async(lambda: _serialise(ChatMessage.objects.select_related("sender").get(id=row.id)))()
         self.assertEqual(out["used_tools"], ["web_search"])
         self.assertEqual([r["id"] for r in out["retrieved_sources"]], ["r1", "r2"])
@@ -740,16 +742,21 @@ class RelayUsageTests(RelayFixture):
         self.assertNotIn("answered_by_model", row.metadata)
         self.assertIsNone(self.events("message_done")[-1]["answered_by_model"])
 
-    async def test_what_the_reply_retrieved_is_counted_and_republished(self):
-        # Step 2: the engine reports retrieved_sources; recalled is their count.
+    async def test_what_the_reply_retrieved_is_never_counted_as_remembered(self):
+        # The miswire (fixed 2026-10-22): recalled used to be
+        # len(retrieved_sources), so the "Remembered N things" chip fired on
+        # every memory SEARCH while the Recall pane stayed empty. Retrieval
+        # still rides the row; the recall count stays silent until a real
+        # recording path exists (memory-pass hardening, MISSING).
         refs = [{"id": "r1", "kind": "recall", "label": "x", "score": 0.9, "topic_id": None},
                 {"id": "r2", "kind": "message", "label": "y", "score": 0.8, "topic_id": None}]
         await self.run_single(FakeResponse(sse(
             {"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text", "retrieved_sources": refs},
         )))
         row = (await sync_to_async(self.reply_rows)())[0]
-        self.assertEqual(row.metadata["recalled"], 2)
-        self.assertEqual(self.events("message_done")[0]["recalled"], 2)
+        self.assertEqual([r["id"] for r in row.metadata["retrieved_sources"]], ["r1", "r2"])
+        self.assertNotIn("recalled", row.metadata)
+        self.assertEqual(self.events("message_done")[0]["recalled"], 0)
         await self.run_single(FakeResponse(sse({"type": "message_done", "content": "hi", "output_type": "text", "render_as": "text"})))
         self.assertEqual(self.events("message_done")[-1]["recalled"], 0)
 

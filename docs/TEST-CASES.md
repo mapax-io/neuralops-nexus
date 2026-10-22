@@ -44,9 +44,47 @@ mini price math exact; provider dashboards match within rounding — Claude
 $0.15 vs our $0.1562; register-time check-calls are unmetered by design).
 Files + commands capabilities exercised by the date-ranges task.
 
-Still OPEN for tomorrow: TC-01a second half (plain `seed_catalog` push) +
-TC-09a prefill check; default-router-fills-empty-seat test (@Plain persona);
-fallback with a deliberately broken key (or defer); web_search with a FRESH
+UPDATE 2026-10-22 ~15:00 — **FABRICATED TOOL OUTPUT (worst finding of the
+pass, FIXED):** asked to "run the date command", the persona printed an
+invented transcript — wrong date (Oct 24 on Oct 22), an ls listing with files
+that don't exist on disk (owner verified the real workspace), macOS-style
+ownership on a Linux box, no tool rows. ROOT CAUSE: the terminal output
+type's 0.8.0-era instruction literally said "show realistic output after
+each command", and its classifier examples catch "run these commands" asks.
+FIX (engine): terminal spec rewritten — output must be the run_command
+tool's real return, refused/unavailable → "# not executed: <why>",
+illustrative how-tos labeled "# example output — not executed"; PLUS a
+general honesty rule appended to every tooled persona's tool-catalog prompt
+section ("tool results are the only ground truth …"). +1 engine test (ot9)
+→ **engine target is now 118**. RETEST: re-ask "run the date command" —
+expect a real run (tool row + today's date) or an honest "not executed".
+**VERIFIED live (owner, 15:01):** in a NEW topic the persona called
+run_command (tool row, approved), the ls-only filter refused `date`, and the
+reply printed `# not executed: command 'date' is not in the allowed list` —
+the exact prescribed format, no invention. NOTE the replay lesson: in the OLD
+topic the fake transcript kept coming back verbatim from history/memory —
+fabrications that get stored are served again, so (a) the owner deletes the
+poisoned recall entries, (b) the MEMORY-PASS HARDENING (never store tool
+transcripts as facts) is REQUIRED BEFORE RELEASE, promoted from tuning.
+ALSO: TC-12's "both lists refused" is UI-unreachable — the shell screen is a
+mode selector (Any / Only these / All but these) with one list; the backend
+guard stays API-only. Test the mode enforcement instead (allow only ls →
+date refused at run time).
+
+UPDATE 2026-10-22 14:35: TC-01a PASSED (`seed_catalog` → "Seeded 0 … 322 in
+the file; existing rows left untouched" — the refresh had already written all
+322, and the never-downgrade rule held, which is the point); TC-09a PASSED
+(131072/8192 prefill); default-router-fills-empty-seat PASSED (owner: "thats
+already done"). SUITES RUN 2026-10-22 16:28 (one log, suites-2026-10-22.log):
+engine **118 passed, 5 skipped** ✓; frontend **125 files / 1143 tests + lint
+clean** ✓; nucleus **475 ran, 2 errors** — both tests asserting the recalled
+miswire (metadata["recalled"] == retrieval count); both rewritten to assert
+the honest behavior (no recalled key; wire recalled=0). Re-run the two to
+close nucleus:
+`docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py test chat.tests.RelayTests.test_the_new_done_extras_land_on_the_row_and_the_wire chat.tests.RelayUsageTests.test_what_the_reply_retrieved_is_never_counted_as_remembered -v 1 --noinput`
+Still due: that nucleus re-run, the two commits.
+
+Still OPEN: fallback with a deliberately broken key (or defer); web_search with a FRESH
 question (first attempt answered from project memory with no tool row —
 verify the earlier message's trail had a real web_search row); web_fetch;
 Web approval knob Ask/Off/Default; TC-12 shell allow+block guard; chains;

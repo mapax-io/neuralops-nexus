@@ -268,9 +268,23 @@ OutputTypeRegistry.register(
             "<<<END_OUTPUT>>>\n\n"
             "Rules:\n"
             "- Prefix every command with $ (dollar space)\n"
-            "- Show realistic output after each command\n"
+            "- THE ONE HARD RULE — output must be real: anything shown after a "
+            "command must be the ACTUAL output your run_command tool returned "
+            "for it THIS turn. If you have the tool, run the commands first and "
+            "paste what came back, byte for byte. NEVER invent, embellish or "
+            "guess what a command would print.\n"
+            "- If you don't have the tool, or a command was refused or denied: "
+            "show the command line alone, then '# not executed: <the reason>', "
+            "and say in the EMBED sentence that nothing ran.\n"
+            "- A purely illustrative walkthrough (a how-to the person asked for, "
+            "not a run) must label every output block '# example output — not "
+            "executed'.\n"
             "- No markdown — plain text only\n"
             "- Use correct UNIX/Windows conventions depending on context"
+            # The old spec (0.8.0, pre-tools) said "show realistic output" — an
+            # explicit invitation to fabricate. Live on 2026-10-22 a persona
+            # "ran" date and ls and invented both transcripts (wrong date,
+            # files that don't exist). Never reintroduce that wording.
         ),
         example_prompts=[
             "Show me how to deploy with docker",

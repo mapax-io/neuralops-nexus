@@ -55,6 +55,39 @@ def test_ot2_unmarked_chart_recovered_only_when_asked():
     assert kind == "text" and render == "text"
 
 
+def test_ot9_tool_output_is_never_invented():
+    """Live finding 2026-10-22 — a persona "ran" date and ls and invented both
+    transcripts (wrong date, files that don't exist). Two guards now exist and
+    must never regress: the terminal type's instruction demands REAL
+    run_command output (the 0.8.0 wording "show realistic output" — an
+    explicit invitation to fabricate — is gone), and the tool catalog carries
+    the ground-truth rule for every tooled persona, appended AFTER the lines
+    so the stable cache prefix is unchanged."""
+    from types import SimpleNamespace as NS
+
+    from ai_engine.output_types.registry import OutputTypeRegistry
+    from ai_engine.prompts.layout import PromptLayout
+    from ai_engine.prompts.templates import PromptTemplates
+
+    spec = OutputTypeRegistry.get("terminal")
+    assert "realistic" not in spec.system_instruction
+    assert "run_command" in spec.system_instruction
+    assert "not executed" in spec.system_instruction
+    assert "NEVER invent" in spec.system_instruction
+
+    plan = PromptLayout(PromptTemplates()).build(
+        NS(project_brief="", system_prompt="You are T."), NS(history=()), "hi",
+        catalog=[NS(model_name="shell", one_line="run commands")],
+    )
+    [section] = [s for s in plan.instructions if s.kind == "tool_catalog"]
+    assert section.text.startswith("Tools available in this conversation:\n- shell: run commands")
+    assert "only ground truth" in section.text and "never invent" in section.text
+    # and a tool-less persona gets no catalog section at all — unchanged
+    bare = PromptLayout(PromptTemplates()).build(
+        NS(project_brief="", system_prompt="You are T."), NS(history=()), "hi")
+    assert not [s for s in bare.instructions if s.kind == "tool_catalog"]
+
+
 def test_ot3_broken_claims_fall_back_to_text():
     """Decision 2 — a claimed type whose content doesn't hold renders as text.
     'html' markers around something that is not an HTML page, and 'chart'

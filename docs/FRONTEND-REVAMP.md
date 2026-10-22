@@ -642,6 +642,15 @@ The build, all three layers:
   standard run choosing 'standard' would hand work to itself); the UI needs
   nothing — a standard hand-over shows "Handed to <standard model>" through
   the existing event. +1 engine test (r10) → **engine 117**.
+- **FABRICATED TOOL OUTPUT (found + fixed 2026-10-22 ~15:00):** a persona
+  asked to "run the date command" invented the whole transcript (wrong date,
+  nonexistent files — owner verified the real disk). Root cause: the terminal
+  output type's 0.8.0 instruction said "show realistic output after each
+  command". Engine fix: terminal spec demands the run_command tool's REAL
+  return ("# not executed: <why>" when refused; illustrative blocks labeled),
+  and every tooled persona's tool-catalog section now ends with the honesty
+  rule (tool results are the only ground truth — appended after the lines,
+  stable prefix unchanged). +1 engine test (ot9) → **engine 118**.
 
 VERIFY (owner):
 1. migrate — expect **0041_catalog_windows OK**;
@@ -657,23 +666,28 @@ VERIFY (owner):
    right after migrate):
    `docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py seed_catalog`
    — expect "Seeded N new catalog rows"; run it twice — the second says 0;
-6. engine — re-run (three-way routing + prompt changed): expect **117
-   passed, 5 skipped** (116 + r10);
+6. engine — re-run (three-way routing + honesty guards): expect **118
+   passed, 5 skipped** (116 + r10 + ot9);
 7. live — register a model → pick DeepSeek, type `deepseek-chat`, click out
    of the id field → Context window / Max reply tokens snap to the catalog's
    numbers (131072 / 8192 as of writing); type your own number first and it
    is never overwritten.
 
-New standing targets once verified: **nucleus 475 · engine 117 · frontend
+New standing targets once verified: **nucleus 475 · engine 118 · frontend
 1143 · migrations through 0041.**
 
-**PARTIALLY VERIFIED (owner, 2026-10-21 evening):** nucleus **475 OK in
-918s**; `seed_catalog --regenerate` fetched the live catalog and **wrote 322
-rows** to intelligence/data/model_prices_seed.json. Still pending: migrate
-0041 on the live DB (if not already run), the plain `seed_catalog` push,
-frontend 1143 + lint, the ENGINE re-run (escalation.py changed), the live
-prefill check (TC-09a), and the COMMIT — the new seed file, command, tests
-and doc updates are all uncommitted.
+**ALL GATES VERIFIED (owner, 2026-10-22 16:45):** nucleus **475 OK** (full
+run 16:28 had 2 errors — the recalled-miswire assertions; both tests
+rewritten and re-run OK); engine **118 passed, 5 skipped**; frontend **125
+files / 1143 tests + lint clean**; seed push "Seeded 0 … 322 in the file"
+(never-downgrade held); TC-09a prefill 131072/8192 live. Standing targets:
+**nucleus 475 · engine 118 · frontend 1143 · migrations through 0041.**
+Still pending: the two COMMITS (everything since backend 581d21b / frontend
+79bcef4 is uncommitted).
+
+Note for the next build round (ruled 2026-10-22): DELIVERABLES and RECALL are
+to be REMOVED from both repos (Stage 2 of the roadmap in MISSING.md) — the
+suite targets above will move then, in one step.
 
 ## 3. Removals
 
