@@ -29,9 +29,9 @@ no frontend service to run — the web UI is hosted; you connect it to your
 own server.
 
 > The AI engine was rebuilt from scratch (`modules/nexus-ai`) and the whole
-> backend revamped around it — Steps 0–7, all owner-verified; see
-> [`docs/NUCLEUS-REVAMP.md`](./docs/NUCLEUS-REVAMP.md). The final step
-> (switch-over + the distribution image) is the one piece in flight.
+> backend revamped around it — Steps 0–8, all owner-verified; see
+> [`docs/NUCLEUS-REVAMP.md`](./docs/NUCLEUS-REVAMP.md). The revamp shipped
+> as **1.0.0** — see [`docs/RELEASE-NOTES-1.0.0.md`](./docs/RELEASE-NOTES-1.0.0.md).
 
 ---
 
@@ -43,8 +43,8 @@ official NeuralOps web app to your server afterward.
 | | |
 |---|---|
 | **What you need** | Docker with Compose v2; ~4GB RAM; one reachable port (a domain + reverse proxy, [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), or a load balancer); a NeuralOps account. |
-| **What you run** | Fetch `docker-compose.neuralops.yaml` and the two env templates → `docker run --rm noamanfaisal/neuralops:latest init-secrets > neuralops/secrets.env` (generates your deployment's secrets, SECRET_KEY included) → fill in your server URL → `docker compose up -d`. |
-| **First run** | `migrate` and `seed_permissions` once — then **claim the server from the app**: it shows a short code, you sign in at the portal and type the code there, and you become the owner. No shell step. (`manage.py create_owner` remains as the air-gapped fallback.) |
+| **What you run** | Fetch `docker-compose.neuralops.yaml` and the two env templates → `docker run --rm noamanfaisal/neuralops:latest init-secrets > neuralops/secrets.env` (generates your deployment's secrets, SECRET_KEY included) → fill in your server URL → `mkdir -p ./projects && sudo chown -R 1000:1000 ./projects` (the folder personas' file tools write into) → `docker compose up -d`. |
+| **First run** | Create the vector database once, then `migrate`, `seed_permissions` and `seed_catalog` (exact commands below) — then **claim the server from the app**: it shows a short code, you sign in at the portal and type the code there, and you become the owner. No other shell step. (`manage.py create_owner` remains as the air-gapped fallback.) |
 | **Time** | 10–15 minutes. |
 
 Your secrets (`SECRET_KEY`, `FIELD_ENCRYPTION_KEY`, `INTERNAL_API_KEY`,
@@ -52,6 +52,39 @@ Your secrets (`SECRET_KEY`, `FIELD_ENCRYPTION_KEY`, `INTERNAL_API_KEY`,
 install — nothing shared with anyone else's deployment, nothing baked into
 the public image. **Never re-run init-secrets on an existing install** — it
 would replace your live database password.
+
+First-run commands, against the running stack:
+
+```bash
+# once — the engine's vector store: its own database on the same postgres
+docker exec neuralops-postgres sh -c 'psql -U "$POSTGRES_USER" -c "CREATE DATABASE nexus_vectors"'
+docker exec neuralops-postgres sh -c 'psql -U "$POSTGRES_USER" -d nexus_vectors -c "CREATE EXTENSION vector"'
+
+# the schema, the rights registry + default roles, the model/MCP catalog
+docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus \
+  /opt/venv/nucleus-env/bin/python manage.py migrate
+docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus \
+  /opt/venv/nucleus-env/bin/python manage.py seed_permissions
+docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus \
+  /opt/venv/nucleus-env/bin/python manage.py seed_catalog
+```
+
+**Upgrading an existing install — gotchas** (each one found on a real
+install):
+
+- Keep `NEURALOPS_IMAGE` in `neuralops/infra.env` in sync at every version
+  bump — an old pinned tag quietly runs the old release.
+- Your postgres **volume** carries the password it was created with. Never
+  wipe it with `docker compose down -v`; if you ever intend a truly fresh
+  database, remove only that one volume by name.
+- A `secrets.env` generated before SECRET_KEY joined init-secrets makes the
+  server refuse to boot (by design). **Append** one line — never re-run
+  init-secrets on an existing install:
+  `docker run --rm noamanfaisal/neuralops:latest init-secrets | grep ^SECRET_KEY >> neuralops/secrets.env`
+- Upgrading from a pre-1.0 install (postgres:17-alpine): the postgres image
+  is now `pgvector/pgvector` (same PG major). One-time follow-ups:
+  `REINDEX DATABASE` (collation change), then create `nexus_vectors` + the
+  `vector` extension as in the first-run block above.
 
 **Offline logins:** sign-in goes through the NeuralOps portal by default,
 but every member can set a local password in their profile — then the server
@@ -205,8 +238,8 @@ instructions).
 | [`docs/CHANGE-PROMPT.md`](./docs/CHANGE-PROMPT.md) | **Start here to work on the code** — the whole system brief: architecture principles, module maps, diagrams, requirements, lessons, how changes are made and verified |
 | [`docs/NUCLEUS-REVAMP.md`](./docs/NUCLEUS-REVAMP.md) | The master record of the revamp — every design ruling, what was built where, every owner-verified step (0–8) |
 | [`docs/API.md`](./docs/API.md) | Every endpoint — public, user, MCP gateway, internal, engine — with auth styles and rights; live OpenAPI at `/api/v1/openapi.json` for Postman |
-| [`docs/CONCEPTS-AND-ROLES.md`](./docs/CONCEPTS-AND-ROLES.md) | Every core object explained, plus the full rights/roles system (all 49 rights, the four roles, the topic-only invite case) |
-| [`docs/TESTS.md`](./docs/TESTS.md) | The test catalog — every suite and what it guarantees (457 backend + 110 engine tests) |
+| [`docs/CONCEPTS-AND-ROLES.md`](./docs/CONCEPTS-AND-ROLES.md) | Every core object explained, plus the full rights/roles system (all 47 rights, the four roles, the topic-only invite case) |
+| [`docs/TESTS.md`](./docs/TESTS.md) | The test catalog — every suite and what it guarantees (464 backend + 118 engine tests) |
 | [`docs/FRONTEND-REVAMP.md`](./docs/FRONTEND-REVAMP.md) | The web UI's contract — every event, screen and error wording the frontend builds against |
 
 ### Contributing
