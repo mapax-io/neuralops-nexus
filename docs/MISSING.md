@@ -403,7 +403,8 @@ lesson 14) and rebuild the image — fold into the next image build.
   presentable as this turn's tool output and is named as memory when used.
   Tests: engine +m3 (transcript never raw; summary survives; non-shell raw
   untouched) and tr1 extended (provenance line reaches the model). Engine
-  target moves 117 → **118**. Original entry kept below for history:
+  target moves 117 → **118** — VERIFIED by owner 2026-10-22 23:01: "118
+  passed, 5 skipped". Original entry kept below for history:
   (promoted 2026-10-22 after the fabricated-terminal finding).** Three parts: (1) the pass must
   stop recording trivia and must NEVER store tool/terminal transcripts as
   facts — a fabricated transcript got stored and was replayed verbatim in

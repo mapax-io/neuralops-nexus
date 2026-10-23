@@ -146,8 +146,20 @@ port, postgres → pgvector/pgvector:0.8.7-pg17, chromadb service removed).
   (the 2026-10-22 322-row file is current enough unless days pass).
 
 Order of work (owner's ruling 2026-10-22 22:15 — the image build is LAST):
-D1 security sweep (secrets backups in git? — must be clean BEFORE anything
-is public) → B2 (requirements.lock regen) → E (Supabase chores, any time) →
-then AT LAUNCH: B1 decision (Nuitka vs bytecode) + B3 (.dockerignore) → B5
-(build + in-image suites) → D3–D6 (PR to main, tag v1.0.0, Docker Hub push,
-release notes). B4 (version bump) and C (compose) are already done.
+D1 security sweep (owner ruled the findings fake) → B2 (requirements.lock,
+DONE) → E (Supabase chores, any time) → then AT FINALIZE: the checklist
+below. B4 (version bump), C (compose), B1/B3/B5 (image, smoke) already done.
+
+## PARKED LAUNCH CHECKLIST — runs ONLY when the owner says FINALIZE
+
+1. Suites green at the final targets (nucleus 464 · engine 118 · frontend
+   1122); everything committed and the branches pushed.
+2. On GitHub, open + merge the two PRs:
+   neuralops-nexus-backend `step8-switchover → main`,
+   neuralops-nexus-web-app `noamanfaisal → main`.
+3. Move the tag onto the REAL merged main (it currently marks the old one):
+   `git fetch origin && git tag -f v1.0.0 origin/main && git push -f origin v1.0.0`.
+4. Rebuild + re-push the image so the public 1.0.0 carries everything:
+   `docker build -f neuralops/Dockerfile -t noamanfaisal/neuralops:1.0.0 .`
+   then tag `:latest`, `docker push` both.
+5. GitHub release for v1.0.0 with docs/RELEASE-NOTES-1.0.0.md as its text.
