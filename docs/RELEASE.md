@@ -1,5 +1,15 @@
 # NeuralOps — Stage 3: the GitHub launch + the release image
 
+**STANDING RULE (owner, 2026-10-22 22:59: "why, when things are not yet
+finalized"):** Claude hands over NO docker build/push, NO PR-merge and NO
+tag commands until the owner says FINALIZE (or LAUNCH). Until then the only
+commands that flow are the normal dev loop: suites, commits, branch pushes.
+The launch checklist at the bottom of this file is PARKED and runs only on
+that word. Current public state, for the record: branches pushed; tag
+v1.0.0 exists but points at the OLD main (made before any merge); Docker
+Hub has a 1.0.0/latest image WITHOUT the memory-pass hardening — all three
+get corrected by the parked checklist when the owner finalizes.
+
 **Drafted 2026-10-22 (owner's plan: "i have to launch it on Github and we
 also need to create both servers (ai and nucleus) into api image then in
 docker").** Code state: backend f5a5d97 (step8-switchover, unpushed with
