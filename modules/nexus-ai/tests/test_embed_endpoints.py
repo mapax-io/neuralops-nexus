@@ -1,5 +1,6 @@
 """
-Layer 3, items 24/44 + recall — the embed endpoints, legacy contracts kept
+Layer 3, items 24/44 — the embed endpoints, legacy contracts kept. (te5, the
+recall pair's test, left with the Recall feature — owner's ruling 2026-10-22.)
 (docs/NEXUS-AI-REVAMP.md §1.3 "Legacy contract verification" + decisions 5/6/8/11;
 built 2026-10-13). Shapes are 0.8.0's (NA/routers/embed.py), additions are the
 settled ones only: `embedder`, `used_tools`, the reindex pair, code refused.
@@ -134,29 +135,8 @@ async def test_te4_message_embed_and_delete(harness, vector_url, read_store):
     assert all(not h.id.startswith("me-m1:") for h in hits)  # memory died with it
 
 
-async def test_te5_recall_upserts_and_deletes(harness, vector_url, read_store):
-    """W5 (decision 11) — a recall entry upserts on the same id and deletes.
-    Embedding the same entry_id twice leaves ONE row carrying the second text
-    (an edit replaces, 0.8.0's documented behaviour); the delete drops it."""
-    payload = {
-        "entry_id": "re-1", "company_id": "ce1", "project_id": "pe1",
-        "kind": "decision", "text": "we deploy on fridays", "author_name": "Noaman",
-        "embedder": HASH,
-    }
-    assert (await _post(harness, "/api/v1/embed/recall/", payload)).status_code == 200
-    payload["text"] = "we never deploy on fridays"
-    response = await _post(harness, "/api/v1/embed/recall/", payload)
-    assert response.json()["ok"] is True
-    hits = read_store.search(SearchQuery(company_id="ce1", project_id="pe1",
-                                         text="deploy fridays",
-                                         kinds=("recall",), min_score=0.01))
-    assert [h.id for h in hits] == ["re-1"]
-    assert "never" in hits[0].text
-    await _delete(harness, "/api/v1/embed/recall/re-1/?company_id=ce1")
-    hits = read_store.search(SearchQuery(company_id="ce1", project_id="pe1",
-                                         text="deploy fridays",
-                                         kinds=("recall",), min_score=0.01))
-    assert all(h.id != "re-1" for h in hits)
+# REMOVED (owner's ruling 2026-10-22): test_te5_recall_upserts_and_deletes —
+# the recall embed endpoints are gone with the Recall feature.
 
 
 async def test_te6_auth_and_unconfigured(harness, vector_url):

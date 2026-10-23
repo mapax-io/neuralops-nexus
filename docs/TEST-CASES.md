@@ -25,6 +25,15 @@ phase: trivia → router answers inline; an ordinary question → "Handed to"
 the STANDARD model; a hard one → "Handed to" a bench model picked by its
 strengths note.
 
+**Updated 2026-10-22 21:49 (Stage 2 removal round, VERIFIED):** Recall (W5)
+and Deliverables (W10) left the product entirely (owner's ruling; record in
+FRONTEND-REVAMP §2k). Suite targets are now **nucleus 464 / engine 117
+passed + 5 skipped / frontend 121 files, 1122 tests**; migrations end at
+**nucleus 0042 + authn 0007**; the rights registry is **47**. Any TC that
+mentioned the Recall pane or Keep-as-deliverable is void. Also in this
+round: viewers can post plain messages (only persona calls are refused) and
+the chain supervisor's verdict prompt has a pass-unless-broken bias.
+
 ---
 
 ## Progress — owner's pass, evening of 2026-10-21
@@ -83,6 +92,21 @@ the honest behavior (no recalled key; wire recalled=0). Re-run the two to
 close nucleus:
 `docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py test chat.tests.RelayTests.test_the_new_done_extras_land_on_the_row_and_the_wire chat.tests.RelayUsageTests.test_what_the_reply_retrieved_is_never_counted_as_remembered -v 1 --noinput`
 Still due: that nucleus re-run, the two commits.
+
+TC-38 ANSWERED (owner, 2026-10-22 20:51): **YES** — the embedder row is
+visible in the UI; MISSING item 4's open question closes with nothing to
+build. TEAM TEST PASSED (viewer reads all, edits nothing) with the one
+composer finding below. GATEWAY PASSED (tools/list live, person-scoped).
+MCP TC-13/14 PASSED. CHAINS PASSED (both modes). Stage 1 is COMPLETE once
+the owner's sweep notes (if any) land.
+
+FOUND 2026-10-22 20:06 (team test) — RULED: a Viewer saw "You have read-only
+access to this chat" and could not post at all. Owner: "it should only
+refrain user from calling persona" — viewers POST plain messages; only
+persona mentions are refused (which the server already does, and its tests
+pin). FIX (frontend, tonight's round): the composer's read-only gate keys on
+the wrong right — allow composing for viewers, keep the mention refusal.
+Also align any server-side right the UI was mirroring.
 
 Still OPEN: fallback with a deliberately broken key (or defer); web_search with a FRESH
 question (first attempt answered from project memory with no tool row —

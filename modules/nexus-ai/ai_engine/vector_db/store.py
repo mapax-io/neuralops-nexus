@@ -39,7 +39,7 @@ class VectorStore(ABC):
     @abstractmethod
     def delete_ids(self, company_id: str, project_id: str,
                    ids: Sequence[str]) -> int:
-        """Drop specific rows (message delete, recall delete)."""
+        """Drop specific rows (message delete)."""
 
     @abstractmethod
     def active_model(self, project_id: str) -> str | None:
@@ -57,4 +57,4 @@ class VectorStore(ABC):
     @abstractmethod
     def projects_for_company(self, company_id: str) -> list[str]:
         """Project ids with an active index for this company — the legacy
-        message/recall deletes carry only company_id, so they scan these."""
+        message delete carries only company_id, so it scans these."""

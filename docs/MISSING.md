@@ -17,17 +17,30 @@ web_search + web_fetch + Web approval knob, TC-12 shell guard, external MCP
 tiles TC-13/14, chains, team/invites, recall-pane inspection, gateway, UI
 sweep, TC-38 embedder check. Plus the two pending git commits.
 
-**Stage 2 — fix round.** Owner hands over the comments file keyed by TC id;
-Claude fixes by id, re-running the three suites after each batch. PLUS the
-REMOVALS the owner ruled 2026-10-22 15:50: strip DELIVERABLES (the "Keep as
-deliverable" button, keep-dialog, lib/api/deliverables, and its backend
-routes/rows) and RECALL (the pane, the recall API + RecallEntry storage, the
-engine's recall context source and vectors, RecallTests) from BOTH repos —
-"remove every install from front or backend". Done here, after the pass, so
-suite targets move once. This also VOIDS the recall-writer half of the
-memory-pass hardening entry (parts 2/5 — no pane, no writer needed); parts
-1 and 3 (don't store tool transcripts; retrieval text never poses as this
-turn's output) still stand, and the "Remembered" chip relay fix stays.
+**Stage 2 — fix round. ~~REMOVALS~~ BUILT + VERIFIED 2026-10-22 21:49
+(suites green at the new targets; three test-only stragglers fixed in the
+first run — record in FRONTEND-REVAMP §2k).**
+The removals the owner ruled 2026-10-22 15:50 are DONE in both repos:
+DELIVERABLES (model, routes, schemas, Keep button, keep-dialog, pane, API
+lib, hooks, 6 nucleus + 11 frontend tests) and RECALL (RecallEntry model,
+recall API + internal route, Persona.recall_enabled everywhere, the engine's
+recall kind + embed endpoints, the pane, the "Remembered N things" chip and
+the whole `recalled` wire field, 5 nucleus + 1 engine + 10 frontend tests).
+Migrations: nucleus **0042_remove_recall_and_deliverables** (drops both
+tables + the persona flag, ROWS INCLUDED) and authn
+**0007_recall_deliverable_rights_cleanup** (drops recall.manage +
+deliverable.manage rights; registry 49 → 47). Removed code is parked in
+nucleus `.step0-removed/` and web `_attic/removed-panes/`. Also ridden in
+this round (both ruled): viewers may POST (the composer shows for everyone;
+only persona calls are refused — the server already behaved this way) and
+the supervisor verdict prompt got the pass-unless-broken bias (style is
+never a defect; REDO needs a named, fixable problem). New suite targets:
+nucleus **464**, engine **117 passed / 5 skipped**, frontend **121 files /
+1122 tests**. This also VOIDS the recall-writer half of the memory-pass
+hardening entry (parts 2/5 — no pane, no writer needed); parts 1 and 3
+(don't store tool transcripts; retrieval text never poses as this turn's
+output) still stand. Remaining Stage 2: the owner's comments file keyed by
+TC id, if any comments come.
 
 **Stage 3 — release chores.** Rotate the exposed OpenAI/Anthropic keys
 (if not already done for the fresh start); Supabase cleanups (legacy
@@ -413,8 +426,9 @@ lesson 14) and rebuild the image — fold into the next image build.
   /retrieval payload per reply, a permission-gated API (owner/admin only —
   this is reading people's chats, needs its own right), and the viewer UI.
 - **Connector tiles with icons.** The add-MCP screen shows ready-made tiles
-  (icon + one click to configure) for: GitHub, a graph-DB context MCP,
-  Atlassian, AWS, Google, draw.io/charts — OAuth2 flow already built, the
+  (icon + one click to configure) for: GitHub, Bitbucket, a graph-DB context
+  MCP, Atlassian, AWS, Google, Vercel, draw.io/charts (owner's list, extended
+  2026-10-22 19:45) — OAuth2 flow already built, the
   mcp_catalog already pre-fills dialogs; the build is catalog entries with
   icons + tile UI + per-service oauth_config defaults, each entry TESTED
   against the real service.
@@ -424,15 +438,65 @@ lesson 14) and rebuild the image — fold into the next image build.
 - **File viewer pane (un-parked).** Browse project files with: download,
   upload, and "run as HTML server" (serve a folder/file as a live preview —
   security ruling needed: who may run it, same-origin isolation).
-- **Setup copilot — internal ADMIN MCP (owner asked 2026-10-22: "ai can help
-  me setting up models, mcps, users, personas" — NOT yet developed; the
-  neuralops-mcp repo is only a shopping-tools demo).** A new built-in
-  capability (like filesystem/shell) exposing nucleus admin APIs as tools:
-  register/check models, create/edit personas, add MCP servers, invite
-  users. Rides the existing approval gate (writes ask first). HARD RULE to
-  design in: the persona acts with the ASKING USER's rights, never more —
-  tool calls carry the caller's identity through the internal API and are
-  permission-checked exactly like the person clicking the dialog would be.
+- **CHAINS REWORK — RULED (owner, 2026-10-22 18:39, after testing runbooks
+  live).** Six parts:
+  (1) RENAME: "chain" everywhere — UI, banners, docs (code may keep runbook
+  internals).
+  (2) STEP ACTOR — BOTH KINDS: a step is a PERSONA (full power: tools,
+  approvals, identity — unchanged) OR a bare MODEL + prompt (text-only
+  transform: no tools, no approvals; cheap). Design points to settle at
+  build: who a model step posts as (proposal: the chain itself as sender,
+  model named in metadata) and how its usage bills (no persona_id —
+  proposal: kind=chat_reply with the chain/run id).
+  (3) QUERY INPUT (the owner's best ask): a chain takes a QUERY at run time;
+  it rides into step 1 as the task and every step can see it — chains become
+  reusable workflows, not frozen scripts.
+  (4) INVOCATION: @ChainName <query> in chat, allowed for project admin/
+  owner; whether the Run button stays as a second door — owner no
+  preference, decide at build (Claude leans keep).
+  (5) ROLE LABEL per step, so banners read "step 2 of 4 — Reviewer".
+  (6) SUPERVISOR BIAS: verdict prompt gets a pass-unless-broken rule — live
+  test showed a self-reviewing supervisor REDO-ing materially fine work
+  until the cap failed the run (same fix family as the router's keep-it
+  bias). Also warn in the UI when the supervisor is also a step persona.
+  Inline ad-hoc chains (@chain "@A @B" "query") SKIPPED for v1 — fragile;
+  a saved chain + query gives the same power.
+- **MCP suggest-attach — RULED (owner, 2026-10-22 17:34: "option 2").** The
+  persona may SEE the names + descriptions of the project's other MCP
+  servers — never their tools, never a call — just enough to say "this
+  project has X, which could answer this; someone with edit rights can
+  attach it to me." Attach stays a HUMAN CLICK gated by the persona-edit
+  right, once per persona+server; from the next reply the topic cache
+  (layer 2) picks it up and the read-quiet/write-ask rules (layer 3) apply
+  unchanged. The router points at the wall, never climbs it: no silent
+  auto-attach, a crafted message must not be able to arm a persona. Found
+  live: "what shopping tools do you have?" → "none" while Shopping (demo)
+  sat one tick away. Build after the pass (Stage 4).
+- **Setup copilot — ADMIN TOOLS ON THE GATEWAY (owner asked 2026-10-22: "ai
+  can help me setting up models, mcps, users, personas" — NOT yet developed;
+  the neuralops-mcp repo is only a shopping-tools demo).** CORRECTED after
+  the live gateway test (2026-10-22 19:18): gateway tokens open ONLY the MCP
+  endpoint (POST /api/v1/mcp/), not REST — by design, no master user. So the
+  build is: EXTEND the gateway's tool list (gateway/api.py TOOL_DEFS +
+  gateway/tools.py) with admin tools — register_model, check_model,
+  create_persona, add_mcp_server, invite_user … — each permission-checked as
+  the token's person, exactly like the dialogs. The same tools can then be
+  mounted INSIDE for personas via the InternalActor door (X-NeuralOps-User
+  carries the asking person; rights still theirs, writes still gated by
+  approvals). One door, one rights rule, both worlds.
+  THE OWNER'S TOOL LIST (ruled 2026-10-22 19:27, names normalized to the
+  existing list_*/verb_* style):
+  - models: list_models · create_model (runs the same pre-save provider check
+    as the dialog) · update_model
+  - personas: list_personas · create_persona · update_persona
+  - users: list_users (invite_user later with the team build)
+  - topics: list_topics (exists) · get_topic_messages (a topic's transcript,
+    with a filter: AI replies only, or all messages) · create_topic ("add
+    chat") · update_topic (rename/archive — "set_topics")
+  Every one permission-checked as the calling person, same rights as the
+  dialogs. NOTE for create_model/update_model: an api_key travels as a tool
+  argument — never echoed back in results, never logged; results carry
+  has_api_key only, like the REST API.
 
 - MCP connector toggles ship WITH the bundled connectors (scope ruling: no
   dead switches) — MCP track.

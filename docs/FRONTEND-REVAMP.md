@@ -682,12 +682,113 @@ rewritten and re-run OK); engine **118 passed, 5 skipped**; frontend **125
 files / 1143 tests + lint clean**; seed push "Seeded 0 … 322 in the file"
 (never-downgrade held); TC-09a prefill 131072/8192 live. Standing targets:
 **nucleus 475 · engine 118 · frontend 1143 · migrations through 0041.**
-Still pending: the two COMMITS (everything since backend 581d21b / frontend
-79bcef4 is uncommitted).
+COMMITTED (owner, 2026-10-22 16:50): backend 1ccfba9 + c62663f (push c62663f
+when ready), frontend e819d88 (pushed). Nothing uncommitted in either repo.
 
 Note for the next build round (ruled 2026-10-22): DELIVERABLES and RECALL are
 to be REMOVED from both repos (Stage 2 of the roadmap in MISSING.md) — the
 suite targets above will move then, in one step.
+
+### 2k. The Recall + Deliverables removal, the viewer composer and the
+### supervisor bias (BUILT 2026-10-22, owner's rulings — VERIFY below)
+
+**Removal (owner, 15:50: "include to remove this deliverables and recall
+pane, and remove every install from front or backend", "remove recallentry
+completely").** Everything the two features ever installed is gone from both
+repos; removed code is parked (nucleus `.step0-removed/`, web
+`_attic/removed-panes/`), never deleted.
+
+- NUCLEUS: `RecallEntry` + `Deliverable` models and `Persona.recall_enabled`
+  deleted → migration **0042_remove_recall_and_deliverables** (ROWS
+  INCLUDED); `intelligence/recall.py` + `workspace/deliverables.py` → attic;
+  the recall routes (GET/PATCH/DELETE /projects/{id}/recall/), the internal
+  write (POST /internal/recall/), the 4 deliverables routes and every schema
+  (PersonaIn/PatchIn/Out.recall_enabled, RecallSourceOut/EntryOut/PatchIn,
+  DeliverableKeepIn/Out) are gone; `chat/nexus_ai.py` lost
+  embed_recall/delete_recall_vector; build_context_sources sends chat + READY
+  files only; the whole **`recalled` wire field is gone** (relay publish,
+  update_ai_message kwarg, serialise — even stale row metadata is not
+  serialised); rights **recall.manage + deliverable.manage** left the
+  registry and both role bundles → authn migration
+  **0007_recall_deliverable_rights_cleanup** (deletes the Right + RoleRight
+  rows; registry 49 → 47). Tests: RecallTests (5) + patch_env and
+  DeliverableTests (6) deleted; the 2 recalled-miswire chat tests +
+  WireFieldDefaultsTests now pin the field's ABSENCE.
+- ENGINE: PersonaSpec.recall_enabled + nucleus_client mapping gone (a field
+  an older nucleus still sends is ignored); `_retrieve` searches
+  ("message",) — no recall kind — and _KIND_LABEL lost its entry; the
+  POST/DELETE /embed/recall/ pair and its schemas are gone; VectorItem /
+  RetrievedRef / ContextSourceRef docs no longer name the kind;
+  fake_nucleus.make_persona stopped sending it; test te5 deleted, the
+  memory-pass seed row re-kinded "message".
+- FRONTEND: recall-pane, deliverables-pane, keep-dialog, lib/api/recall,
+  lib/api/deliverables, use-recall, use-deliverables (+ their 4 test files)
+  → _attic/removed-panes; pane ids "recall"/"deliverables" RETIRED (persisted
+  docks drop them on load — same road as terminal/browser/web); the Keep
+  button, the "Remembered N things" chip, UiMessage.recalled,
+  WireMessage.recalled, the done-event recalled parse, the onKeep plumbing
+  (message-list/topic-view) and the personas-tab Recall checkbox (create +
+  edit) are gone; Persona/Create/Patch types lost recall_enabled.
+
+**Viewer composer (owner: "it should only refrain user from calling
+persona").** The read-only banner is gone: the composer shows for EVERYONE
+who can open the topic — a viewer posts plain messages; a persona call is
+what the server refuses (mention_refused + the note under the message, which
+the server tests always allowed). `participates` still gates choice cards.
+
+**Supervisor bias (chains item 6, small slice pulled forward).** The review
+prompt now says APPROVE is the usual verdict — approve anything that does
+the stage's job, style and taste are never defects; REDO needs a concrete,
+fixable, NAMED defect; FAIL only for unfixable. (Live finding 2026-10-21:
+@MA REDO'd fine work twice against its own taste and the capped run failed.)
+No test pinned the old wording; the chain tests drive verdicts via fakes.
+
+**VERIFY (owner — one block, the usual one-log pattern):**
+1. migrate — `docker exec -w /nexus/nucleus -e PYTHONPATH=/nexus/nucleus
+   neuralops-nucleus-dev /opt/venv/nucleus-env/bin/python manage.py migrate`
+   (why: applies 0042 + authn 0007 — the recall/deliverables tables and the
+   two rights actually leave the database);
+2. nucleus suite — expect **464 OK** (475 − RecallTests 5 − DeliverableTests 6);
+3. engine — expect **117 passed, 5 skipped** (118 − te5);
+4. frontend — `npm run test:run && npm run lint` — expect **121 files / 1122
+   tests** (125/1143 − 4 atticked test files (18 tests) − 1 Remembered test
+   − 2 Recall-switch tests) + lint clean;
+5. live — hard-reload (Ctrl+Shift+R): the rail shows FOUR panes (Topics,
+   Context, Schedules, Project overview); a reply's hover menu has Copy only
+   (no Keep); no "Remembered" chip anywhere; the persona dialogs have no
+   Recall checkbox;
+6. live, as the viewer account — the composer is THERE; a plain message
+   posts; "@Sara hi" posts the message and shows "@Sara didn't answer…";
+7. live, chains — run the Draft-and-review chain with @MA supervising:
+   ordinary work now passes (APPROVE) instead of being REDO'd to death.
+
+New standing targets once verified: **nucleus 464 · engine 117 · frontend
+121 files / 1122 tests · migrations through nucleus 0042 + authn 0007.**
+
+**First verify run (owner, 2026-10-22 ~21:30): migrations 0042 + authn 0007
+applied OK; lint clean; three STRAGGLERS surfaced — all in test files the
+sweep missed, no product code wrong — fixed the same night:**
+- authn/tests.py TeamOperationsRightsTests still expected recall.manage +
+  deliverable.manage in TEAM_OPS_RIGHTS (2 nucleus failures) → both codes
+  removed from the table;
+- engine tests/test_history.py built PersonaSpec directly with
+  recall_enabled=True (3 T13 failures, TypeError) → kwarg removed;
+- frontend message-store.test.ts asserted `recalled` landed off message_done
+  (1 failure) → the test now pins the OPPOSITE: an older server's `recalled`
+  field parses to nothing and lands nowhere.
+Targeted re-run is enough (test-only fixes): nucleus `test authn`, engine
+`pytest tests/test_history.py`, frontend the one vitest file — then the
+targets above stand.
+
+**VERIFIED (owner, 2026-10-22 21:49):** first full run — migrate OK (0042 +
+authn 0007), nucleus Ran 464 (2 straggler fails), engine 114 passed / 3
+straggler fails / 5 skipped, frontend 1121/1122 (1 straggler) + lint clean;
+targeted re-run after the three test-only fixes — authn **106 OK**, engine
+test_history **3 passed**, frontend message-store **61 passed**. Standing
+targets now: **nucleus 464 · engine 117 passed/5 skipped · frontend 121
+files / 1122 tests · migrations through nucleus 0042 + authn 0007.** Live
+checks (four panes, no Keep/Remembered/Recall-checkbox, viewer posts,
+supervisor bias) pending the owner's next walkthrough.
 
 ## 3. Removals
 

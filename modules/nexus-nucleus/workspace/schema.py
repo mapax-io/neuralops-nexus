@@ -219,22 +219,6 @@ class AvailablePersonaOut(Schema):
     # servers attached), and this picker does not need it.
 
 
-# ── Deliverables (W10) ────────────────────────────────────────────────────────
+# REMOVED (owner's ruling 2026-10-22): Deliverables (W10) schemas — the whole
+# feature left the product with migration 0042. ────────────────────────────────────────────────────────
 
-class DeliverableKeepIn(Schema):
-    """Keep a reply: which message, under what name. The kind and content come from the message."""
-    message_id: str
-    title: str
-
-
-class DeliverableOut(Schema):
-    id: str
-    project_id: str
-    title: str
-    kind: str                       # html | chart | table | form | text
-    version: int
-    content: Optional[str] = None   # absent from the list, present when one is opened
-    source_message_id: Optional[str] = None
-    created_by_id: Optional[str] = None
-    created_by_name: Optional[str] = None
-    created_at: str

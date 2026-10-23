@@ -452,7 +452,8 @@ class PydanticAISystem:
 
     def _retrieve(self, job: TriggerJob) -> list[SearchHit]:
         """Two scoped searches (design §3): documents project-wide; chat memory
-        and recall SAME TOPIC ONLY (item 44's rule). Merged by score, capped."""
+        SAME TOPIC ONLY (item 44's rule). Merged by score, capped. (The
+        "recall" kind left with the Recall feature, 2026-10-22.)"""
         if not self._store.has_index(job.project_id):
             return []
         top_k = self._settings.retrieval_top_k
@@ -463,7 +464,7 @@ class PydanticAISystem:
         ))
         memory = self._store.search(SearchQuery(
             company_id=job.company_id, project_id=job.project_id, text=job.message,
-            topic_id=job.topic_id, kinds=("message", "recall"),
+            topic_id=job.topic_id, kinds=("message",),
             top_k=top_k, min_score=min_score,
         ))
         merged = sorted(documents + memory, key=lambda h: h.score, reverse=True)
@@ -496,8 +497,7 @@ def _now() -> str:
 
 
 _KIND_LABEL = {"message": "earlier in this topic",
-               "context_source": "project document",
-               "recall": "recall"}
+               "context_source": "project document"}
 
 
 def _retrieved_section(hits) -> str:

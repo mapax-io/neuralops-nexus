@@ -383,14 +383,10 @@ async def _run_reply(client, job, *, msg_id, channel, company, project, topic, t
         else:
             final_output_type, final_render_as = "text", "text"
 
-    # "recalled" once copied the RETRIEVAL count (len(retrieved_sources)) — a
-    # miswire found live 2026-10-22: every reply that merely SEARCHED memory
-    # claimed it "Remembered N things", the chip opened an EMPTY Recall pane
-    # (nothing in chat records recall entries yet), and the owner chased the
-    # ghost for an hour. Until real recall recording lands (memory-pass
-    # hardening, MISSING), no count is published — the chip only shows for a
-    # genuine recall write.
-    recalled = None
+    # REMOVED (owner's ruling 2026-10-22): the "recalled" wire field. It once
+    # copied the RETRIEVAL count (a miswire — every reply that merely searched
+    # memory claimed it "Remembered N things"), and the Recall feature it fed
+    # left the product entirely with migration 0042.
 
     # Terminal save + publish. The raw error stays server-side; the reader
     # sees the reauth prompt verbatim (written for them) or the categorised
@@ -409,7 +405,6 @@ async def _run_reply(client, job, *, msg_id, channel, company, project, topic, t
                 activity_trail=activity_trail,
                 preflight=preflight,
                 answered_by_model=answered_by_model,
-                recalled=recalled,
                 nudges=nudges_taken,
                 loaded_tools=loaded_tools,
                 used_tools=used_tools,
@@ -428,7 +423,6 @@ async def _run_reply(client, job, *, msg_id, channel, company, project, topic, t
         "stopped": False,
         "preflight": preflight,
         "answered_by_model": answered_by_model,
-        "recalled": recalled or 0,
         "used_tools": used_tools or [],
         "retrieved_sources": retrieved_sources or [],
     }, usage))

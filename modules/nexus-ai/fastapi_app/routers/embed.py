@@ -1,5 +1,6 @@
 """
-The embed endpoints (Layer 3, items 24/44 + recall) — nucleus → nexus-ai.
+The embed endpoints (Layer 3, items 24/44) — nucleus → nexus-ai.
+(The Recall embed pair left with the Recall feature, owner's ruling 2026-10-22.)
 
 Paths and shapes ported from 0.8.0 (verified in docs/NEXUS-AI-REVAMP.md's
 "Legacy contract verification" block — NA/routers/embed.py + schemas/embed.py),
@@ -85,31 +86,13 @@ class MessageEmbedResponse(BaseModel):
     ok: bool
 
 
-class RecallEmbedRequest(BaseModel):
-    entry_id: str
-    company_id: str
-    project_id: str
-    kind: str                        # decision | fact | preference
-    text: str
-    author_name: str | None = None
-    topic_id: str | None = None
-    created_at: str | None = None
-    embedder: dict | None = None
-
-
-class RecallEmbedResponse(BaseModel):
-    entry_id: str
-    collection: str
-    ok: bool
-
-
 class ReindexRequest(BaseModel):
     company_id: str
     project_id: str
     embedder: dict                   # the NEW spec — the whole point of the job
 
 
-# ── ingestion (items 24 / 44 / recall) ──────────────────────────────────────
+# ── ingestion (items 24 / 44) ──────────────────────────────────────
 
 @router.post("/embed/", response_model=EmbedResponse)
 def embed(req: EmbedRequest, _: str = Depends(_verify_key)) -> EmbedResponse:
@@ -189,33 +172,8 @@ def delete_message_vector(message_id: str, company_id: str,
     return {"ok": True}
 
 
-@router.post("/embed/recall/", response_model=RecallEmbedResponse)
-def embed_recall_entry(req: RecallEmbedRequest, _: str = Depends(_verify_key)) -> RecallEmbedResponse:
-    """Embed one Recall entry (W5) — same id upserts, so an edit replaces."""
-    store = get_store()
-    label = req.kind if not req.author_name else f"{req.kind} — {req.author_name}"
-    item = VectorItem(
-        id=req.entry_id, kind="recall", text=req.text, label=label,
-        source=f"recall:{req.entry_id}", topic_id=req.topic_id,
-    )
-    store.index(req.company_id, req.project_id, [item], embedder_spec=req.embedder)
-    return RecallEmbedResponse(
-        entry_id=req.entry_id,
-        collection=store.active_schema(req.project_id) or "", ok=True,
-    )
-
-
-@router.delete("/embed/recall/{entry_id}/")
-def delete_recall_vector(entry_id: str, company_id: str,
-                         project_id: str | None = None,
-                         _: str = Depends(_verify_key)) -> dict:
-    """Drop one Recall entry's vector — 0.8.0 contract (company_id only)."""
-    store = get_store()
-    projects = [project_id] if project_id else store.projects_for_company(company_id)
-    for project in projects:
-        if store.delete_source(company_id, project, f"recall:{entry_id}"):
-            break
-    return {"ok": True}
+# REMOVED (owner's ruling 2026-10-22): POST /embed/recall/ + DELETE
+# /embed/recall/{entry_id}/ — the Recall feature (W5) left the product.
 
 
 # ── reindex (decisions 4 + 8) ───────────────────────────────────────────────

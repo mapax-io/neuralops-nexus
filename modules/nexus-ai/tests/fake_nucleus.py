@@ -58,7 +58,6 @@ def make_persona(model: dict, *, system_prompt: str = "You are NeuralBot. PERSON
         "utility_model": utility_model,
         "tool_levels": tool_levels or {},
         "fallback_models": fallback_models or [],
-        "recall_enabled": True,
         # item 13 (nucleus change 3): the optional seats
         "router_model": router_model,
         # smart router: the bench, first entry mirrored into the legacy field

@@ -24,7 +24,6 @@ from .intelligence import (
     PersonaDeepModel,
     PersonaFallbackModel,
     Routine,
-    RecallEntry,
     AIRequestLog,
 )
 
@@ -38,7 +37,6 @@ from .workspace import (
     Channel,
     ChatTopic,
     ChatMessage,
-    Deliverable,
     ChatReadMarker,
     ChatSession,
 )
@@ -75,6 +73,9 @@ from .gateway import (
 )
 
 # ── REMOVED EXPORTS ───────────────────────────────────────────────────────────
+#   RecallEntry    -> Recall removed whole (owner's ruling 2026-10-22,
+#                     migration 0042); Persona.recall_enabled dropped with it
+#   Deliverable    -> keep-a-reply removed whole (same ruling, migration 0042)
 #   AIModel        -> renamed to ModelConfig (migration 0014)
 #   AIAgent        -> deleted; Persona absorbed it (migration 0018)
 #   Human          -> deleted, never populated (migration 0008)

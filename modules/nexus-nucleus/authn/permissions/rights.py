@@ -204,10 +204,10 @@ REGISTRY = [
      "Start a runbook, or stop one that is running."),
     ("hook.manage", ObjectType.HOOK, ScopeType.PROJECT,
      "Create, regenerate and disable inbound hooks that post into a topic and mention a persona."),
-    ("recall.manage", ObjectType.RECALL, ScopeType.PROJECT,
-     "Edit and delete what personas have recorded in the project's Recall."),
-    ("deliverable.manage", ObjectType.DELIVERABLE, ScopeType.PROJECT,
-     "Keep a rich output as a project deliverable, and delete deliverables."),
+    # REMOVED (owner's ruling 2026-10-22): recall.manage and
+    # deliverable.manage — both features left the product (migration
+    # nucleus 0042); their Right rows and role links are deleted in
+    # authn/migrations/0006.
 
     # ── Usage / money (Step 1, docs/NUCLEUS-REVAMP.md; estimates only) ──────
     # Topic totals need no right of their own — anyone who can see the topic
@@ -250,7 +250,7 @@ DEFAULT_ROLE_RIGHTS = {
         "model_config.delete", "model_config.attach",
         "schedule.create", "schedule.manage",
         "persona.approve_run", "routine.manage", "runbook.manage", "runbook.run",
-        "hook.manage", "recall.manage", "deliverable.manage",
+        "hook.manage",
         "usage.view_project", "usage.view_company",
         # project.archive/channel.archive/topic.archive are now included --
         # this reverses the old project.delete-was-Owner-only policy. Archiving
@@ -275,10 +275,10 @@ DEFAULT_ROLE_RIGHTS = {
         "persona.mention",
         "persona.list", "mcp_server.list", "model_config.list",
         "schedule.create",
-        # Team AI operations: a Member approves what a persona proposes, runs a
-        # runbook, and curates Recall and Deliverables -- the same tier as
-        # calling a persona. Defining routines/runbooks/hooks stays Admin.
-        "persona.approve_run", "runbook.run", "recall.manage", "deliverable.manage",
+        # Team AI operations: a Member approves what a persona proposes and
+        # runs a runbook -- the same tier as calling a persona. Defining
+        # routines/runbooks/hooks stays Admin.
+        "persona.approve_run", "runbook.run",
         # Deliberately no schedule.manage -- a Member can still pause/delete
         # a schedule THEY created via the ownership check in
         # scheduling/services.py, just not one someone else created.

@@ -574,13 +574,22 @@ def _review(run, supervisor, step: dict, content: str, actor, index: int, count:
     from chat import services as chat_svc
     from nucleus.models import ChatMessage
 
+    # Pass-unless-broken bias (live finding 2026-10-21: a supervisor REDO'd
+    # perfectly fine work twice — against its own taste, not against the goal —
+    # and the capped run failed): the reviewer judges whether the stage DID ITS
+    # JOB, never whether it matches how the reviewer would have done it.
     question = (
         f"You are the reviewer of a chain stage that just finished (step {index + 1} of {count}).\n"
         f"The stage's goal:\n{step['prompt'][:1000]}\n\n"
         f"The stage's reply:\n{(content or '')[:REVIEW_CLIP]}\n\n"
         "Start your reply with exactly one word on its own line — APPROVE, REDO or FAIL — "
-        "then your notes. REDO means the stage runs again with your notes; "
-        "FAIL means it did not do its job and cannot be fixed by redoing."
+        "then your notes.\n"
+        "APPROVE is the usual verdict: approve any reply that does the stage's job, "
+        "even one you would have worded, structured or approached differently — "
+        "style and taste are never defects. REDO only for a concrete, fixable defect "
+        "your notes name (a wrong fact, a missed requirement from the goal, a broken "
+        "format); the stage then runs again with your notes. FAIL only when it did "
+        "not do its job at all and redoing cannot fix it."
     )
     try:
         msg_id = async_to_sync(chat_svc.trigger_ai_response_async)(

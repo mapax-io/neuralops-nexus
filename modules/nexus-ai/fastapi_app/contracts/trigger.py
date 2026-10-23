@@ -47,7 +47,7 @@ class ContextSourceRef(BaseModel):
     """One attached context source, pushed by nucleus inside the job (0.8.0 shape)."""
 
     source_id: str
-    type: str  # "doc" | "code" | "chat" | "recall"
+    type: str  # "doc" | "code" | "chat" | "file" ("recall" left with the Recall feature, 2026-10-22)
     label: str
     language: str | None = None
     collection_id: str
@@ -130,7 +130,7 @@ class RetrievedRef(BaseModel):
     reference and score only — the chunk text itself never rides an event."""
 
     id: str
-    kind: str                  # "message" | "context_source" | "recall"
+    kind: str                  # "message" | "context_source" | "tool_result"
     label: str
     score: float
     topic_id: str | None = None

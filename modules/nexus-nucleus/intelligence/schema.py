@@ -279,9 +279,8 @@ class PersonaIn(Schema):
     max_steps: int = 10
     acts_after_approval: bool = False
     tool_levels: dict[str, str] = Field(default_factory=dict)
-    recall_enabled: bool = True
     prompt: PromptIn
-    # REMOVED: source_type, model_id, agent_id
+    # REMOVED: source_type, model_id, agent_id, recall_enabled (Recall gone, 2026-10-22)
 
 
 class PersonaPatchIn(Schema):
@@ -318,7 +317,6 @@ class PersonaPatchIn(Schema):
     max_steps: Optional[int] = None
     acts_after_approval: Optional[bool] = None
     tool_levels: Optional[dict[str, str]] = None   # {} clears every level
-    recall_enabled: Optional[bool] = None
     prompt: Optional[PromptIn] = None
 
 
@@ -343,7 +341,6 @@ class PersonaOut(Schema):
     max_steps: int
     acts_after_approval: bool = False
     tool_levels: dict[str, str] = Field(default_factory=dict)
-    recall_enabled: bool = True
     prompt: Optional[PromptOut] = None
     is_active: bool
     # Server-relative media URL of the shadow user's assigned avatar --
@@ -439,31 +436,7 @@ class CompanyAIConfigOut(Schema):
     utility_model_id: Optional[str] = None
 
 
-# ── Recall (W5) ───────────────────────────────────────────────────────────────
-
-class RecallSourceOut(Schema):
-    topic_id: str
-    channel_id: Optional[str] = None
-    topic_title: str
-    message_id: Optional[str] = None
-
-
-class RecallEntryOut(Schema):
-    id: str
-    project_id: str
-    kind: str                       # decision | fact | preference
-    text: str
-    author_persona_id: Optional[str] = None
-    author_name: Optional[str] = None        # the persona that recorded it, or the person who typed it
-    source: Optional[RecallSourceOut] = None  # where it came from; None when recorded by hand
-    created_at: str
-    updated_at: str
-
-
-class RecallPatchIn(Schema):
-    kind: Optional[str] = None
-    text: Optional[str] = None
-
+# REMOVED (owner's ruling 2026-10-22): the Recall (W5) schemas — feature gone ───────────────────────────────────────────────────────────────
 
 # ── Catalogues (W11, W18) ─────────────────────────────────────────────────────
 # Content, not records: both are hand-kept modules served as-is, so the app can

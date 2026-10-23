@@ -79,7 +79,7 @@ def _seed_index(company: str, project: str) -> None:
     from fastapi_app.routers.embed import get_store
     from ai_engine.core.specs import VectorItem
     get_store().index(company, project, [VectorItem(
-        id="seed", kind="recall", text="seed row", label="seed", source="seed")],
+        id="seed", kind="message", text="seed row", label="seed", source="seed")],
         embedder_spec={"provider": "hash", "model_id": "hash-768"})
 
 

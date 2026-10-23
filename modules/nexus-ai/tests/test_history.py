@@ -18,7 +18,7 @@ def _persona(name: str = "NeuralBot") -> PersonaSpec:
         system_prompt="sp", project_brief=None, output_type="text", context_scope=None,
         temperature=0.7, max_output_tokens=4096, max_steps=8, models=(model,),
         advisor_model=None, utility_model=None, tool_levels={}, mcp_servers=(),
-        capabilities=(), recall_enabled=True,
+        capabilities=(),
     )
 
 

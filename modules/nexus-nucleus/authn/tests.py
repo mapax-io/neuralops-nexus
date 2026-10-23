@@ -233,8 +233,8 @@ TEAM_OPS_RIGHTS = {
     "runbook.manage": {"Admin"},
     "runbook.run": {"Admin", "Member"},
     "hook.manage": {"Admin"},
-    "recall.manage": {"Admin", "Member"},
-    "deliverable.manage": {"Admin", "Member"},
+    # recall.manage + deliverable.manage left the registry with the Recall and
+    # Deliverables features (owner's ruling 2026-10-22; authn migration 0007).
     "project.update": {"Admin"},
 }
 

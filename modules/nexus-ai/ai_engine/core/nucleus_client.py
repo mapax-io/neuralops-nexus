@@ -168,7 +168,8 @@ def persona_from(data: dict, company_id: str, project_id: str) -> PersonaSpec:
         tool_levels=data.get("tool_levels") or {},
         mcp_servers=tuple(data.get("mcp_servers") or []),
         capabilities=tuple(data.get("capabilities") or []),
-        recall_enabled=bool(data.get("recall_enabled", True)),
+        # recall_enabled left with the Recall feature (2026-10-22); a field an
+        # older nucleus still sends is simply ignored.
         tool_access=data.get("tool_access") or "selected",  # nucleus change (7); absent → selected
         approval_scope=data.get("approval_scope") or "topic",  # item 2 decision 5; absent → topic
         delegation_enabled=bool(data.get("delegation_enabled", False)),  # item 46 (Layer 6)

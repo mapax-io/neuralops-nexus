@@ -67,7 +67,8 @@ class PersonaSpec:
     tool_levels: dict                 # kept, unused in L0
     mcp_servers: tuple[dict, ...]     # kept raw, unused in L0
     capabilities: tuple[dict, ...]    # kept raw, unused in L0
-    recall_enabled: bool              # kept, unused in L0
+    # REMOVED (owner's ruling 2026-10-22): recall_enabled — the Recall feature
+    # left the product (nucleus migration 0042).
     # Item 3/4 (nucleus change 7): "selected" = exactly the attached servers
     # (today's behaviour, and the value when nucleus doesn't send the field);
     # "all_project" is resolved in NUCLEUS — nexus-ai still just reads the list.
@@ -254,15 +255,16 @@ class UsageRecord:
 
 @dataclass(frozen=True)
 class VectorItem:
-    """One row to index: a message, a document chunk, or a recall entry.
-    `text` is stored raw beside the vector (decision 4 — a re-embed never
-    re-fetches sources); `source` groups rows for delete-by-source."""
+    """One row to index: a message or a document chunk. `text` is stored raw
+    beside the vector (decision 4 — a re-embed never re-fetches sources);
+    `source` groups rows for delete-by-source. (The "recall" kind left with
+    the Recall feature, 2026-10-22.)"""
 
-    id: str                    # message_id | "{source_id}:{n}" | entry_id
-    kind: str                  # "message" | "context_source" | "recall" | "tool_result"
+    id: str                    # message_id | "{source_id}:{n}"
+    kind: str                  # "message" | "context_source" | "tool_result"
     text: str
     label: str                 # human-readable ("auth.py", sender name, tool+command, …)
-    source: str                # delete key ("chat:{topic}", "src:{source_id}", "recall:{entry_id}", "toolres:{msg_id}")
+    source: str                # delete key ("chat:{topic}", "src:{source_id}", "toolres:{msg_id}")
     topic_id: str | None = None
     used_tools: tuple[str, ...] = ()   # item 44: what solved the remembered answer
     created_at: str = ""       # item 27: when the memory was made (staleness label)

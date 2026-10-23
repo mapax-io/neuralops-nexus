@@ -160,7 +160,6 @@ def update_ai_message(
     activity_trail: list | None = None,
     preflight: dict | None = None,
     answered_by_model: str | None = None,
-    recalled: int | None = None,
     nudges: list[str] | None = None,
     loaded_tools: list[str] | None = None,
     used_tools: list[str] | None = None,
@@ -187,8 +186,6 @@ def update_ai_message(
         metadata["activity_trail"] = activity_trail
     if answered_by_model:
         metadata["answered_by_model"] = answered_by_model
-    if recalled:
-        metadata["recalled"] = recalled
     if nudges:
         metadata["nudges"] = list(nudges)
     if preflight:
@@ -361,9 +358,9 @@ def save_user_message(company, project, topic, user, content: str) -> dict:
 def build_context_sources(topic, company, persona=None) -> list[dict]:
     """
     Build the context_sources list for TriggerJob: a ChatContext ref
-    (semantic search over past messages), any READY file/web sources
-    attached to the topic, and the project's Recall (W5) unless the
-    persona has recall off.
+    (semantic search over past messages) and any READY file/web sources
+    attached to the topic. (The Recall source left with the feature,
+    2026-10-22.)
     """
     sources = [{
         "source_id": str(topic.id),
@@ -384,14 +381,6 @@ def build_context_sources(topic, company, persona=None) -> list[dict]:
             "type": "file",
             "label": src.name,
             "collection_id": src.collection_id,
-        })
-
-    if persona is None or persona.recall_enabled:
-        sources.append({
-            "source_id": str(topic.project_id),
-            "type": "recall",
-            "label": "Recall",
-            "collection_id": f"company_{company.id}_recall",
         })
 
     return sources
@@ -424,7 +413,6 @@ def serialise(msg) -> dict:
         # Step 2: pending questions (item 5) — answered through the resume road.
         "questions": metadata.get("questions") or [],
         "answered_by_model": metadata.get("answered_by_model"),
-        "recalled": int(metadata.get("recalled") or 0),
         "nudges": metadata.get("nudges") or [],
         "usage": metadata.get("usage"),
         # Step 2: the new engine's message_done extras.

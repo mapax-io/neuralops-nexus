@@ -577,10 +577,8 @@ class Persona(TenantBaseModel):
     # gives this persona call_persona (one-shot delegation, depth 1).
     delegation_enabled = models.BooleanField(default=False)
 
-    # Recall (W5): whether this persona reads what the team has recorded
-    # and records what it learns. Off keeps the project's Recall out of its
-    # prompt and its replies out of Recall.
-    recall_enabled = models.BooleanField(default=True)
+    # REMOVED (owner's ruling 2026-10-22): recall_enabled — the whole Recall
+    # feature (W5) is gone; migration 0042 drops the column and the table.
 
     max_steps = models.PositiveIntegerField(
         default=10,
@@ -992,33 +990,5 @@ class Routine(ProjectBaseModel):
         return f"/{self.name}"
 
 
-class RecallEntry(ProjectBaseModel):
-    """
-    What the team's personas have recorded about the project (W5): a
-    decision, a fact or a preference -- short, attributed to the persona and
-    the message it came from, read into every persona's turn in the project.
-    Edited and removed under recall.manage. `normalized` is the dedupe key
-    (intelligence/recall.py); it is not a database constraint so a removed
-    entry can be recorded again.
-    """
-
-    class Kind(models.TextChoices):
-        DECISION = "decision", "Decision"
-        FACT = "fact", "Fact"
-        PREFERENCE = "preference", "Preference"
-
-    kind = models.CharField(max_length=12, choices=Kind.choices)
-    text = models.CharField(max_length=500)
-    normalized = models.CharField(max_length=500, db_index=True)
-    source_topic = models.ForeignKey("nucleus.ChatTopic", on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
-    source_message = models.ForeignKey("nucleus.ChatMessage", on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
-    author_persona = models.ForeignKey(Persona, on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="recall_entries")
-
-    class Meta:
-        db_table = "intelligence_recall_entry"
-        ordering = ["-created_at"]
-        indexes = [models.Index(fields=["project", "is_active"])]
-
-    def __str__(self) -> str:
-        return f"{self.kind}: {self.text[:40]}"
+# REMOVED (owner's ruling 2026-10-22, "remove recallentry completely"):
+# RecallEntry (W5) — the whole Recall feature. Dropped with migration 0042.

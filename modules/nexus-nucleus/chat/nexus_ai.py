@@ -10,13 +10,12 @@ What the engine offers (its fastapi_app):
                                  job fields plus a `resume` block.
   POST /api/v1/embed/message/  — fire-and-forget message embedding.
   POST /api/v1/embed/          — document embedding (returns collection_id).
-  POST /api/v1/embed/recall/   — Recall entry embedding (upserts by id).
-  DELETE /api/v1/embed/…       — drop vectors (source / message / recall).
+  DELETE /api/v1/embed/…       — drop vectors (source / message).
   POST /api/v1/embed/reindex/  — rebuild a project's vectors (Step 3 — the
                                  embedder changed); GET …/status/ to poll.
 
 The async methods serve the relay; the SYNC methods below serve ordinary
-Django views and Celery tasks (context uploads, recall, the reindex task).
+Django views and Celery tasks (context uploads, the reindex task).
 
 The stream honours a should_stop callable (the reader's Stop button) both
 while waiting for the first byte and between lines — closing the stream
@@ -135,21 +134,8 @@ class NexusAIClient:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[embed] failed to delete collection %s: %s", collection_id, exc)
 
-    def embed_recall(self, payload: dict) -> None:
-        """POST /embed/recall/ — raises on failure (the caller logs and shrugs:
-        a missing vector is a weaker recall, not a failed write)."""
-        if not self.configured:
-            return
-        httpx.post(f"{self.base_url}/api/v1/embed/recall/", json=payload,
-                   headers=self._headers, timeout=15).raise_for_status()
-
-    def delete_recall_vector(self, entry_id: str, company_id: str) -> None:
-        """DELETE /embed/recall/{entry_id}/ — raises on failure (caller logs)."""
-        if not self.configured:
-            return
-        httpx.delete(f"{self.base_url}/api/v1/embed/recall/{entry_id}/",
-                     headers=self._headers, params={"company_id": company_id},
-                     timeout=15).raise_for_status()
+    # REMOVED (2026-10-22): embed_recall / delete_recall_vector — Recall left
+    # the product with migration 0042.
 
     def delete_message_vector(self, message_id: str, company_id: str, project_id: str | None = None) -> None:
         """DELETE /embed/message/{id}/ — drops the vector AND the reply's tool
