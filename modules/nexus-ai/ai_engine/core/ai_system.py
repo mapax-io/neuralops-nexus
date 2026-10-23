@@ -502,7 +502,10 @@ _KIND_LABEL = {"message": "earlier in this topic",
 
 def _retrieved_section(hits) -> str:
     """The RETRIEVED prompt section (design §3): what memory found, for the
-    model. The chunk text goes HERE and only here — events carry references."""
+    model. The chunk text goes HERE and only here — events carry references.
+    The provenance rule at the end is memory-pass hardening part 3
+    (2026-10-22): remembered text once came back dressed as a fresh tool
+    result — retrieval is never THIS turn's output."""
     lines = []
     for h in hits:
         origin = _KIND_LABEL.get(h.kind, h.kind)
@@ -510,4 +513,7 @@ def _retrieved_section(hits) -> str:
         lines.append(f"- ({origin}) {h.label}:{suffix}\n  {h.text}")
     return ("Relevant project memory, retrieved for this message (may be "
             "incomplete — weigh it, don't assume it is everything):\n"
-            + "\n".join(lines))
+            + "\n".join(lines)
+            + "\nThis is REMEMBERED material from earlier work, not the output "
+              "of any tool run in this reply: never present it as a command's "
+              "or tool's fresh result, and say it is from memory when you use it.")

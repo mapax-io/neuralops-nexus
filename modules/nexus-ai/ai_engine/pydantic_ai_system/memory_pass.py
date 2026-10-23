@@ -47,8 +47,24 @@ MEMORY_INSTRUCTIONS = (
     "Rules of thumb: local project files are re-readable → usually skip; "
     "remote/ephemeral sources → usually save. You may override either way when "
     "it is clearly right (an expensive local scan, a trivial remote ping).\n"
+    "HARD RULES (memory-pass hardening, 2026-10-22 — a fabricated transcript "
+    "was once stored as fact and replayed):\n"
+    "- NEVER keep a command/terminal transcript word for word — shell output is "
+    "skip, or a summary stating only the durable FACT it proved (never the "
+    "transcript itself).\n"
+    "- Skip chit-chat, trivia and anything a model could answer from general "
+    "knowledge — memory is for THIS project's own facts.\n"
+    "- Keep only what the tool genuinely returned; if an output looks "
+    "illustrative, simulated or unverified, skip it.\n"
     "Answer one ruling per output, by index."
 )
+
+# Part 1's code-side guard (never trust the prompt alone): these tools'
+# outputs are terminal/command transcripts — a `raw` ruling on one is
+# DOWNGRADED to its summary (when the ruling wrote one) or skipped. The
+# fabricated-`date` incident is exactly this path: a transcript stored
+# verbatim came back through retrieval looking like a fresh tool result.
+_NEVER_RAW_TOOLS = frozenset({"shell", "run_command", "terminal", "execute_command"})
 
 
 class MemoryRuling(BaseModel):
@@ -88,6 +104,14 @@ def _items(job: TriggerJob, outputs: list[dict], rulings: MemoryRulings) -> list
         if not (0 <= ruling.index < len(outputs)) or ruling.action == "skip":
             continue
         out = outputs[ruling.index]
+        # Hardening part 1: a transcript tool can never be stored raw — the
+        # ruling falls to its own summary, or to nothing.
+        if ruling.action == "raw" and (out.get("tool") or "").strip().lower() in _NEVER_RAW_TOOLS:
+            ruling = MemoryRuling(index=ruling.index,
+                                  action="summary" if ruling.summary.strip() else "skip",
+                                  summary=ruling.summary)
+            if ruling.action == "skip":
+                continue
         label = f"{out.get('tool')} {args_preview(out.get('args') or {})}".strip()
         base = dict(kind="tool_result", label=label, source=f"toolres:{job.msg_id}",
                     topic_id=job.topic_id, created_at=now)

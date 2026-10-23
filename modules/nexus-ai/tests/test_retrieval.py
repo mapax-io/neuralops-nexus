@@ -84,6 +84,10 @@ async def test_tr1_retrieval_event_section_and_sources(harness, vector_url):
     assert "Relevant project memory" in instructions
     assert "pgbouncer" in instructions
     assert "github__search" in instructions  # decision 6: what solved it travels
+    # Hardening part 3 (2026-10-22): the section ends with the provenance rule
+    # so remembered text is never dressed as this turn's tool output.
+    assert "REMEMBERED material" in instructions
+    assert "not the output" in instructions
 
 
 async def test_tr2_empty_project_stays_silent(harness, vector_url):

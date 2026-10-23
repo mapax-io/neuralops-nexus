@@ -138,6 +138,35 @@ async def test_m1_memory_pass_saves_a_summary_with_provenance(harness, tmp_path,
     assert hits[0].created_at  # the staleness timestamp travels
 
 
+async def test_m3_a_transcript_is_never_stored_raw():
+    """Hardening part 1 (2026-10-22) — shell/terminal output never lands verbatim.
+    A `raw` ruling on a run_command/shell output is downgraded in CODE (never
+    trust the prompt alone): with a summary it stores the summary — the durable
+    fact, not the transcript; without one it stores nothing. A raw ruling on a
+    non-transcript tool is untouched. This is the fabricated-`date` incident's
+    lock: a transcript stored verbatim replays later looking like fresh output."""
+    from types import SimpleNamespace
+    from ai_engine.pydantic_ai_system.memory_pass import MemoryRuling, MemoryRulings, _items
+
+    job = SimpleNamespace(msg_id="m-hard", topic_id="t-hard")
+    outputs = [
+        {"tool": "run_command", "args": {"command": "date"}, "content": "$ date\nSat Oct 24 14:37:02 UTC 2026"},
+        {"tool": "shell", "args": {"command": "ls"}, "content": "$ ls\ndata\nnotes.txt"},
+        {"tool": "web_fetch", "args": {"url": "https://x.test"}, "content": "remote figures: 48200"},
+    ]
+    rulings = MemoryRulings(rulings=[
+        MemoryRuling(index=0, action="raw"),                                   # transcript, no summary → nothing
+        MemoryRuling(index=1, action="raw", summary="The repo has a data dir and notes.txt."),  # → the summary
+        MemoryRuling(index=2, action="raw"),                                   # not a transcript → raw stays
+    ])
+    items = _items(job, outputs, rulings)
+    texts = [i.text for i in items]
+    assert all("$ date" not in t and "$ ls" not in t for t in texts)  # no transcript survives
+    assert "The repo has a data dir and notes.txt." in texts          # the fact does
+    assert any("remote figures: 48200" in t for t in texts)           # non-shell raw untouched
+    assert len(items) == 2
+
+
 async def test_m2_skip_ruling_saves_nothing_but_still_bills(harness, tmp_path, vector_url):
     """Decision 8 — 'skip' is a decision too: nothing saved, the pass billed.
     The scripted seat rules skip for a local file read: no tool_result rows

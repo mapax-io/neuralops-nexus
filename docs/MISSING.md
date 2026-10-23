@@ -392,8 +392,19 @@ lesson 14) and rebuild the image — fold into the next image build.
 ## Post-test build queue (owner, 2026-10-22 morning — build AFTER the
 ## acceptance pass; design details to be ruled when each starts)
 
-- **MEMORY-PASS HARDENING — REQUIRED BEFORE RELEASE (promoted 2026-10-22
-  after the fabricated-terminal finding).** Three parts: (1) the pass must
+- **MEMORY-PASS HARDENING — ~~REQUIRED BEFORE RELEASE~~ PARTS 1+3 BUILT
+  2026-10-22 23:45 (the only parts that survived the Recall removal; 2/5
+  voided, 4 fixed earlier).** Part 1: the memory pass never stores a
+  shell/terminal transcript verbatim — prompt hard rules PLUS a code guard
+  (_NEVER_RAW_TOOLS: a `raw` ruling on shell/run_command/terminal/
+  execute_command downgrades to its summary or to nothing); trivia and
+  anything that looks simulated is ruled skip. Part 3: the RETRIEVED prompt
+  section now ends with a provenance rule — remembered text is never
+  presentable as this turn's tool output and is named as memory when used.
+  Tests: engine +m3 (transcript never raw; summary survives; non-shell raw
+  untouched) and tr1 extended (provenance line reaches the model). Engine
+  target moves 117 → **118**. Original entry kept below for history:
+  (promoted 2026-10-22 after the fabricated-terminal finding).** Three parts: (1) the pass must
   stop recording trivia and must NEVER store tool/terminal transcripts as
   facts — a fabricated transcript got stored and was replayed verbatim in
   its topic; (2) VISIBILITY: "Remembered N things" rows live only in the
