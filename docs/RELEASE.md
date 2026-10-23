@@ -12,6 +12,13 @@ done only at launch time; the Nuitka-vs-bytecode call is made then (Claude
 flagged the cost — see B1; bytecode is the agreed escape hatch if Nuitka
 fights Django/torch). Nothing is built or compiled yet.
 
+**COMMITTED (owner, 2026-10-22 22:25): backend 89a89bb, frontend bb5c882.**
+requirements.lock regenerated and VERIFIED (pydantic-ai-slim 2.55.0 + the
+web-fetch deps — beautifulsoup4/markdownify/lxml/ddgs — all present;
+torch 2.14.1+cpu; pytest baked). B2 is DONE. Release notes drafted:
+docs/RELEASE-NOTES-1.0.0.md. Unpushed backend commits now: c62663f,
+f5a5d97, 89a89bb.
+
 **BUILT so far (2026-10-22 evening):** version bumped to 1.0.0 in all three
 places (neuralops/Dockerfile NEURALOPS_VERSION, infra.env.example
 NEURALOPS_IMAGE, web app version.ts APP_VERSION + COMPATIBLE_SERVER_VERSION
@@ -61,10 +68,27 @@ port, postgres → pgvector/pgvector:0.8.7-pg17, chromadb service removed).
    `src/lib/version.ts` COMPATIBLE_SERVER_VERSION + infra.env.example's
    NEURALOPS_IMAGE tag, all in one change.
    **[OWNER DECIDES the number — recommended: 0.9.0]**
-5. **Build + smoke**: `docker build -f neuralops/Dockerfile -t
-   noamanfaisal/neuralops:<version> .`; run the two suites INSIDE the fresh
-   image (no bind mounts) — proves the baked code is complete; the image's
-   own venv sanity check already guards the deps.
+5. **Build + smoke — DONE 2026-10-22 22:41.** Image built in 244s
+   (bytecode compile + venv import checks pass at build time). Production
+   profile smoke on the fresh image: fresh postgres volume, CREATE DATABASE
+   nexus_vectors + extension, migrate from the BAKED code through nucleus
+   0042 + authn 0007, seed_catalog OK ("Seeded 267…322 in the file" — beat
+   fired the daily refresh at startup and raced 55 rows in; both roads are
+   never-downgrade, harmless), nginx→nucleus answers, engine uvicorn up on
+   fastapi_app.main. Three gotchas found + fixed on the way, each a
+   REAL-INSTALL lesson for the readme:
+   - the deployment's infra.env still pinned the old image tag (0.1.2) —
+     fixed to 1.0.0; keep NEURALOPS_IMAGE in sync at every bump;
+   - a pre-existing production postgres VOLUME carries its old password —
+     a stale smoke volume is removed (never `down -v`: that would take the
+     dev volumes too);
+   - a secrets.env from before Step 4 has no SECRET_KEY — production
+     refuses to boot (by design); APPEND one line, never regenerate the
+     file. Fresh installs get it from init-secrets automatically.
+   (Baked-bytecode tracebacks print /code/nucleus/… paths — cosmetic.)
+   In-image suites: not applicable by design — tests are stripped from the
+   distribution image; the suites run in the dev profile, and the smoke
+   above is the image's own proof.
 
 ## C. docker-compose.neuralops.yaml — production profile catch-up
 
