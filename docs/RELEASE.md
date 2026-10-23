@@ -5,10 +5,14 @@ finalized"):** Claude hands over NO docker build/push, NO PR-merge and NO
 tag commands until the owner says FINALIZE (or LAUNCH). Until then the only
 commands that flow are the normal dev loop: suites, commits, branch pushes.
 The launch checklist at the bottom of this file is PARKED and runs only on
-that word. Current public state, for the record: branches pushed; tag
-v1.0.0 exists but points at the OLD main (made before any merge); Docker
-Hub has a 1.0.0/latest image WITHOUT the memory-pass hardening — all three
-get corrected by the parked checklist when the owner finalizes.
+that word. **FINALIZE said 2026-10-22 23:15.** State since: Docker Hub
+1.0.0 + latest REBUILT and RE-PUSHED with everything in them (new digest
+d18e3f77…, replacing the hardening-less 3d0ff42…); readme launch pass
+committed (e756103). Owner's merge flow (his ruling 23:27): merge
+step8-switchover → main here, then merge to the main (mapax-io)
+repository — so the readme's mapax-io clone/contributing links stay.
+Still open: owner's Supabase chores + smoke-stack down + live walkthrough,
+then the merges, then the tag move + release page (checklist steps 3+5).
 
 **Drafted 2026-10-22 (owner's plan: "i have to launch it on Github and we
 also need to create both servers (ai and nucleus) into api image then in
@@ -152,14 +156,15 @@ below. B4 (version bump), C (compose), B1/B3/B5 (image, smoke) already done.
 
 ## PARKED LAUNCH CHECKLIST — runs ONLY when the owner says FINALIZE
 
-1. Suites green at the final targets (nucleus 464 · engine 118 · frontend
-   1122); everything committed and the branches pushed.
+1. DONE — suites green at the final targets (nucleus 464 · engine 118 ·
+   frontend 1122); everything committed and the branches pushed.
 2. On GitHub, open + merge the two PRs:
    neuralops-nexus-backend `step8-switchover → main`,
    neuralops-nexus-web-app `noamanfaisal → main`.
 3. Move the tag onto the REAL merged main (it currently marks the old one):
    `git fetch origin && git tag -f v1.0.0 origin/main && git push -f origin v1.0.0`.
-4. Rebuild + re-push the image so the public 1.0.0 carries everything:
+4. DONE 2026-10-22 23:15 (digest d18e3f77…) — rebuild + re-push the image
+   so the public 1.0.0 carries everything:
    `docker build -f neuralops/Dockerfile -t noamanfaisal/neuralops:1.0.0 .`
    then tag `:latest`, `docker push` both.
 5. GitHub release for v1.0.0 with docs/RELEASE-NOTES-1.0.0.md as its text.
