@@ -4,8 +4,10 @@
 #
 # One shared image (`neuralops`) contains nucleus + nexus-ai + centrifugo +
 # the filesystem MCP — see neuralops/Dockerfile. Each is its own
-# service/container here, distinguished only by `command:`. Postgres, redis,
-# chromadb, and nginx stay separate, using their official images.
+# service/container here, distinguished only by `command:`. Postgres (the
+# pgvector build — it carries the vector store since Step 8a; chromadb is
+# gone from BOTH profiles), redis and nginx stay separate, using their
+# official images.
 #
 # Two profiles:
 #   production (default) — pulls the neuralops image from Docker Hub, no
@@ -194,30 +196,33 @@ services:
       - postgres
       - redis
 
+  # The REBUILT engine (Step 8's distribution half, done 2026-10-22 with the
+  # 1.0.0 release): fastapi_app.main, vectors on the SAME pgvector postgres
+  # nucleus uses (database nexus_vectors — created once at setup, see the
+  # readme). NO host port on purpose — the engine accepts nothing from
+  # outside; the internal key (secrets.env) is the second lock. Same rule as
+  # dev's nexus-ai-new.
   nexus-ai:
     image: ${NEURALOPS_IMAGE:-noamanfaisal/neuralops:latest}
     profiles: ["production"]
     container_name: neuralops-nexus-ai
-    # command: ["nexus-ai-env", "python3", "-m", "uvicorn", "apps.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    command: ["tail", "-f", "/dev/null"]
-    ports:
-      - "${NEXUS_AI_HOST_PORT:-8020}:8000"
+    command: ["nexus-ai-env", "python3", "-m", "uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
-      - neuralops_fastembed_cache:/home/nexus/.cache/fastembed
+      # The whole .cache (fastembed + huggingface), same as dev — without it
+      # every recreate re-downloads the embedding model.
+      - neuralops_fastembed_cache:/home/nexus/.cache
       - ./projects:/nexus/projects
     env_file:
       - ./neuralops/secrets.env
     environment:
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-fastembed}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
-      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
       - NEXUS_NUCLEUS_URL=http://nucleus:8000
+      # Empty URL = vectors off (embed endpoints answer 503) — a missing
+      # secrets.env shows up loudly, not silently. Same DSN shape as dev.
+      - NEXUS_VECTOR_DB_URL=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/nexus_vectors
     networks:
       - neuralops-network
     depends_on:
-      - chromadb
+      - postgres
       - nucleus
 
   centrifugo:
@@ -234,7 +239,13 @@ services:
       - redis
 
   postgres:
-    image: postgres:17-alpine
+    # pgvector/pgvector = official postgres 17 + the pgvector extension baked
+    # in — the engine's vector store lives here (database nexus_vectors).
+    # Swapped from postgres:17-alpine with the 1.0.0 release; same PG major,
+    # same data volume. An EXISTING deployment that upgrades needs the same
+    # one-time follow-ups dev did: REINDEX DATABASE (musl→glibc collation),
+    # then CREATE DATABASE nexus_vectors + CREATE EXTENSION vector in it.
+    image: pgvector/pgvector:0.8.7-pg17
     profiles: ["production"]
     container_name: neuralops-postgres
     restart: always
@@ -262,16 +273,10 @@ services:
     networks:
       - neuralops-network
 
-  chromadb:
-    image: chromadb/chroma:latest
-    profiles: ["production"]
-    container_name: neuralops-chromadb
-    environment:
-      - IS_PERSISTENT=TRUE
-    volumes:
-      - neuralops_chroma_data:/chroma/chroma
-    networks:
-      - neuralops-network
+  # chromadb is GONE from the production profile too (Step 8a: vectors live
+  # in pgvector postgres). The old neuralops_chroma_data volume is left
+  # defined below so an existing deployment's data is not orphaned silently;
+  # remove it by hand once an upgraded deployment is confirmed healthy.
 
   nginx:
     image: nginx:alpine

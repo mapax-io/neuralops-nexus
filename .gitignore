@@ -242,6 +242,12 @@ config.*.yaml
 config.*.toml
 .env
 *.env
+# *.env alone MISSED the backup spellings (secrets.env.back,
+# secrets.env.backup-YYYYMMDD) — found tracked 2026-10-22, pre-launch sweep.
+# Never commit anything that starts with secrets.env, whatever the suffix.
+neuralops/secrets.env*
+# Local suite captures — never repo content (found tracked, same sweep).
+test-output.txt
 
 # --- Go Internal & Junk ---
 # vendor/

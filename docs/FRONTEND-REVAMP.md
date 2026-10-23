@@ -789,6 +789,9 @@ targets now: **nucleus 464 · engine 117 passed/5 skipped · frontend 121
 files / 1122 tests · migrations through nucleus 0042 + authn 0007.** Live
 checks (four panes, no Keep/Remembered/Recall-checkbox, viewer posts,
 supervisor bias) pending the owner's next walkthrough.
+COMMITTED (owner, 2026-10-22 21:58): backend **f5a5d97** (35 files, +379
+−822), frontend **d40dfeb** (26 files, +54 −159). Unpushed on the backend:
+c62663f + f5a5d97 — push with the Stage 3 launch.
 
 ## 3. Removals
 

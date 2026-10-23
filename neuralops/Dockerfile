@@ -63,6 +63,39 @@ RUN pip install --no-cache-dir -r requirements.lock \
     --extra-index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir pytest==9.1.1 pytest-asyncio==1.4.0
 
+# ── Stage 2b: app code, compiled — the distribution half (1.0.0) ──────────
+# The release image CARRIES the code now (owner's plan, 2026-10-22): both
+# servers baked in, shipped as COMPILED BYTECODE — `compileall -b` then the
+# .py sources deleted — so the image holds no readable source while Django's
+# migration scan, celery's -A core import and uvicorn's module imports all
+# keep working exactly as from source. (Owner's first pick was Nuitka; the
+# bytecode road is the agreed working baseline — swapping THIS stage for a
+# Nuitka build is the only change needed if that experiment happens later.)
+# What never enters the image: tests, the .step0-removed/_attic parking lots,
+# dev docker files, pytest caches and reports. manage.py stays as source —
+# 20 boilerplate lines, and `manage.py migrate` is the documented setup step.
+FROM python:3.13-slim-bookworm AS code-builder
+COPY modules/nexus-nucleus /code/nucleus
+COPY modules/nexus-ai /code/ai
+RUN rm -rf \
+      /code/nucleus/.step0-removed \
+      /code/nucleus/docker \
+      /code/ai/tests \
+      /code/ai/trial-c \
+      /code/ai/docker \
+      /code/ai/.pytest_cache \
+      /code/ai/.vscode && \
+    rm -f /code/ai/test-output.txt /code/ai/pytest.ini \
+      /code/ai/requirements-dev.txt && \
+    find /code -type d -name "__pycache__" -exec rm -rf {} + && \
+    find /code/nucleus -name "tests.py" -delete && \
+    find /code/nucleus -name "tests_*.py" -delete
+# -b writes each module's .pyc BESIDE it (legacy layout — required once the
+# .py goes away); -q quiet; the find then strips every source file except
+# manage.py. A file that fails to compile fails the BUILD, loudly.
+RUN python -m compileall -b -q /code && \
+    find /code -name "*.py" ! -name "manage.py" -delete
+
 # ── Stage 3: centrifugo / nexus-transport binary ────────────────────────────
 # Same build this repo already uses for modules/nexus-transport/Dockerfile —
 # replicated here (not COPY --from an external image) so the whole neuralops
@@ -158,7 +191,7 @@ RUN groupadd -g $GID nexus && useradd -m -u $UID -g $GID -s /bin/bash nexus
 ENV SUPABASE_URL="https://xgfsxikypxjhqlutiepw.supabase.co" \
   SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhnZnN4aWt5cHhqaHFsdXRpZXB3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyNDg3MDcsImV4cCI6MjA5NzgyNDcwN30.2_OUNTHuKSeDJh6S-aUW16IqvDTmew8ZcFuKvFkt3Dk" \
   NEURALOPS_PORTAL_URL="https://neuralopsnexus.ai/add_code" \
-  NEURALOPS_VERSION="0.8.0"
+  NEURALOPS_VERSION="1.0.0"
 
 COPY --from=nucleus-builder /opt/venv/nucleus-env /opt/venv/nucleus-env
 COPY --from=transport-builder /app/nexus-transport /usr/local/bin/nexus-transport
@@ -187,14 +220,12 @@ RUN /opt/venv/nexus-ai-env/bin/python -c "import fastapi, sqlalchemy, pgvector, 
 # browser returns with the rebuilt engine's image in the distribution half.)
 
 
-# NO app code in the image (owner's ruling, 2026-10-15): this is the
-# dev/testing image — compose bind-mounts modules/nexus-nucleus →
-# /nexus/nucleus and modules/nexus-ai → /nexus/ai at container start, so
-# the containers always run the LIVE source from disk and a code change
-# never needs a rebuild (only a dependency change does). The two paths are
-# pre-created below so they exist with the right owner. The shipped/
-# distribution image gets its code another way (Nuitka — decided later,
-# Step 8's distribution half).
+# APP CODE IS IN THE IMAGE since 1.0.0 (Stage 2b above): the production
+# profile runs the baked bytecode with no source tree on the host. The DEV
+# profile keeps working unchanged — its bind mounts (modules/nexus-nucleus →
+# /nexus/nucleus, modules/nexus-ai → /nexus/ai) simply SHADOW the baked
+# code, so dev still runs live source and a dev code change still needs no
+# rebuild (only a dependency change does).
 
 # Shared project folders — filesystem MCP is pointed at a per-project
 # subfolder here (see readme's MCP section); mounted as an external volume
@@ -208,7 +239,9 @@ RUN /opt/venv/nexus-ai-env/bin/python -c "import fastapi, sqlalchemy, pgvector, 
 # as root-owned and fastembed's HuggingFace download fails with
 # "Permission denied" the first time nexus-ai actually tries to embed
 # something -- confirmed, this is exactly the bug that was hit.
-RUN mkdir -p /nexus/nucleus /nexus/ai /nexus/projects /nexus/logs/nucleus /nexus/logs/ai /home/nexus/.cache/fastembed && \
+COPY --from=code-builder /code/nucleus /nexus/nucleus
+COPY --from=code-builder /code/ai /nexus/ai
+RUN mkdir -p /nexus/projects /nexus/logs/nucleus /nexus/logs/ai /home/nexus/.cache/fastembed && \
   chown -R nexus:nexus /nexus /home/nexus/.cache
 
 COPY neuralops/entrypoint.sh /usr/local/bin/entrypoint.sh

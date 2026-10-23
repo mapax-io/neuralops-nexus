@@ -20,6 +20,23 @@ data/
 data/postgres_data
 data/chroma_data
 
+# Release-image hygiene (1.0.0): none of this may enter the build context —
+# the context is the repo root (see neuralops/Dockerfile), so this file is
+# the first fence; the code-builder stage's rm -rf is the second.
+docs/
+projects/
+portal/
+*.log
+test-output.txt
+neuralops/secrets.env*
+neuralops/app.env
+neuralops/infra.env
+modules/nexus-nucleus/.step0-removed/
+modules/nexus-ai/tests/
+modules/nexus-ai/.pytest_cache/
+modules/nexus-ai/trial-c/
+modules/neuralops-web-app/
+
 # Ignore other modules when building transport
 # modules/nexus-ai
 # modules/nexus-nucleus
