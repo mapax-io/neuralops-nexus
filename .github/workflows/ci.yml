@@ -1,0 +1,131 @@
+# Backend CI — runs the two backend suites on every PR and push to dev.
+#   nucleus : Django test runner (docs/TESTS.md §1)
+#   engine  : pytest, with the vector tests against a REAL pgvector postgres
+#             (a skipped vector test is a regression — the job fails on one)
+# The frontend suite lives in the web-app repo and has its own CI.
+# CI-only throwaway credentials below — nothing here is a real secret.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nucleus:
+    name: nucleus (Django)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg17
+        env:
+          POSTGRES_DB: neuralops
+          POSTGRES_USER: neuralops
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U neuralops"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DEBUG: "true"
+      SECRET_KEY: ci-only-not-a-secret
+      POSTGRES_DB: neuralops
+      POSTGRES_USER: neuralops
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://localhost:6379/0
+      INTERNAL_API_KEY: ci-only
+      CENTRIFUGO_API_KEY: ci-only
+      CENTRIFUGO_HMAC_SECRET: ci-only
+      PYTHONPATH: ${{ github.workspace }}/modules/nexus-nucleus
+    defaults:
+      run:
+        working-directory: modules/nexus-nucleus
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: modules/nexus-nucleus/docker/dev/requirements.txt
+      - name: Install dependencies
+        run: pip install -r docker/dev/requirements.txt
+      - name: Project folders root (settings.PROJECTS_ROOT is /nexus/projects, as in the image)
+        run: sudo mkdir -p /nexus/projects && sudo chown -R "$USER" /nexus
+      - name: Per-run field encryption key
+        run: echo "FIELD_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+      - name: Test suite
+        run: |
+          set +e
+          python manage.py test -v 1 --noinput > test-output.txt 2>&1
+          rc=$?
+          tail -5 test-output.txt
+          if [ $rc -ne 0 ]; then
+            # Surface failing tests as annotations (visible on the PR without opening logs).
+            grep -E "^(FAIL|ERROR):" test-output.txt | head -40 | while read -r line; do echo "::error title=nucleus test::$line"; done
+            grep -E "^[A-Za-z_.]*(Error|Exception|ImproperlyConfigured)[:(]" test-output.txt | sort | uniq -c | sort -rn | head -10 | while read -r line; do echo "::error title=nucleus error::$line"; done
+            echo "::error title=nucleus summary::$(tail -3 test-output.txt | tr '\n' ' ')"
+          fi
+          exit $rc
+
+  engine:
+    name: engine (nexus-ai)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg17
+        env:
+          POSTGRES_DB: nexus_vectors
+          POSTGRES_USER: neuralops
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U neuralops"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEXUS_VECTOR_DB_URL: postgresql+psycopg2://neuralops:ci-only-password@127.0.0.1:5432/nexus_vectors
+    defaults:
+      run:
+        working-directory: modules/nexus-ai
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: modules/nexus-ai/requirements.lock
+      - name: Install dependencies (same lock + CPU torch index as the image)
+        run: |
+          pip install -r requirements.lock --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install pytest==9.1.1 pytest-asyncio==1.4.0
+      - name: Enable pgvector
+        run: |
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          PGPASSWORD=ci-only-password psql -h 127.0.0.1 -U neuralops -d nexus_vectors -c "CREATE EXTENSION IF NOT EXISTS vector;"
+      - name: Test suite
+        run: |
+          python -m pytest tests/ -q -rs 2>&1 | tee pytest-output.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Fail if any vector test skipped
+        run: |
+          if grep -q "vector db unreachable" pytest-output.txt; then
+            echo "::error::vector tests skipped — pgvector was not reachable"; exit 1
+          fi

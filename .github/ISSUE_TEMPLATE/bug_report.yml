@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in NeuralOps Nexus doesn't work the way it should.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+        **Security problem?** Don't file it here — use the Security tab → "Report a vulnerability" (see SECURITY.md).
+        **Never paste API keys, secrets.env contents or personal data** into an issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+      placeholder: "I @mentioned a persona with the filesystem MCP tool and …"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a project …
+        2. Add persona …
+        3. Send …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / image tag
+      description: The image tag you're running, or NEURALOPS_VERSION.
+      placeholder: "noamanfaisal/neuralops:1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Install / self-hosting
+        - Chat & personas
+        - MCP tools / gateway
+        - Chains & supervisor
+        - Scheduling
+        - Rights & roles
+        - Knowledge / search
+        - Web UI
+        - Other
+  - type: input
+    id: provider
+    attributes:
+      label: Model provider(s)
+      placeholder: "OpenAI gpt-4o-mini, Ollama llama3.1, …"
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Host OS, Docker / Compose version, CPU arch (amd64 / arm64), anything unusual about the deployment.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output from `docker compose logs <service>`, with keys and personal data removed.
+      render: shell
