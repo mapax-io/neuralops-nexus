@@ -67,6 +67,8 @@ jobs:
           cache-dependency-path: modules/nexus-nucleus/docker/dev/requirements.txt
       - name: Install dependencies
         run: pip install -r docker/dev/requirements.txt
+      - name: Project folders root (settings.PROJECTS_ROOT is /nexus/projects, as in the image)
+        run: sudo mkdir -p /nexus/projects && sudo chown -R "$USER" /nexus
       - name: Per-run field encryption key
         run: echo "FIELD_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
       - name: Test suite
