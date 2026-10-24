@@ -1,0 +1,5 @@
+# Shows the "Sponsor" button on the repo page.
+# Merge only AFTER the mapax-io GitHub Sponsors profile is approved and live —
+# before that the button points at a page that doesn't exist yet.
+# Sponsorships are received by NeuralOps Nexus AI Inc.
+github: [mapax-io]
