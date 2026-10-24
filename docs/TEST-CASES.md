@@ -41,7 +41,8 @@ walkthrough of everything changed since the 2026-10-21/22 pass)
 
 Run on the DEV stack (hard-reload the frontend first). Record each as
 PASS / FAIL + a note. Covers: Stage 2 removals, the two ruled fixes, the
-memory-pass hardening, and the 1.0.0 version stamp.
+memory-pass hardening, and the 1.0.0 version stamp. **Click-by-click
+steps + a results table: docs/UI-WALKTHROUGH-1.0.0.md.**
 
 **TC-R1 — Pane rail is four panes.** Open any topic. The right rail offers
 exactly: Topics, Context, Schedules, Project. No Recall pane, no
