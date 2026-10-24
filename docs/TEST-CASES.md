@@ -36,6 +36,70 @@ the chain supervisor's verdict prompt has a pass-unless-broken bias.
 
 ---
 
+## RELEASE 1.0.0 UI VERIFICATION PASS (added 2026-10-23 — the owner's live
+walkthrough of everything changed since the 2026-10-21/22 pass)
+
+Run on the DEV stack (hard-reload the frontend first). Record each as
+PASS / FAIL + a note. Covers: Stage 2 removals, the two ruled fixes, the
+memory-pass hardening, and the 1.0.0 version stamp.
+
+**TC-R1 — Pane rail is four panes.** Open any topic. The right rail offers
+exactly: Topics, Context, Schedules, Project. No Recall pane, no
+Deliverables pane, no empty slot or broken icon where they were.
+
+**TC-R2 — Keep is gone.** Hover/open the actions on several persona
+replies (old AND new ones). No Keep button anywhere; no keep-dialog can be
+reached. Old topics that had kept deliverables render their messages
+normally.
+
+**TC-R3 — Remembered chip is gone.** Scroll an OLD topic whose replies
+used to show "Remembered N things". No chip on any message, old or new,
+and the messages render cleanly (no gap or error where the chip sat).
+
+**TC-R4 — Persona dialogs lost the Recall toggle.** Open BOTH the add-
+persona and edit-persona dialogs. No Recall checkbox/switch anywhere. The
+seat order is intact: Model → Router → Deep → Fallbacks → Advisor; save
+still works.
+
+**TC-R5 — A viewer can post.** Invite (or use) a viewer-only member in a
+topic. As them: the composer IS shown (no read-only banner), a plain
+text message posts and appears for everyone; then @mention a persona — the
+persona call is REFUSED with the worded error; the plain message flow
+keeps working after the refusal.
+
+**TC-R6 — Supervisor passes decent work.** Run a chain with a supervisor
+where a stage's reply does the job but is worded/structured differently
+than the supervisor persona would have done it. Expect APPROVE (style is
+never a defect). Then force a real defect (e.g. a stage instructed to
+output JSON returns prose) — expect REDO with a concrete note naming the
+fixable problem, not a vague one.
+
+**TC-R7 — Transcripts are never stored as memory.** In a topic, have a
+persona run a real command (run_command, approve the tool). Let the
+memory pass run (end of reply). Then in a NEW topic ask the same persona
+"what did we run earlier / what was the result?" Expect: the reply speaks
+from memory IN SUMMARY form and SAYS it's remembered material — it must
+NOT print a $-prefixed transcript or present the old output as a freshly
+run command (no tool row = no fresh run claimed). The fabricated-date
+replay from the 2026-10-22 finding must be impossible to reproduce.
+
+**TC-R8 — Retrieval announces itself.** Continue a topic with enough
+history that retrieval kicks in (reference work from many messages back).
+The persona may use remembered material, but when it does, it attributes
+it ("from our earlier work…" or similar) and never passes it off as the
+output of a tool it just ran in this reply.
+
+**TC-R9 — Version 1.0.0 everywhere.** The web app shows version 1.0.0
+(about/footer); the server reports 1.0.0; no "server too old" or
+compatibility warning appears anywhere in normal use.
+
+**TC-R10 — Nothing else regressed (10-minute sweep).** One pass over the
+daily flow: send a message, @mention a persona with a tool call + approval
+card, an output directive (@chart or @table), open Schedules, open the
+Project pane/files, check the topic cost line updates. All as before.
+
+---
+
 ## Progress — owner's pass, evening of 2026-10-21
 
 Done and PASSED: TC-01 (wipe + migrate; 0041 pending confirm), TC-03 (claim,
