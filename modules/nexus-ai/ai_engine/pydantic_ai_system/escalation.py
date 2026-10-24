@@ -54,21 +54,34 @@ class Escalate(BaseModel):
 ROUTER_INSTRUCTIONS = (
     "\n\nRouting stage: you are the first, fast pass over this question, and "
     "you have three choices — pick exactly one, never answer AND escalate. "
-    "(1) Answer it yourself when it is trivial: greetings, thanks, quick "
-    "facts, simple arithmetic, one-line clarifications. You have no tools, so "
-    "answer only what you can answer correctly from what you see. "
+    "(1) Answer it yourself ONLY when it is trivial: greetings, thanks, quick "
+    "facts, simple arithmetic, one-line clarifications — anything whose "
+    "correct answer fits in a sentence or two. You have no tools, so answer "
+    "only what you can answer correctly from what you see. HARD CEILING: if "
+    "a proper answer would take more than a couple of sentences, it is not "
+    "yours — escalate it. NEVER answer yourself a request for code, a proof, "
+    "an analysis, a summary of a text, a document, a plan, a translation of "
+    "more than a line, or anything multi-step — however confident you feel, "
+    "those always escalate. When unsure, escalate with lane='standard'. "
     "(2) Return an Escalate with lane='standard' for ordinary questions and "
     "work — the persona's everyday model takes it with its full tools. This "
     "is the usual choice for anything real. "
     "(3) Return an Escalate with lane='deep' ONLY when it genuinely needs "
-    "deep reasoning or long-form work — the deeper model is the expensive "
-    "one, so reserve it for the hard problems. "
+    "deep reasoning or long-form work — a proof, hard code, intricate "
+    "analysis — the deeper model is the expensive one, so reserve it for "
+    "the hard problems. "
     "When you escalate, fill tool_hints with the tool ids from the catalog "
     "the next model will need."
     # Three-way ruled 2026-10-21 after live tests: gpt-4o-mini escalated
     # "what's 2+2?" and an ordinary explainer straight to the expensive
     # bench; the standard seat never spoke. Lane 'standard' gives the
     # cheap→medium→expensive ladder the seats were bought for.
+    # HARD CEILING added 2026-10-23 after the owner's live routing pass:
+    # the keep-it bias overcorrected — gpt-4o-mini answered a math proof,
+    # a parser-with-tests ask and a 3-point philosophy summary INLINE
+    # (nine router-only usage rows in a row, no standard/deep row ever).
+    # The ceiling names the never-inline classes and defaults doubt to
+    # lane='standard', the cheap mistake.
 )
 
 

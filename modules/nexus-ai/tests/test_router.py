@@ -272,6 +272,12 @@ async def test_r10_lane_standard_sends_ordinary_work_to_the_everyday_model(harne
     import json as _json
     router_blob = _json.dumps(harness.provider.requests[0])
     assert "lane='standard'" in router_blob and "lane='deep'" in router_blob
+    # … and the HARD CEILING (added 2026-10-23 after the live pass showed
+    # gpt-4o-mini answering a math proof and a parser inline): the never-
+    # inline classes and the when-unsure default must reach the router.
+    assert "HARD CEILING" in router_blob
+    assert "NEVER answer yourself" in router_blob
+    assert "When unsure, escalate with lane='standard'" in router_blob
     records = await harness.wait_for_usage(2)
     assert [r["role"] for r in records] == ["ROUTER", "STANDARD"]
 
