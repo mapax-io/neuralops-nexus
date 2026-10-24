@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest something NeuralOps Nexus should do.
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open-ended ideas and questions fit better in Discussions; use this for a concrete proposal.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+      placeholder: "Our team wants personas to … but right now …"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: How it could work, from your team's point of view.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / workarounds
+      description: Anything you've tried, or other tools that do this well.
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to work on it?
+      options:
+        - "No — just suggesting"
+        - "Yes, with some guidance"
+        - "Yes, I can open a PR"

@@ -1,5 +1,10 @@
 # NeuralOps Nexus
 
+[![CI](https://github.com/mapax-io/neuralops-nexus/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/mapax-io/neuralops-nexus/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mapax-io/neuralops-nexus?label=release)](https://github.com/mapax-io/neuralops-nexus/releases/latest)
+[![Docker pulls](https://img.shields.io/docker/pulls/noamanfaisal/neuralops)](https://hub.docker.com/r/noamanfaisal/neuralops)
+[![License: Source Available 1.0](https://img.shields.io/badge/license-Source%20Available%201.0-blue)](./LICENSE)
+
 A self-hosted team workspace where every conversation can pull in an AI
 persona — a plain LLM, or one with real tools (MCP servers) — right in the
 chat. Projects → Channels → Topics, human members and AI personas side by
@@ -173,8 +178,8 @@ the baked-in copies with `--reload` — edits apply live, and it is the SAME
 image and code paths self-hosters run, so bugs reproduce faithfully.
 
 ```bash
-git clone git@github.com:mapax-io/neuralops-nexus-backend.git
-cd neuralops-nexus-backend
+git clone git@github.com:mapax-io/neuralops-nexus.git
+cd neuralops-nexus
 git checkout dev
 
 cp neuralops/infra.env.example neuralops/infra.env     # set COMPOSE_PROFILES=dev
@@ -244,13 +249,16 @@ instructions).
 
 ### Contributing
 
-Fork [mapax-io/neuralops-nexus-backend](https://github.com/mapax-io/neuralops-nexus-backend)
+Fork [mapax-io/neuralops-nexus](https://github.com/mapax-io/neuralops-nexus)
 (uncheck "Copy only the main branch"), branch off `dev` as `feature/<name>`,
 open a PR against **`dev`** with a full description. Read
 `docs/CHANGE-PROMPT.md` first — it is the contract for how changes are made
 (design discussed and recorded, acceptance tests with every change, nothing
 merged unverified). See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and
 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
+
+Found a security problem? Please report it privately — see
+[`SECURITY.md`](./SECURITY.md).
 
 > **Branch notice:** `dev` is the active development branch — clone and
 > build from it. `master`/`main` may lag behind.
