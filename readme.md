@@ -268,6 +268,12 @@ it, you can support development through
 straight into the roadmap (AI audit log, backup & restore, connector tiles).
 Starring the repo and telling us how you use it helps too.
 
+#### Sponsors
+
+<!-- Company tier ($500/mo): logo here. Team tier ($100/mo): name + link here. -->
+*Be the first —
+[become a sponsor](https://github.com/sponsors/mapax-io).*
+
 > **Branch notice:** `dev` is the active development branch — clone and
 > build from it. `master`/`main` may lag behind.
 
