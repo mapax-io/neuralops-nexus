@@ -59,8 +59,8 @@ jobs:
       run:
         working-directory: modules/nexus-nucleus
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -70,7 +70,18 @@ jobs:
       - name: Per-run field encryption key
         run: echo "FIELD_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
       - name: Test suite
-        run: python manage.py test -v 1 --noinput
+        run: |
+          set +e
+          python manage.py test -v 1 --noinput > test-output.txt 2>&1
+          rc=$?
+          tail -5 test-output.txt
+          if [ $rc -ne 0 ]; then
+            # Surface failing tests as annotations (visible on the PR without opening logs).
+            grep -E "^(FAIL|ERROR):" test-output.txt | head -40 | while read -r line; do echo "::error title=nucleus test::$line"; done
+            grep -E "^[A-Za-z_.]*(Error|Exception|ImproperlyConfigured)[:(]" test-output.txt | sort | uniq -c | sort -rn | head -10 | while read -r line; do echo "::error title=nucleus error::$line"; done
+            echo "::error title=nucleus summary::$(tail -3 test-output.txt | tr '\n' ' ')"
+          fi
+          exit $rc
 
   engine:
     name: engine (nexus-ai)
@@ -93,8 +104,8 @@ jobs:
       run:
         working-directory: modules/nexus-ai
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
