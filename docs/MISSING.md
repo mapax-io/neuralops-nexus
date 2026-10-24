@@ -49,20 +49,22 @@ engine requirements.lock at next image build (7c); `seed_catalog
 --regenerate` + commit as the release's catalog snapshot.
 
 **Stage 4 — post-release build queue (details in "Post-test build queue"
-below; order = Claude's suggestion, owner may reorder):**
-1. Connector tiles with icons (GitHub, graph-DB context, Atlassian, AWS,
-   Google, draw.io/charts) — smallest, most visible; OAuth2 flow exists.
-2. AI audit log — owner/admin opens any reply's full anatomy (query,
-   retrieval hits, prompt, history, response, cost) + "investigate with a
-   model" from inside the viewer.
-3. Setup copilot (internal ADMIN MCP) — personas get tools to register
-   models, create personas, add MCP servers, invite users; approval-gated,
-   caller's-rights-only. Benefits from 2 existing (every AI-made change is
-   auditable).
-4. Backup & restore — one-command dump (DB + media, secrets.env excluded)
-   and restore onto a fresh install.
-5. File viewer pane — browse/download/upload + "run as HTML server"
-   (security ruling first).
+below). SCHEDULE AGREED 2026-10-23 evening (owner: "i need these things to
+be done asap"; each item ships as its own point release when done, the
+owner verifying daily):**
+1. **Week of Oct 26–30 → 1.1.0:** Chains rework v2, all remaining 5 parts
+   (rename, query input, @ChainName invocation, model-only steps, role
+   labels — supervisor bias already shipped in 1.0.0).
+2. **Week of Nov 2–6 → 1.2.0:** Connector tiles with icons (owner's 8-
+   service list; OAuth2 flow exists) + MCP suggest-attach option 2 +
+   FREE-LLM ONBOARDING parts 1–2 (catalog presets + configure-channel
+   helper — full entry below).
+3. **Week of Nov 9–13 → 1.3.0:** AI audit log (full reply anatomy +
+   "investigate with a model") + backup & restore (one-command dump, DB +
+   media, secrets.env excluded; restore onto a fresh install).
+4. **Week of Nov 16–20 → 1.4.0:** Setup copilot admin tools (the owner's
+   11-tool gateway list) + the secure key card + free-LLM one-click
+   connects + file viewer pane (security ruling first).
 
 Still parked (unchanged): local login UI, gateway mint-for-others,
 delegation/tool_access/approval_scope toggles, portal guess-brake,
@@ -473,6 +475,44 @@ lesson 14) and rebuild the image — fold into the next image build.
   bias). Also warn in the UI when the supervisor is also a step persona.
   Inline ad-hoc chains (@chain "@A @B" "query") SKIPPED for v1 — fragile;
   a saved chain + query gives the same power.
+- **FREE-LLM ONBOARDING — RULED (owner, 2026-10-23 evening; full work
+  order with hard rules lives in the owner's private project doc
+  free-llm-onboarding-prompt — business/credits tracks stay OUT of this
+  public repo).** Goal: "install NeuralOps, talk to a model in 2 minutes,
+  for $0" — each user brings their own FREE-TIER key; NeuralOps never
+  ships, shares or pays for a key. Four build parts:
+  (1) **"Free to start" presets in the CATALOG** (seed_catalog data, not
+  prompt text): one row per provider — GitHub Models (OpenAI-compatible,
+  GitHub token), Google Gemini free tier, Groq, OpenRouter :free, Mistral,
+  Cerebras, Ollama (local; no key — flagged as the private option) — each
+  with provider type, API base, recommended model ids, the provider's
+  key-page URL, a rate-limit note and a data-usage note. UI: tiles in
+  /add-model with everything prefilled except the key. A dead free tier is
+  fixed by a catalog refresh, never a prompt edit.
+  (2) **Configure-channel HELPER persona**: walks a new user from zero to
+  a working model — triage (cloud or local? which accounts exist?), exact
+  per-provider key steps, honesty notes (rate limits; some free tiers may
+  train on data; Ollama is the private path), then hands off to the
+  prefilled /add-model dialog (and to part 3's tool once it exists). Its
+  provider knowledge comes from the catalog presets, never hardcoded.
+  (3) **register_model via the setup-copilot gateway tools + a SECURE KEY
+  CARD** (first slice of the setup-copilot entry below): the tool
+  PROPOSES; an approval card carries a write-only secret field — the key
+  is typed ON THE CARD, verified with the provider (the Check path),
+  stored encrypted, never echoed; message history records only "model X
+  registered". A raw key must never travel through a chat message (chat
+  lands in DB/history/memory). Rights: approver needs model management;
+  card expiry follows the 24h rule.
+  (4) **One-click connects**: "Connect OpenRouter" via OpenRouter's
+  official OAuth PKCE (app obtains a user-scoped key on consent — reuses
+  the MCP OAuth plumbing); GitHub Models via a GitHub OAuth app IF a
+  non-PAT token proves out at build time, else the guided-PAT path stays.
+  HARD RULES (none bend): no shared/baked key ever; no automated account
+  registration or consent-clicking — the human clicks every consent and
+  approves every card; keys never in chat; honest rate-limit/data-usage
+  wording. Parts 1–2 build in the Nov 2–6 week; parts 3–4 ride the setup-
+  copilot week.
+
 - **MCP suggest-attach — RULED (owner, 2026-10-22 17:34: "option 2").** The
   persona may SEE the names + descriptions of the project's other MCP
   servers — never their tools, never a call — just enough to say "this
