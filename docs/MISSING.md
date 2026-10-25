@@ -48,6 +48,50 @@ device-verify function, test-install-1 phone_home_events row); regenerate
 engine requirements.lock at next image build (7c); `seed_catalog
 --regenerate` + commit as the release's catalog snapshot.
 
+**EASY INSTALL + FREE TRIAL — RULED (owner, 2026-10-24 19:48: "lets do it
+phase by phase, a single click installer on linux terminal (whether using
+dpkg, docker whatever) / a click to host it for server for 1 hour … this
+thing we need to do immediately"). TOP OF STAGE 4, ahead of chains v2** —
+the owner's reason: "this is the biggest blocker, that normal people wont
+even try it". Full design + open rulings: the owner's private project doc
+easy-install-and-free-trial-plan.
+- **Phase 1 — one-command Linux installer: BUILT 2026-10-24, pending the
+  owner's fresh-server proof run.** Mechanism (owner left it to Claude): a
+  bash installer over the SAME production compose stack that smoke-passed
+  2026-10-22 — no new image, nothing to push. `install.sh` (repo root):
+  checks Linux/x86_64/memory/disk, installs Docker if missing (asks), asks
+  ONE question (domain → Caddy automatic HTTPS, or no domain → Cloudflare
+  quick tunnel, no account), fetches the compose file + nginx config,
+  writes infra/app env, generates secrets ONCE (never regenerated — the
+  2026-10-24 stale-password lesson), chowns projects to 1000, starts the
+  stack, creates nexus_vectors + the vector extension, runs migrate /
+  seed_permissions / seed_catalog, restarts the workers, waits for the API,
+  prints the address + the claim steps. Installs `neuralops`
+  (neuralops/neuralops-cli.sh): status / address / update [ver] (backs up
+  first, re-fetches compose + nginx + itself, migrates) / backup (pg_dumpall
+  + secrets + projects tarball; RESTORE stays the Stage 4 backup item) /
+  logs / restart / stop / start / uninstall (data kept unless the person
+  types DELETE; volumes removed by NAME, never `down -v`). Tunnel installs
+  get a boot-time systemd unit that re-syncs the changed address. Re-running
+  the installer over an install stops and points at `neuralops update`.
+  Lint: shellcheck clean (all severities). COMPOSE fixes found on the way
+  (production profile, affect every install, not just the installer):
+  nucleus / nexus-ai / centrifugo had NO restart policy (app stayed down
+  after a reboot) → `unless-stopped`; postgres + redis (no password) were
+  published on all interfaces (internet-reachable on a VPS, past the host
+  firewall) → bound to 127.0.0.1 by default (POSTGRES_BIND / REDIS_BIND to
+  override); nginx bind made configurable (NGINX_BIND, installer sets
+  127.0.0.1); new `caddy` (profile https) and `cloudflared` (profile
+  tunnel) services. The all-in-one single-container image (plan Phase A)
+  is DEFERRED as an optimization the installer can switch to later — the
+  compose-based installer reaches "one command" today with no new image.
+  Fetch source: defaults to mapax-io/neuralops-nexus main (works once the
+  release is merged there); NEURALOPS_RAW=file:///<clone> tests from a
+  local checkout.
+- **Phase 2 — free 1-hour trial ("Try it"): NEXT.** Rulings still open
+  before the build: D1 containers-on-a-trial-host vs VM-per-trial; limits
+  (60 min / one per account / max concurrent / AI spend cap).
+
 **Stage 4 — post-release build queue (details in "Post-test build queue"
 below). SCHEDULE AGREED 2026-10-23 evening (owner: "i need these things to
 be done asap"; each item ships as its own point release when done, the

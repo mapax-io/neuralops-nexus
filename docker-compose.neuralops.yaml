@@ -130,6 +130,9 @@ services:
     profiles: ["production"]
     container_name: neuralops-nucleus
     command: ["nucleus-env", "uvicorn", "core.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    # Comes back by itself after a reboot (it had no restart policy before
+    # 2026-10-24 — the database returned after a reboot, the app did not).
+    restart: unless-stopped
     volumes:
       # Same bind mount nexus-ai uses -- nucleus creates each project's
       # subfolder here (settings.PROJECTS_ROOT), nexus-ai is what actually
@@ -207,6 +210,7 @@ services:
     profiles: ["production"]
     container_name: neuralops-nexus-ai
     command: ["nexus-ai-env", "python3", "-m", "uvicorn", "fastapi_app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
     volumes:
       # The whole .cache (fastembed + huggingface), same as dev — without it
       # every recreate re-downloads the embedding model.
@@ -230,6 +234,7 @@ services:
     profiles: ["production"]
     container_name: neuralops-centrifugo
     command: ["centrifugo", "nexus-transport", "--admin.enabled", "--admin.insecure", "--client.insecure", "--http_api.insecure"]
+    restart: unless-stopped
     env_file:
       - ./neuralops/secrets.env
       - ./neuralops/app.env
@@ -254,8 +259,12 @@ services:
     environment:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
+    # Host port bound to THIS machine only by default (2026-10-24): on an
+    # internet-facing server a published database port is reachable by
+    # anyone, and Docker's published ports bypass the host firewall. Set
+    # POSTGRES_BIND=0.0.0.0 in infra.env only if you truly need remote access.
     ports:
-      - "${POSTGRES_HOST_PORT:-5495}:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_HOST_PORT:-5495}:5432"
     volumes:
       - neuralops_postgres_data:/var/lib/postgresql/data
     networks:
@@ -266,8 +275,9 @@ services:
     profiles: ["production"]
     container_name: neuralops-redis
     restart: unless-stopped
+    # This machine only, same reason as postgres — and redis has no password.
     ports:
-      - "${REDIS_HOST_PORT:-6395}:6379"
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_HOST_PORT:-6395}:6379"
     volumes:
       - neuralops_redis_data:/data
     networks:
@@ -283,8 +293,11 @@ services:
     profiles: ["production"]
     container_name: neuralops-nginx
     restart: unless-stopped
+    # NGINX_BIND: 0.0.0.0 (default) serves the LAN; the one-command installer
+    # sets 127.0.0.1 because caddy / cloudflared below front it over the
+    # Docker network and nothing else should reach it in the clear.
     ports:
-      - "${NGINX_HOST_PORT:-8095}:80"
+      - "${NGINX_BIND:-0.0.0.0}:${NGINX_HOST_PORT:-8095}:80"
     volumes:
       - ./neuralops/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
@@ -292,6 +305,45 @@ services:
     depends_on:
       - nucleus
       - centrifugo
+
+  # ── One-command installer (install.sh, 2026-10-24) — how the outside world
+  # reaches nginx. Exactly one of these two is switched on per install, by
+  # adding its profile next to "production" (install.sh writes the choice).
+  #
+  # https: the server has a domain → Caddy fetches and renews a real
+  # certificate by itself (ports 80 + 443) and passes everything to nginx,
+  # websockets included. NEURALOPS_DOMAIN comes from infra.env.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    container_name: neuralops-caddy
+    restart: unless-stopped
+    command: ["caddy", "reverse-proxy", "--from", "${NEURALOPS_DOMAIN:-localhost}", "--to", "nginx:80"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - neuralops_caddy_data:/data
+      - neuralops_caddy_config:/config
+    networks:
+      - neuralops-network
+    depends_on:
+      - nginx
+
+  # tunnel: no domain → a Cloudflare quick tunnel gives a free
+  # https://<random>.trycloudflare.com address with no account. Meant for
+  # trying NeuralOps: the address changes when this container restarts, and
+  # `neuralops address` (run at boot by a systemd unit) re-syncs it.
+  # No depends_on on purpose: install.sh starts it ALONE first, because the
+  # address must be known before nucleus starts.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    container_name: neuralops-cloudflared
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--url", "http://nginx:80"]
+    networks:
+      - neuralops-network
 
   # ===========================================================================
   # DEV profile — image built locally, app code bind-mounted over the baked-in
@@ -623,6 +675,8 @@ volumes:
   neuralops_redis_data:
   neuralops_chroma_data:
   neuralops_fastembed_cache:
+  neuralops_caddy_data:
+  neuralops_caddy_config:
   neuralops_postgres_data_dev:
   neuralops_redis_data_dev:
   neuralops_fastembed_cache_new:
