@@ -9,6 +9,8 @@ Status markers: **BUILT** = exists in the repo · **TO BUILD** = designed here, 
 
 Record of rulings: docs/MISSING.md (Stage 4, top — "EASY INSTALL"). Owner's reason for all of it: *"this is the biggest blocker, that normal people wont even try it."*
 
+**Who builds it (owner, 2026-10-25):** the owner's developer, from the work list in **docs/EASY-INSTALL-TASKS.md** (exact behaviour, files, proof per task). This document is the background and design.
+
 ---
 
 # STEP 1 — The one-command installer
@@ -81,7 +83,7 @@ Docker volumes (data that survives updates): `neuralops_neuralops_postgres_data`
 | `NEURALOPS_IMAGE_REPO` | `noamanfaisal/neuralops` | Docker image name |
 | `NEURALOPS_MODE` | (asked) | `tailscale` or `domain` — skips the question |
 | `NEURALOPS_DOMAIN` | (asked) | The domain, for `domain` mode |
-| `NEURALOPS_TS_REACH` | `funnel` | TO BUILD — `funnel` (anyone with the link) or `serve` (only your Tailscale devices). **DECISION** on the default |
+| `NEURALOPS_TS_REACH` | `funnel` | TO BUILD — `funnel` (anyone with the link, the ruled default) or `serve` (only your Tailscale devices) |
 | `NEURALOPS_TS_AUTHKEY` | (none) | TO BUILD — a Tailscale auth key, for unattended Tailscale installs (no login link) |
 | `NEURALOPS_YES` | (empty) | `1` = never ask; take every default (unattended) |
 
@@ -183,7 +185,7 @@ Why: a local machine sits behind a router; nobody outside can reach it. Tailscal
 3. Publishes NeuralOps:
    - **Funnel** (anyone with the link): `tailscale funnel --bg 8095` → `https://<machine>.<tailnet>.ts.net` forwards to nginx on `127.0.0.1:8095`. The first time on an account, Tailscale prints a second link to allow Funnel — the installer shows it the same way and waits.
    - **Serve** (only the person's own Tailscale devices): `tailscale serve --bg 8095`.
-   - **DECISION:** which is the default. Lean: Funnel — teammates then install nothing.
+   - **RULED (owner, 2026-10-25): Funnel is the default** — teammates then install nothing; `serve` stays available as a setting.
 4. Reads the address from `tailscale status --json` (the machine's own DNS name, trailing dot removed) → writes it into `app.env`.
 5. Tailscale runs **on the machine itself** (not in a container): it already starts at boot, and the address never changes — no re-sync needed.
 
@@ -459,7 +461,7 @@ A fourth cloud later (DigitalOcean, Hetzner) = one more file in `clouds/`.
 
 ## Decisions open
 
-1. **Tailscale reach (Step 1):** Funnel — anyone with the link, teammates install nothing (*lean*) — or Serve — only your own Tailscale devices.
+1. ~~**Tailscale reach (Step 1)**~~ — RULED 2026-10-25: **Funnel** (anyone with the link) by default.
 2. **Demo length (Step 2):** 1 hour, or longer for a requested demo.
 3. **Demo content:** empty + a ready model (A) or a ready team (B).
 4. **Maximum demos at once.**

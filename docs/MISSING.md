@@ -88,9 +88,19 @@ easy-install-and-free-trial-plan.
   Fetch source: defaults to mapax-io/neuralops-nexus main (works once the
   release is merged there); NEURALOPS_RAW=file:///<clone> tests from a
   local checkout.
-- **Phase 2 — free 1-hour trial ("Try it"): NEXT.** Rulings still open
-  before the build: D1 containers-on-a-trial-host vs VM-per-trial; limits
-  (60 min / one per account / max concurrent / AI spend cap).
+- **RULINGS 2026-10-25:** the installer's no-domain path is **Tailscale
+  Funnel** (anyone with the link; `serve` as a setting) — the Cloudflare
+  quick tunnel is dropped; a half-finished install must RESUME (`.installed`
+  marker). Step 2 is NOT a self-serve trial but **one-click demo servers for
+  people who request a demo**: we create a cloud server (AWS / Google /
+  Azure, on free startup credits), the installer runs unattended, and
+  `create_owner --email <requester>` reserves ownership for that verified
+  email; each server deletes itself at the end. The demo tool is **Python in
+  a separate PRIVATE repo** (`neuralops-demo`); the installer stays bash.
+  **Built by the owner's developer** from docs/EASY-INSTALL-TASKS.md (tasks
+  1.1–1.5, 2.1–2.8, each with exact behaviour + proof); design in
+  docs/EASY-INSTALL.md. Open: demo length, demo content, max demos at once,
+  DNS provider, how the link is sent, first cloud.
 
 **Stage 4 — post-release build queue (details in "Post-test build queue"
 below). SCHEDULE AGREED 2026-10-23 evening (owner: "i need these things to
