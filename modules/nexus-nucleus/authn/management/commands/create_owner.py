@@ -46,7 +46,10 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from authn.portal import PortalError, poll_device_code, request_device_code
-from authn.services import SetupError, claim_install, server_needs_owner
+from authn.services import (
+    SetupError, claim_install, get_owner_reservation,
+    server_needs_owner, set_owner_reservation,
+)
 from authn.supabase import SupabaseTokenError, verify_supabase_token
 
 # The public app users sign in at. Env-overridable so a self-hosted or local
@@ -80,6 +83,12 @@ class Command(BaseCommand):
             help="Prove identity with email+password or a pasted access token "
                  "instead of the code flow (fallback when the portal is unreachable).",
         )
+        parser.add_argument(
+            "--email",
+            type=str,
+            default="",
+            help="Reserve this server for this email as its first owner.",
+        )
 
     def handle(self, *args, **options):
         from nucleus.models import Company
@@ -94,6 +103,36 @@ class Command(BaseCommand):
                     f"\n  ✗ This server already has an owner: {company.owner.email}\n"
                     f"    Company: {company.name}\n\n"
                     f"  If you need to transfer ownership, contact support.\n"
+                )
+            )
+            print_divider()
+            sys.exit(1)
+
+        # ── Email reservation mode (demo servers — Task 2.1) ─────────────────
+        target_email = (options.get("email") or "").strip().lower()
+        if target_email:
+            try:
+                from django.core.validators import validate_email
+                validate_email(target_email)
+            except Exception:
+                self.stderr.write(f"\n  ✗ '{target_email}' is not a valid email address.\n")
+                print_divider()
+                sys.exit(1)
+
+            set_owner_reservation(target_email)
+            self.stdout.write(
+                f"\n  This server is reserved for {target_email}. "
+                f"They become its owner the first time they sign in with that email.\n"
+            )
+            print_divider()
+            return
+
+        # ── Reservation exists check for code / manual flow ──────────────────
+        reservation = get_owner_reservation()
+        if reservation:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"\n  ✗ This server is reserved for {reservation.email}.\n"
                 )
             )
             print_divider()

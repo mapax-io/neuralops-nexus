@@ -5,7 +5,7 @@
 # install folder). Reads the install's settings from neuralops/install.conf.
 #
 #   neuralops status      what is running, the address, the version
-#   neuralops address     the current address (tunnel installs: re-syncs it)
+#   neuralops address     the current address (tailscale: re-syncs if renamed)
 #   neuralops update [V]  back up, then upgrade to version V (default: latest)
 #   neuralops backup      database + secrets + project files into backups/
 #   neuralops logs [svc]  follow the logs (all services, or one: nucleus, nexus-ai…)
@@ -17,13 +17,31 @@
 # =============================================================================
 set -euo pipefail
 
-SELF_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+resolve_symlink() {
+  local target="$1"
+  while [ -L "$target" ]; do
+    local link
+    link="$(readlink "$target")"
+    case "$link" in
+      /*) target="$link" ;;
+      *) target="$(dirname "$target")/$link" ;;
+    esac
+  done
+  echo "$target"
+}
+REAL_SCRIPT="$(resolve_symlink "$0")"
+SELF_DIR="$(cd "$(dirname "$REAL_SCRIPT")" && pwd)"
 # shellcheck source=/dev/null
 . "$SELF_DIR/install.conf"
 
 SUDO=""
-if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
-if docker info >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="$SUDO docker"; fi
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
+if docker info >/dev/null 2>&1; then DOCKER="docker"; elif [ -n "$SUDO" ]; then DOCKER="$SUDO docker"; else DOCKER="docker"; fi
+
+TS_CMD="tailscale"
+if [ "$(uname -s)" = "Linux" ] && [ -n "$SUDO" ]; then
+  TS_CMD="$SUDO tailscale"
+fi
 
 say()  { printf '  %s\n' "$*"; }
 ok()   { printf '  \033[32m✔\033[0m %s\n' "$*"; }
@@ -31,8 +49,16 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '\n  \033[31m✘ %s\033[0m\n\n' "$*" >&2; exit 1; }
 
 compose() {
+  local profile_args=()
+  local old_ifs="$IFS"
+  IFS=','
+  for p in $PROFILES; do
+    [ -n "$p" ] && profile_args+=(--profile "$p")
+  done
+  IFS="$old_ifs"
   # shellcheck disable=SC2086  # $DOCKER is "docker" or "sudo docker" on purpose
-  (cd "$NEURALOPS_DIR" && COMPOSE_PROFILES="$PROFILES" $DOCKER compose \
+  (cd "$NEURALOPS_DIR" && $DOCKER compose \
+    "${profile_args[@]}" \
     -f docker-compose.neuralops.yaml \
     --env-file neuralops/infra.env --env-file neuralops/app.env --env-file neuralops/secrets.env \
     "$@")
@@ -83,25 +109,46 @@ cmd_status() {
   echo
   say "Address: $(server_url)"
   say "Version: $(image)"
+  if [ "${NEURALOPS_MODE:-}" = "tailscale" ]; then
+    if command -v tailscale >/dev/null 2>&1; then
+      local state
+      state="$($TS_CMD status --json 2>/dev/null | grep -m1 '"BackendState"' | sed -nE 's/.*"BackendState": *"([^"]+)".*/\1/p' || true)"
+      if [ "$state" = "Running" ]; then
+        local funnel="off"
+        if $TS_CMD funnel status 2>&1 | grep -qiE "8095|https://"; then
+          funnel="on"
+        fi
+        say "Tailscale: connected (Funnel $funnel)"
+      else
+        say "Tailscale: not connected"
+      fi
+    else
+      say "Tailscale: not installed"
+    fi
+  fi
 }
 
 cmd_address() {
-  if [ "$NEURALOPS_MODE" != "tunnel" ]; then
+  if [ "${NEURALOPS_MODE:-}" = "domain" ]; then
     say "Address: $(server_url)"
     return
   fi
-  local url=""
-  for _ in $(seq 1 45); do
-    # shellcheck disable=SC2086
-    url="$($DOCKER logs neuralops-cloudflared 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 || true)"
-    [ -n "$url" ] && break
-    sleep 2
-  done
-  [ -n "$url" ] || die "The secure address is not up yet. Is the server online? Try again in a minute."
+  if ! command -v tailscale >/dev/null 2>&1; then
+    die "Tailscale is not installed on this machine."
+  fi
+  local state
+  state="$($TS_CMD status --json 2>/dev/null | grep -m1 '"BackendState"' | sed -nE 's/.*"BackendState": *"([^"]+)".*/\1/p' || true)"
+  if [ "$state" != "Running" ]; then
+    die "Tailscale is not connected on this machine. Run: tailscale up"
+  fi
+  local name
+  name="$($TS_CMD status --json 2>/dev/null | grep -m1 '"DNSName"' | sed -nE 's/.*"DNSName": *"([^"]+)".*/\1/p' | sed 's/\.$//' || true)"
+  [ -n "$name" ] || die "Tailscale is connected but has no name for this machine. Check MagicDNS is on in the Tailscale admin page, then run the installer again."
+  local url="https://$name"
   if [ "$url" != "$(server_url)" ]; then
     printf 'NEURALOPS_SERVER_URL=%s\nCENTRIFUGO_ALLOWED_ORIGINS=%s\n' "$url" "$url" > "$NEURALOPS_DIR/neuralops/app.env"
     compose up -d --force-recreate --no-deps nucleus centrifugo >/dev/null
-    warn "The address CHANGED (the server restarted). Update it in the app:"
+    warn "The address changed. Update it in the app:"
   fi
   say "Address: $url"
 }
@@ -119,7 +166,7 @@ cmd_backup() {
   # encrypted with FIELD_ENCRYPTION_KEY and cannot be read back without it.
   ( umask 077; cp "$NEURALOPS_DIR/neuralops/secrets.env" "$dir/secrets.env" )
   ok "Secrets"
-  $SUDO tar -czf "$dir/projects.tar.gz" -C "$NEURALOPS_DIR" projects
+  tar -czf "$dir/projects.tar.gz" -C "$NEURALOPS_DIR" projects
   ok "Project files"
   warn "This backup holds your secrets. Keep it somewhere safe."
 }
@@ -132,13 +179,16 @@ cmd_update() {
   fetch docker-compose.neuralops.yaml "$NEURALOPS_DIR/docker-compose.neuralops.yaml"
   fetch neuralops/nginx.conf "$NEURALOPS_DIR/neuralops/nginx.conf"
   fetch neuralops/neuralops-cli.sh "$NEURALOPS_DIR/neuralops/neuralops-cli.sh.new"
-  sed -i "s|^NEURALOPS_IMAGE=.*|NEURALOPS_IMAGE=${NEURALOPS_IMAGE_REPO}:${target}|" "$NEURALOPS_DIR/neuralops/infra.env"
+  sed -i.bak "s|^NEURALOPS_IMAGE=.*|NEURALOPS_IMAGE=${NEURALOPS_IMAGE_REPO}:${target}|" "$NEURALOPS_DIR/neuralops/infra.env" && rm -f "$NEURALOPS_DIR/neuralops/infra.env.bak"
   compose pull
   compose up -d
   setup_database
   # Swap in the newer helper last, so this running copy is never edited mid-run.
   chmod 755 "$NEURALOPS_DIR/neuralops/neuralops-cli.sh.new"
   mv "$NEURALOPS_DIR/neuralops/neuralops-cli.sh.new" "$NEURALOPS_DIR/neuralops/neuralops-cli.sh"
+  if [ ! -f "$NEURALOPS_DIR/neuralops/.installed" ]; then
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$NEURALOPS_DIR/neuralops/.installed"
+  fi
   ok "Updated. Now running $(image)"
 }
 
@@ -156,9 +206,23 @@ cmd_uninstall() {
     $DOCKER volume rm -f neuralops_neuralops_postgres_data neuralops_neuralops_redis_data \
       neuralops_neuralops_fastembed_cache neuralops_neuralops_caddy_data \
       neuralops_neuralops_caddy_config >/dev/null 2>&1 || true
-    $SUDO rm -rf "$NEURALOPS_DIR"
-    $SUDO rm -f /usr/local/bin/neuralops /etc/systemd/system/neuralops-address.service
+    if [ "${NEURALOPS_MODE:-}" = "tailscale" ] && command -v tailscale >/dev/null 2>&1; then
+      $TS_CMD serve reset >/dev/null 2>&1 || true
+    fi
+    rm -rf "$NEURALOPS_DIR" 2>/dev/null || ($SUDO rm -rf "$NEURALOPS_DIR")
+    for d in /usr/local/bin /opt/homebrew/bin "$HOME/.local/bin" "$HOME/bin"; do
+      if [ -f "$d/neuralops" ]; then
+        if [ -w "$d/neuralops" ]; then
+          rm -f "$d/neuralops"
+        elif [ -n "$SUDO" ]; then
+          $SUDO rm -f "$d/neuralops" 2>/dev/null || true
+        fi
+      fi
+    done
     ok "Everything deleted."
+    if [ "${NEURALOPS_MODE:-}" = "tailscale" ]; then
+      say "Tailscale is still installed. To disconnect this machine from your Tailscale account: tailscale logout"
+    fi
   else
     say "Data kept. To bring NeuralOps back:  neuralops start"
   fi
@@ -172,7 +236,7 @@ case "${1:-help}" in
   logs)      shift; compose logs --tail 100 -f "$@" ;;
   restart)   compose restart ;;
   stop)      compose stop ;;
-  start)     compose up -d; if [ "$NEURALOPS_MODE" = "tunnel" ]; then cmd_address; fi ;;
+  start)     compose up -d ;;
   uninstall) cmd_uninstall ;;
   *)
     echo

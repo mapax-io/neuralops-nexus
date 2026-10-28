@@ -36,7 +36,7 @@ bash install.sh
 
 | Supported | Not supported (clear message, stops) |
 |---|---|
-| Linux on Intel/AMD (x86_64) — Ubuntu 22.04/24.04, Debian 12 are the tested targets; other distributions that Docker's official script supports should work | ARM machines (Raspberry Pi, AWS Graviton, Apple Silicon VMs) — the NeuralOps image is built for x86_64 only today |
+| Linux on Intel/AMD (x86_64) or ARM (aarch64 / Apple Silicon / Graviton) — Ubuntu 22.04/24.04, Debian 12 are the tested targets; other distributions that Docker's official script supports should work | 32-bit ARM (armv7l, old Raspberry Pis) — NeuralOps requires 64-bit and 4GB+ RAM |
 | A local machine (home/office) — reached through Tailscale | macOS, Windows (later: desktop installer) |
 | A cloud server with a public address (AWS EC2, DigitalOcean, Hetzner, Contabo…) — reached through a domain | Container-only hosts such as RunPod pods — Docker cannot run inside them |
 
@@ -64,7 +64,7 @@ Minimums: **4 GB memory** (the AI engine's libraries need room), **15 GB free di
 │   ├── app.env                        written: this server's public address
 │   ├── secrets.env                    generated ONCE (mode 600) — never regenerated
 │   ├── install.conf                   written: what the `neuralops` command needs to know
-│   ├── .installed                     TO BUILD: written only when the install fully finished
+│   ├── .installed                     BUILT: written only when the install fully finished
 │   └── neuralops-cli.sh               downloaded; /usr/local/bin/neuralops links here
 ├── projects/                          the files personas create (owner: UID 1000)
 └── backups/                           `neuralops backup` output (mode 700)
@@ -83,8 +83,8 @@ Docker volumes (data that survives updates): `neuralops_neuralops_postgres_data`
 | `NEURALOPS_IMAGE_REPO` | `noamanfaisal/neuralops` | Docker image name |
 | `NEURALOPS_MODE` | (asked) | `tailscale` or `domain` — skips the question |
 | `NEURALOPS_DOMAIN` | (asked) | The domain, for `domain` mode |
-| `NEURALOPS_TS_REACH` | `funnel` | TO BUILD — `funnel` (anyone with the link, the ruled default) or `serve` (only your Tailscale devices) |
-| `NEURALOPS_TS_AUTHKEY` | (none) | TO BUILD — a Tailscale auth key, for unattended Tailscale installs (no login link) |
+| `NEURALOPS_TS_REACH` | `funnel` | BUILT — `funnel` (anyone with the link, the ruled default) or `serve` (only your Tailscale devices) |
+| `NEURALOPS_TS_AUTHKEY` | (none) | BUILT — a Tailscale auth key, for unattended Tailscale installs (no login link) |
 | `NEURALOPS_YES` | (empty) | `1` = never ask; take every default (unattended) |
 
 Example unattended install (what Step 2 uses):
@@ -96,14 +96,13 @@ curl -fsSL https://get.neuralopsnexus.ai | NEURALOPS_YES=1 NEURALOPS_MODE=domain
 
 Every step prints one line (`✔` done, `!` warning, `✘` stopped with the reason). Nothing is shown that the person must understand to continue.
 
-### Step 0 — Already installed? (resume-aware — TO BUILD)
+### Step 0 — Already installed? (resume-aware — BUILT)
 - If `/opt/neuralops/neuralops/.installed` exists → prints *"NeuralOps is already installed. To upgrade: `neuralops update`"* and stops. Re-installing over a working install never happens.
 - If `secrets.env` exists **but `.installed` does not** → a previous attempt stopped half-way. The installer **resumes**: keeps the existing secrets (never regenerates), and continues from the start of Step 4.
-  *(v1 today stops in both cases — the resume behaviour is part of the rework.)*
 
 ### Step 1 — Check the machine
 - Linux? Else: *"NeuralOps installs on Linux servers only."*
-- x86_64? Else: *"This server is aarch64. NeuralOps currently ships for x86_64 (Intel/AMD) servers only."*
+- x86_64 or aarch64 (ARM64)? Else: stops with clear architecture message.
 - Memory ≥ ~3.5 GB? Else warns and asks *"Continue anyway? (Y/n)"*.
 - Free disk ≥ 15 GB where `/opt/neuralops` will live? Else warns and asks.
 
@@ -121,7 +120,7 @@ How will you reach NeuralOps?
      automatic HTTPS certificate
 ```
 Details of each path: 1.6 and 1.7.
-*(v1 today offers "domain" and a Cloudflare quick tunnel; the rework replaces the tunnel with Tailscale — the quick tunnel's address changed on every restart.)*
+*(Option 1 uses Tailscale Funnel by default; Option 2 uses Caddy for custom domains).*
 
 ### Step 4 — Prepare the files
 1. Creates `/opt/neuralops/{neuralops,projects,backups}`.
@@ -152,7 +151,7 @@ Details of each path: 1.6 and 1.7.
 5. `manage.py migrate --noinput` → `manage.py seed_permissions` → `manage.py seed_catalog` (catalog failure is only a warning — it refreshes daily by itself).
 6. Restarts nucleus, the two workers and the AI engine (they may have started before the tables existed).
 7. Health check: `http://localhost:8095/api/v1/projects/` must answer 401/403 ("not signed in" — proves nginx + the app are alive), up to 2 minutes.
-8. TO BUILD: writes `.installed` — the install counts as finished only now.
+8. BUILT: writes `.installed` — the install counts as finished only now.
 
 ### Step 6 — The `neuralops` command
 Downloads `neuralops/neuralops-cli.sh`, links it as `/usr/local/bin/neuralops`. Details: 1.9.
@@ -173,7 +172,7 @@ Downloads `neuralops/neuralops-cli.sh`, links it as `/usr/local/bin/neuralops`. 
   Useful commands:  neuralops status | neuralops update | neuralops logs | neuralops backup
 ```
 
-## 1.6 Path 1 — Tailscale (TO BUILD)
+## 1.6 Path 1 — Tailscale (BUILT)
 
 Why: a local machine sits behind a router; nobody outside can reach it. Tailscale gives it a permanent HTTPS address — exactly how node3 runs today (`https://node-3.tail9ed39a.ts.net`).
 
@@ -383,15 +382,15 @@ runcmd:
 ```
 No SSH is needed at any point — the server sets itself up from this file.
 
-## 2.7 New: `create_owner --email` (TO BUILD — nucleus)
+## 2.7 New: `create_owner --email` (BUILT — nucleus)
 
 **Today:** `create_owner` makes the first owner only through the person themselves — they type a code at the portal (or enter their own password with `--manual`). We cannot do that for them.
 
 **New mode:** `manage.py create_owner --email person@company.com`
-- Records that this server is **reserved for that email** (a pending owner).
+- Records that this server is **reserved for that email** (a pending owner in `OwnerReservation`).
 - The first sign-in whose identity is **verified by the portal (Supabase) with that exact email** completes the claim — the same `claim_install` path as today (company, owner role, groups, rights). Anyone else trying to claim is refused.
 - Refuses if the server already has an owner.
-- Tests: reserved email claims → owner · different email → refused · unverified email → refused · second claim after the first → refused · reservation shows in `server_needs_owner` checks.
+- Tests: reserved email claims → owner · different email → refused · unverified email → refused · second claim after the first → normal sign-in · reservation shows in `server_needs_owner` checks. All 7 scenarios verified in `authn.tests_step4`.
 
 ## 2.8 Demo content (DECISION)
 
@@ -417,7 +416,7 @@ Plus: **budget alerts** on each cloud account, so any surprise cost is visible i
 ## 2.11 What Step 2 needs, in order
 
 1. **Free cloud credits** (owner): Microsoft for Startups Founders Hub, Google for Startups, AWS Activate — need the company incorporated. We build the back-end for whichever approves first; the other two follow the same pattern.
-2. `create_owner --email` (nucleus, with tests).
+2. `create_owner --email` (nucleus, with tests) — **BUILT**.
 3. `neuralops-demo` with the first cloud back-end + the cloud-init template + the DNS step.
 4. The reaper + the cloud self-destruct settings + budget alerts.
 5. Demo content (if option B) + the demo AI key.

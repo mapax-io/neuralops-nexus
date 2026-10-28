@@ -294,8 +294,8 @@ services:
     container_name: neuralops-nginx
     restart: unless-stopped
     # NGINX_BIND: 0.0.0.0 (default) serves the LAN; the one-command installer
-    # sets 127.0.0.1 because caddy / cloudflared below front it over the
-    # Docker network and nothing else should reach it in the clear.
+    # sets 127.0.0.1 because Caddy (domain mode) or Tailscale (machine level)
+    # fronts it and nothing else should reach it in the clear.
     ports:
       - "${NGINX_BIND:-0.0.0.0}:${NGINX_HOST_PORT:-8095}:80"
     volumes:
@@ -306,9 +306,9 @@ services:
       - nucleus
       - centrifugo
 
-  # ── One-command installer (install.sh, 2026-10-24) — how the outside world
-  # reaches nginx. Exactly one of these two is switched on per install, by
-  # adding its profile next to "production" (install.sh writes the choice).
+  # ── One-command installer (install.sh) — how the outside world reaches nginx.
+  # For domain installs, the "https" profile starts Caddy below; for Tailscale,
+  # Tailscale runs on the host machine itself (not in compose).
   #
   # https: the server has a domain → Caddy fetches and renews a real
   # certificate by itself (ports 80 + 443) and passes everything to nginx,
@@ -329,21 +329,6 @@ services:
       - neuralops-network
     depends_on:
       - nginx
-
-  # tunnel: no domain → a Cloudflare quick tunnel gives a free
-  # https://<random>.trycloudflare.com address with no account. Meant for
-  # trying NeuralOps: the address changes when this container restarts, and
-  # `neuralops address` (run at boot by a systemd unit) re-syncs it.
-  # No depends_on on purpose: install.sh starts it ALONE first, because the
-  # address must be known before nucleus starts.
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    profiles: ["tunnel"]
-    container_name: neuralops-cloudflared
-    restart: unless-stopped
-    command: ["tunnel", "--no-autoupdate", "--url", "http://nginx:80"]
-    networks:
-      - neuralops-network
 
   # ===========================================================================
   # DEV profile — image built locally, app code bind-mounted over the baked-in

@@ -40,6 +40,29 @@ own server.
 Pre-built Docker images, no source code, no local builds. You connect the
 official NeuralOps web app to your server afterward.
 
+### Quick install (recommended)
+
+On a Linux server (Ubuntu 22.04/24.04, Debian 12, x86_64 or arm64, 4GB+ RAM):
+
+```bash
+curl -fsSL https://get.neuralopsnexus.ai | bash
+```
+
+The installer checks your machine, installs Docker if missing, generates your secrets once, and asks how you want to reach the server:
+- **Tailscale (recommended for home/office machines):** permanent HTTPS address via Tailscale Funnel; teammates install nothing.
+- **A domain name (for cloud servers):** automatic HTTPS certificate via Caddy.
+
+Careful users can download, inspect, and run:
+```bash
+curl -fsSL https://get.neuralopsnexus.ai -o install.sh
+less install.sh
+bash install.sh
+```
+
+---
+
+### Manual install (advanced)
+
 | | |
 |---|---|
 | **What you need** | Docker with Compose v2; ~4GB RAM; one reachable port (a domain + reverse proxy, [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), or a load balancer); a NeuralOps account. |

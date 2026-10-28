@@ -124,6 +124,17 @@ def signin_with_supabase_token(access_token: str) -> dict:
     if not email:
         raise SignInError("Email is missing from Supabase token.")
 
+    # ── Demo server owner reservation (Task 2.1) ─────────────────────────
+    if server_needs_owner():
+        reservation = get_owner_reservation()
+        if reservation:
+            token_email = email.strip().lower()
+            res_email = reservation.email.strip().lower()
+            if token_email == res_email and is_email_verified(claims):
+                claim_install(claims)
+            else:
+                raise SignInError("This server is reserved for its demo owner.")
+
     user, created = User.objects.get_or_create(
         email=email,
         defaults={"username": email, "is_active": True},
@@ -181,10 +192,25 @@ def auth_verify(access_token: str) -> dict:
     if not email:
         raise SupabaseTokenError("Email missing from token.")
 
+    # ── Demo server owner reservation (Task 2.1) ─────────────────────────
+    claimed_demo = False
+    if server_needs_owner():
+        reservation = get_owner_reservation()
+        if reservation:
+            token_email = email.strip().lower()
+            res_email = reservation.email.strip().lower()
+            if token_email == res_email and is_email_verified(claims):
+                claim_install(claims)
+                claimed_demo = True
+            else:
+                raise PermissionError("This server is reserved for its demo owner.")
+
     user, created = User.objects.get_or_create(
         email=email,
         defaults={"username": email, "is_active": True},
     )
+    if claimed_demo:
+        created = True
 
     if not user.is_active:
         raise PermissionError("Your account is not active on this server.")
@@ -670,6 +696,44 @@ class SetupError(Exception):
     """A refused claim (owner already exists, bad claims). API maps it to 409."""
 
 
+def is_email_verified(claims: dict) -> bool:
+    """True when the Supabase token claims declare the user's email is verified."""
+    if claims.get("email_verified") is True:
+        return True
+    if claims.get("email_confirmed_at"):
+        return True
+    user_metadata = claims.get("user_metadata")
+    if isinstance(user_metadata, dict) and (
+        user_metadata.get("email_verified") is True
+        or user_metadata.get("email_confirmed_at")
+    ):
+        return True
+    return False
+
+
+def get_owner_reservation():
+    """Returns the current OwnerReservation row if any, or None."""
+    from authn.models import OwnerReservation
+    return OwnerReservation.objects.order_by("-created_at").first()
+
+
+def set_owner_reservation(email: str):
+    """
+    Sets or replaces the owner reservation for demo servers (Task 2.1).
+    Email is stripped and stored lowercased.
+    """
+    from authn.models import OwnerReservation
+    cleaned = (email or "").strip().lower()
+    OwnerReservation.objects.all().delete()
+    return OwnerReservation.objects.create(email=cleaned)
+
+
+def clear_owner_reservation() -> None:
+    """Deletes any pending owner reservations."""
+    from authn.models import OwnerReservation
+    OwnerReservation.objects.all().delete()
+
+
 def server_needs_owner() -> bool:
     """True while no active company has an owner — the 'unclaimed install' state."""
     from nucleus.models import Company
@@ -701,6 +765,15 @@ def claim_install(claims: dict, workspace_name: str | None = None):
 
     if not server_needs_owner():
         raise SetupError("This server already has an owner.")
+
+    # ── Demo server owner reservation (Task 2.1) ─────────────────────────
+    reservation = get_owner_reservation()
+    if reservation:
+        token_email = email.strip().lower()
+        res_email = reservation.email.strip().lower()
+        if token_email != res_email or not is_email_verified(claims):
+            raise SetupError("This server is reserved for its demo owner.")
+        clear_owner_reservation()
 
     user, _ = User.objects.get_or_create(
         email=email,

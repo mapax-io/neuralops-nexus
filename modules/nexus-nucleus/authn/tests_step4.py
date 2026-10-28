@@ -90,6 +90,149 @@ class SetupFlowTests(TestCase):
         self.assertFalse(Company.objects.exists())
 
 
+class OwnerReservationTests(TestCase):
+    """
+    Task 2.1 — one-click demo servers (create_owner --email).
+    """
+
+    def test_reserved_email_verified_becomes_owner_and_reservation_gone(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+        from authn.permissions.checker import PermissionChecker
+        from authn.services import auth_verify
+
+        call_command("create_owner", email="Demo@Example.com")
+        self.assertTrue(OwnerReservation.objects.filter(email="demo@example.com").exists())
+
+        claims = {"email": "Demo@Example.com", "sub": "sb-demo-1", "email_verified": True}
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            res = auth_verify("valid-token")
+
+        self.assertTrue(res["ok"])
+        self.assertTrue(res["company_exists"])
+        self.assertTrue(res["is_owner"])
+        self.assertEqual(res["company_name"], "Demo's Workspace")
+
+        # Reservation is gone
+        self.assertFalse(OwnerReservation.objects.exists())
+
+        # Owner is created and has real rights
+        company = Company.objects.get()
+        user = User.objects.get(email="Demo@Example.com")
+        self.assertEqual(company.owner_id, user.id)
+        self.assertEqual(user.current_company_id, company.id)
+        self.assertTrue(PermissionChecker.can(user, "role.update", company=company))
+
+    def test_different_email_refused_no_owner_or_user_created(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+        from authn.services import auth_verify
+
+        call_command("create_owner", email="demo@example.com")
+
+        # Direct service call raises PermissionError
+        claims = {"email": "intruder@example.com", "sub": "sb-intruder", "email_verified": True}
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            with self.assertRaises(PermissionError) as cm:
+                auth_verify("intruder-token")
+            self.assertEqual(str(cm.exception), "This server is reserved for its demo owner.")
+
+        # API endpoint returns 403 Forbidden
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            r = Client().get("/api/v1/auth/verify/", HTTP_AUTHORIZATION="Bearer intruder-token")
+            self.assertEqual(r.status_code, 403)
+            self.assertIn("This server is reserved for its demo owner.", r.json()["detail"])
+
+        # Nothing was created
+        self.assertFalse(Company.objects.exists())
+        self.assertFalse(User.objects.filter(email="intruder@example.com").exists())
+        self.assertEqual(OwnerReservation.objects.count(), 1)
+
+    def test_right_email_unverified_refused(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+        from authn.services import auth_verify
+
+        call_command("create_owner", email="demo@example.com")
+
+        claims = {"email": "demo@example.com", "sub": "sb-demo", "email_verified": False}
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            with self.assertRaises(PermissionError) as cm:
+                auth_verify("unverified-token")
+            self.assertEqual(str(cm.exception), "This server is reserved for its demo owner.")
+
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            r = Client().get("/api/v1/auth/verify/", HTTP_AUTHORIZATION="Bearer unverified-token")
+            self.assertEqual(r.status_code, 403)
+
+        self.assertFalse(Company.objects.exists())
+        self.assertFalse(User.objects.filter(email="demo@example.com").exists())
+        self.assertEqual(OwnerReservation.objects.count(), 1)
+
+    def test_second_sign_in_after_claim_is_normal_sign_in(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+        from authn.services import auth_verify
+
+        call_command("create_owner", email="demo@example.com")
+        claims = {"email": "demo@example.com", "sub": "sb-demo", "email_verified": True}
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            r1 = auth_verify("token-1")
+        self.assertTrue(r1["ok"])
+        self.assertTrue(r1["is_owner"])
+        self.assertEqual(OwnerReservation.objects.count(), 0)
+
+        # Second sign-in with same user
+        with patch("authn.services.verify_supabase_token", return_value=claims):
+            r2 = auth_verify("token-2")
+        self.assertTrue(r2["ok"])
+        self.assertTrue(r2["is_owner"])
+        self.assertEqual(Company.objects.count(), 1)
+
+    def test_create_owner_email_when_owner_exists_refused(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+        from authn.services import claim_install
+
+        claim_install(CLAIMS)
+        self.assertEqual(Company.objects.count(), 1)
+
+        with self.assertRaises(SystemExit) as cm:
+            call_command("create_owner", email="another@example.com")
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(OwnerReservation.objects.count(), 0)
+
+    def test_code_flow_claim_while_reservation_exists_refused(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+        from authn.services import SetupError, claim_install
+
+        call_command("create_owner", email="demo@example.com")
+        self.assertEqual(OwnerReservation.objects.count(), 1)
+
+        # Normal create_owner without --email refuses
+        with self.assertRaises(SystemExit) as cm:
+            call_command("create_owner")
+        self.assertEqual(cm.exception.code, 1)
+
+        # Direct claim_install with different claims refuses
+        with self.assertRaises(SetupError) as cm:
+            claim_install({"email": "someone@example.com", "sub": "sb-2", "email_verified": True})
+        self.assertEqual(str(cm.exception), "This server is reserved for its demo owner.")
+        self.assertFalse(Company.objects.exists())
+
+    def test_create_owner_email_twice_second_reservation_wins(self):
+        from django.core.management import call_command
+        from authn.models import OwnerReservation
+
+        call_command("create_owner", email="first@example.com")
+        self.assertEqual(OwnerReservation.objects.get().email, "first@example.com")
+
+        call_command("create_owner", email="Second@Company.Com")
+        self.assertEqual(OwnerReservation.objects.count(), 1)
+        self.assertEqual(OwnerReservation.objects.get().email, "second@company.com")
+
+
 class LocalAuthTests(MentionRightFixture):
     """Local passwords: set your own, sign in offline, admins reset others'."""
 
